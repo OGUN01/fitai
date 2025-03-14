@@ -1,0 +1,439 @@
+# FitAI: Fitness App with AI Capabilities
+
+## App Overview
+
+FitAI is an AI-powered fitness application that functions as a personalized fitness coach, providing customized workout routines and diet plans based on user preferences and goals. The app leverages Gemini 2.0 Pro to generate personalized content and analyze user progress, creating a comprehensive fitness experience.
+
+## Tech Stack
+
+- **Frontend**: React Native with TypeScript, Expo, and Expo Router
+- **Backend/Database**: Supabase
+- **UI Framework**: React Native Paper
+- **AI Processing**: Gemini 2.0 Pro
+- **Data Visualization**: React Native Chart Kit
+- **Local Storage**: AsyncStorage
+
+## Recent Updates and Improvements (March 14, 2025)
+
+### Android APK Preview Development (March 14, 2025)
+
+1. **APK Build Preparation**:
+   - Initiated Android APK preview build process using Expo CLI
+   - Successfully ran `npx expo prebuild -p android` to generate native Android files
+   - Installed dev-client for enhanced development capabilities with `npx expo install expo-dev-client`
+   - Encountered Java environment configuration requirements for local Gradle builds
+
+2. **Custom Floating Action Button (FAB) Enhancements**:
+   - Modified the CustomTabBar component to display a "+" icon in the FAB
+   - Implemented an action menu with options for "Progress," "Log Workout," "Log Meal," and "Log Weight"
+   - Restored the FAB action menu to allow proper navigation between screens when options are selected
+   - Ensured consistent styling with the Bold Minimalism design system
+
+3. **Build Environment Configuration**:
+   - Identified requirements for local Android builds including Java JDK setup
+   - Determined necessary environment variables for successful APK generation
+   - Explored alternative build approaches using Expo development client
+
+### Web Platform Compatibility Improvements (March 14, 2025)
+
+1. **Animation Components Web Compatibility**:
+   - Updated all animation components (FadeIn, SlideIn, ScaleIn, Pulse, Celebration) to ensure compatibility with web platforms
+   - Implemented fallback rendering for web platforms where certain animations are not supported
+   - Fixed TypeScript errors related to transform properties in animation components
+
+2. **Form Component Web Adaptations**:
+   - Modified the Diet Preferences form to support web platform rendering
+   - Implemented TextInput-based time picker for web as an alternative to native DateTimePicker
+   - Enhanced form state management to handle platform-specific input components
+
+3. **Platform-Specific Rendering**:
+   - Added Platform.OS checks throughout the codebase to provide appropriate rendering based on environment
+   - Created web-specific fallback components where native functionality is not available
+   - Improved conditional styling to ensure consistent look and feel across platforms
+
+### UI/UX Redesign Implementation (March 14, 2025)
+
+1. **Bold Minimalism Design System Implementation**:
+   - Successfully applied the Bold Minimalism design philosophy across all major app screens
+   - Implemented consistent gradient backgrounds with vibrant accent colors
+   - Enhanced typography hierarchy for improved readability and visual appeal
+   - Created cohesive component styling throughout the application
+
+2. **Tab-Specific Redesign Completions**:
+   - **Nutrition Tab**: Redesigned with gradient headers, meal cards with improved visualization, enhanced day selection, and modernized nutrition summary display
+   - **Profile Tab**: Implemented gradient backgrounds, modern typography, and improved layout for user data sections including fitness goals, preferences, app settings, and account information
+   - **Progress Tab**: Enhanced with gradient headers, modern time range selector with segmented buttons, and redesigned workout progress and body analysis cards with improved data visualization
+
+3. **Component Enhancements**:
+   - Standardized card components with LinearGradient backgrounds
+   - Created consistent header styling across all tabs
+   - Implemented uniform button styling with gradient backgrounds
+   - Enhanced error and loading states with visually appealing designs
+   - Improved data visualization components with modern styling
+
+4. **User Experience Improvements**:
+   - Streamlined navigation between related screens
+   - Enhanced visual feedback for user interactions
+   - Improved content organization and information hierarchy
+   - Created more intuitive and engaging user flows
+
+### UI/UX Redesign Initiative (March 13, 2025)
+
+1. **Design System Creation**:
+   - Established "Bold Minimalism" as the guiding design philosophy
+   - Created a vibrant color system with deep backgrounds and magenta/cyan accents
+   - Defined typography hierarchy and component styling guidelines
+   - Designed enhanced navigation with 5-tab structure and floating action button
+
+2. **Comprehensive Redesign Plan**:
+   - Developed detailed plans for all major screens (onboarding, home, workout, nutrition, progress)
+   - Created implementation phases with clear milestones
+   - Identified free illustration resources for visual enhancement
+   - Established animation strategy using Lottie and React Native Reanimated
+   - Documented the complete plan in `docs/ui-redesign-plan.md`
+
+3. **Success Metrics Definition**:
+   - Set engagement targets: 25% increase in daily active users
+   - Set completion targets: 15% improvement in workout completion rate
+   - Set onboarding targets: 30% reduction in abandonment
+   - Set usage targets: 20% increase in average session duration
+
+### Enhanced AI Fallback System and Type Fixes (March 13, 2025)
+
+1. **AI Fallback System Improvements**:
+   - Fixed the import statement in `testUtils.ts` for the gemini service (changed from named to default import)
+   - Successfully tested the fallback mechanism with all stages passing:
+     - JSON parser tests (well-formatted, markdown, broken JSON)
+     - Primary prompt generation
+     - Alternative prompt generation
+     - Fallback chain activation
+   - Verified user-friendly error messages are correctly shown when service issues occur
+
+2. **Type Definition Enhancements**:
+   - Fixed TypeScript type errors in the Nutrition screen with the `UserDietPreferences` interface
+   - Added missing required properties to the meal plan generation preferences:
+     - `preferredMealTimes` - Default meal times for daily schedule
+     - `countryRegion` - For culturally appropriate recipe suggestions
+     - `waterIntakeGoal` - Daily water intake target
+     - `calorieTarget` - Daily calorie goal
+   - Implemented proper type casting for enum-like string fields
+
+3. **Testing Framework Improvements**:
+   - Enhanced the debug screen with comprehensive system tests
+   - Implemented unit tests for the JSON parser with various input formats
+   - Added structured testing for fallback mechanism verification
+   - Created detailed reporting for test results with formatted JSON output
+
+### Error Handling and Data Validation Improvements (March 11, 2025)
+
+1. **Nutrition Screen Error Fixes**:
+   - Fixed "Cannot read properties of undefined (reading 'find')" error in the Nutrition screen
+   - Added optional chaining throughout the meal plan loading and rendering functions
+   - Implemented proper checks for existence of weeklyPlan before accessing its properties
+   - Added fallback empty arrays for undefined meal data
+
+2. **Home Screen Summary Handling**:
+   - Fixed "workoutSummary.forEach is not a function" error by improving JSON parsing
+   - Enhanced summary data loading to handle both string and array formats
+   - Added format detection to determine if data is JSON before attempting to parse
+   - Implemented fallback workout and meal data for when parsing fails
+   - Improved day formatting and next workout calculations
+
+3. **TypeScript Interface Enhancements**:
+   - Updated DietPreferences interface to include dietary_restrictions and meal_count
+   - Enhanced WorkoutPreferences interface with focus_areas, intensity_level, and equipment_available
+   - Fixed TypeScript errors in the review page by aligning interfaces with actual usage
+   - Improved type safety throughout the application
+
+4. **Data Storage Format Handling**:
+   - Added robust handling for different data formats (plain text summaries vs. JSON arrays)
+   - Implemented progressive format checking before JSON parsing attempts
+   - Enhanced error messages for better debugging
+   - Added graceful degradation to default data when issues occur
+
+### Onboarding Flow Navigation Improvements (March 11, 2025)
+
+1. **Enhanced Review Page Redirections**:
+   - Implemented redirect buttons in the review page for sections with missing data
+   - Added "Complete Body & Goals", "Complete Diet Preferences", "Complete Workout Preferences", and "Complete Body Analysis" buttons
+   - Each button now includes a `returnToReview` parameter to facilitate returning to the review page after completion
+
+2. **Improved Form Navigation Logic**:
+   - Updated all onboarding screens (user-details, diet-preferences, workout-preferences, body-analysis) to check for the `returnToReview` parameter
+   - Modified navigation logic to redirect users back to the review page after saving their data when coming from the review page
+   - Fixed issue with user-details redirect path to ensure proper navigation between screens
+
+3. **Data Structure Optimizations**:
+   - Enhanced diet preferences data storage to save information at both root level and nested structure
+   - Ensured review page accurately displays all user-provided information across different form sections
+   - Fixed issue with diet preferences not appearing in review page after submission
+
+### Progress Screen & Analytics Enhancements (March 11, 2025)
+
+1. **Workout Completion Tracking Fixes**:
+   - Fixed issue with workout completion summary showing incorrect counts
+   - Updated `getWorkoutStats` function in `trackingService.ts` to count the number of different days with completed workouts
+   - Enhanced workout day name mapping logic to work with any workout schedule (3-day, 4-day, 5-day, etc.)
+   - Fixed bar chart data to correctly display workout activity by day of the week
+   - Added additional logging for better debugging of workout tracking
+
+2. **Progress Visualization Improvements**:
+   - Ensured all completed workout days show up correctly in the bar chart visualization
+   - Fixed data mapping for workout completions to handle different workout schedules
+   - Added logic to properly display workout completion count based on unique workout days
+
+3. **Database Schema Updates**:
+   - Created migration script to add `workout_day_name` column to `workout_completions` table
+   - Implemented direct mapping between day numbers and day names for accurate reporting
+   - Added index on the new column for better query performance
+   - Simplified migration script to prevent type conversion errors
+
+### Data Persistence and Authentication Enhancements (March 10, 2025)
+
+1. **Workout and Nutrition Data Persistence**:
+   - Implemented persistent storage for workout and nutrition plans in Supabase database
+   - Added proper loading logic to retrieve existing plans on app reload or sign-in
+   - Enhanced data validation when loading workout and meal plans from the database
+   - Fixed issue with plans regenerating instead of loading from database
+
+2. **Authentication Improvements**:
+   - Fixed sign-in functionality by directly using Supabase's signInWithPassword method
+   - Enhanced error handling and session management during authentication
+   - Added proper loading states and navigation after successful sign-in
+   - Updated sign-up process for better consistency and error feedback
+
+3. **Gemini API JSON Parsing Robustness**:
+   - Completely rewrote JSON parsing logic to handle workout-specific formatting issues
+   - Improved handling of ranges in rep counts (e.g., "10-12" reps)
+   - Added special text handling for exercise instructions (e.g., "10 per leg")
+   - Enhanced the API prompts to explicitly request properly formatted JSON
+   - Implemented multi-stage parsing with progressively more aggressive cleanup methods
+
+4. **Data Structure Normalization**:
+   - Created consistent data structures between the database and in-memory models
+   - Added safeguards to handle different day formats (numeric vs. string values)
+   - Enhanced type safety with updated TypeScript interfaces that account for varying data formats
+   - Improved validation to ensure essential fields are present when loading from database
+
+### Onboarding Flow Fixes (March 10, 2025)
+
+1. **Database Schema Updates**: Added missing columns to the Supabase profiles table to support all onboarding data:
+   - Added diet_preferences JSONB column to store comprehensive diet preference data
+   - Added specific fields for diet_type, allergies, meal_frequency, meal_times
+   - Added body analysis fields (height_cm, weight_kg, body_fat_percentage, etc.)
+   - Added workout preference fields (preferred_workouts, workout_days_per_week, etc.)
+
+2. **Navigation Improvements**: Fixed navigation issues in the onboarding flow:
+   - Ensured proper path format for Expo Router, including parentheses in folder names
+   - Implemented timeouts before navigation to ensure state updates complete
+   - Added better error handling with Snackbar notifications
+
+3. **Profile Context Enhancements**:
+   - Improved error handling for missing database tables
+   - Added fallback mechanisms to create default profiles
+   - Enhanced profile update logic to handle missing columns gracefully
+
+### Gemini API Improvements
+
+1. **Enhanced JSON Parsing**: Significantly improved the JSON parsing function to handle malformed responses:
+   - Added multiple parsing strategies with progressive fallbacks
+   - Implemented special handling for common AI-generated JSON errors (trailing commas, missing quotes)
+   - Enhanced error logging for troubleshooting
+   - Added regex-based cleanup to fix formatting issues in AI responses
+
+2. **Error Handling Robustness**: Added multiple fallback mechanisms to ensure the app continues to work even when the API returns invalid data.
+
+### Progress Screen Refactoring
+
+1. **Data-Driven Insights**: Replaced AI-based analysis with a comprehensive data management system that calculates metrics based on actual tracked workout, nutrition, and body measurement data.
+
+2. **Local Data Management**: Implemented a robust data management utility (`dataManager.ts`) that handles storage and retrieval of workout sessions, nutrition tracking, body metrics, and user goals using AsyncStorage.
+
+3. **Progress Calculation**: Created a dedicated progress calculator (`progressCalculator.ts`) that performs statistical analysis on tracked data, generating insights such as workout completion rates, nutrition adherence, weight trends, and body measurement changes.
+
+4. **Real-Time Visualizations**: Updated charts and statistical displays to reflect actual user data rather than mock or AI-generated content.
+
+5. **Testing Tools**: Added functionality to generate sample data for testing purposes, allowing for rapid development and UI verification.
+
+### Error Handling and API Reliability
+
+1. **API Retry Mechanism**: Implemented a robust retry system in the Gemini service with exponential backoff for handling rate limiting (429) errors and other transient failures. This ensures better reliability when the API is under heavy load.
+
+2. **Fallback Data**: Created comprehensive fallback workout and meal plan data structures to ensure the app remains functional even when the API is unavailable or returns invalid data.
+
+3. **Null Safety Improvements**: Added extensive null checks throughout the application, particularly in the WorkoutScreen and Home components, to prevent "Cannot read properties of undefined" errors when working with potentially undefined API response fields.
+
+4. **Response Format Handling**: Enhanced data processing to handle both current and legacy API response formats, ensuring backward compatibility as the API evolves.
+
+5. **Better Error Feedback**: Improved error messaging throughout the application to provide users with clearer information when issues occur.
+
+### UI Improvements
+
+1. **Navigation Headers**: Added consistent navigation headers to the Workout and Nutrition tabs with back and home buttons for easier navigation.
+
+2. **Loading States**: Enhanced loading indicators and states to provide better feedback during API calls.
+
+3. **Empty State Handling**: Added proper UI components for empty or error states across all screens.
+
+## Current Application Structure
+
+### Main Features
+
+1. **Home Screen**: Dashboard displaying workout and meal plan summaries, progress tracking, and motivational quotes. The screen now has improved error handling for API failures and proper fallbacks for all content areas.
+
+2. **Workout Tab**: Displays a personalized workout plan with proper error handling and fallback content. Key improvements:
+   - Enhanced WorkoutDay rendering with null checks
+   - Normalization of API responses to handle different format versions
+   - Fallback workout plan implementation for offline usage
+   - Clear loading and error states
+   - Persistent storage of workout plans in the database
+
+3. **Nutrition Tab**: Presents a 7-day meal plan with detailed recipes and nutritional information. Recent improvements:
+   - Better error handling for API failures
+   - Improved UI for displaying meal information
+   - Clear loading and error states
+   - Persistent storage of meal plans in the database
+
+4. **Progress Tab**: Shows detailed fitness journey metrics based on tracked data:
+   - Weight trends and progress toward goals
+   - Workout completion statistics
+   - Body measurement changes over time
+   - Nutrition adherence insights
+   - User-friendly charts and visualizations
+
+5. **Developer Tools**: Special section for testing and development features, properly included in navigation paths.
+
+### Data Management System
+
+The app now features a robust local data tracking system:
+
+1. **Workout Tracking**: Records completed workouts, exercises performed, sets, and reps.
+
+2. **Nutrition Tracking**: Logs daily food intake, calories, and macronutrients.
+
+3. **Body Metrics**: Stores weight, body fat percentage, and body measurements.
+
+4. **User Goals**: Maintains user fitness objectives and targets.
+
+### Gemini API Integration
+
+The app leverages Gemini 2.0 Pro for several AI-powered features:
+
+1. **Workout Plan Generation**: Creates personalized workout plans based on user preferences including:
+   - Fitness level
+   - Available equipment
+   - Focus areas
+   - Time constraints
+   - Injuries/limitations
+
+2. **Meal Plan Generation**: Generates 7-day meal plans based on:
+   - Dietary preferences
+   - Caloric needs
+   - Allergies
+   - Nutritional goals
+
+3. **Motivational Content**: Provides personalized motivational quotes and fitness tips.
+
+#### API Error Handling
+
+Recent improvements to API handling include:
+
+1. **Rate Limiting Protection**: Implemented retry logic with exponential backoff when hitting rate limits
+2. **JSON Parsing Error Handling**: Added robust error handling for malformed JSON responses
+3. **Default Fallbacks**: Created comprehensive default data structures to use when API calls fail
+4. **Console Logging**: Enhanced console logging for better debugging and monitoring
+
+## Navigation Structure
+
+The app uses Expo Router with a tab-based navigation structure. Following Expo Router conventions, folder names with parentheses (like `(tabs)` and `(dev)`) are used for layout groups and are included in navigation paths. For example, to navigate to a screen in the `(dev)` folder, we use `router.push("/(dev)/screen-name")` syntax.
+
+## Onboarding Flow
+
+### 1. User Details Page
+
+**Purpose**: Collect basic user information to personalize the fitness journey.
+
+**Fields**:
+- Full name
+- Age
+- Gender
+- Height (cm/ft)
+- Current weight (kg/lbs)
+- Target weight (kg/lbs)
+- Fitness goal (dropdown):
+  - Weight loss
+  - Muscle gain
+  - Improved fitness
+  - Maintenance
+- Activity level (sedentary, lightly active, moderately active, very active)
+
+**UI Elements**:
+- Input fields with appropriate validation
+- Next button (enabled only when required fields are completed)
+- Progress indicator showing onboarding stages
+
+### 2. Diet Preferences Page
+
+**Purpose**: Understand user's dietary needs and constraints.
+
+**Fields**:
+- Diet type (dropdown):
+  - Vegetarian
+  - Vegan
+  - Non-vegetarian
+  - Pescatarian
+  - Flexitarian
+- Diet plan preference (dropdown):
+  - Balanced
+  - High-protein
+  - Low-carb
+  - Keto
+  - Mediterranean
+- Food allergies/intolerances (multi-select):
+  - Dairy
+  - Nuts
+  - Gluten
+  - Shellfish
+  - Eggs
+  - Others (with text input)
+- Meal frequency (number of meals per day)
+- Preferred meal times (time picker for each meal)
+- Country/Region (for culturally appropriate food suggestions)
+- Water intake goal (daily target in liters/oz)
+
+### Latest Updates (March 13, 2025 - Afternoon)
+
+1. **Dependency Management and Environment Setup**:
+   - Identified and attempted to resolve dependency version mismatches:
+     - @react-native-async-storage/async-storage (2.1.2 → 1.23.1)
+     - @react-native-community/slider (4.5.6 → 4.5.5)
+     - @react-native-picker/picker (2.11.0 → 2.9.0)
+     - expo-constants (17.0.7 → ~17.0.8)
+     - expo-router (4.0.17 → ~4.0.18)
+     - react-native (0.76.3 → 0.76.7)
+     - react-native-screens (4.1.0 → ~4.4.0)
+   - Successfully installed @types/react-native for TypeScript support
+   - Encountered and working to resolve ExpoMetroConfig.loadAsync error
+   - Port 8081 conflict identified - need to use alternative port 8082
+
+2. **Current Development Status**:
+   - Successfully implemented Bold Minimalism design philosophy in workout preferences screen
+   - Updated validation schema to match new field names:
+     - Changed exerciseFrequency to workoutFrequency
+     - Changed timePerSession to workoutDuration
+     - Added exercisesToAvoid field
+     - Updated focusAreas to include 'flexibility'
+   - Installed and configured expo-linear-gradient for gradient backgrounds
+
+3. **Next Steps**:
+   - Resolve remaining dependency version conflicts
+   - Fix ExpoMetroConfig.loadAsync error
+   - Continue implementing Bold Minimalism design across other screens
+   - Test and verify all form validations are working correctly
+   - Implement remaining UI components from the redesign plan
+
+4. **Known Issues to Address**:
+   - Metro bundler port conflict (8081 in use)
+   - Dependency version mismatches affecting app stability
+   - ExpoMetroConfig.loadAsync function error preventing app start
+   - Need to verify form validation after schema updates

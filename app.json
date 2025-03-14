@@ -1,0 +1,40 @@
+{
+  "expo": {
+    "scheme": "acme",
+    "plugins": [
+      "expo-router"
+    ],
+    "name": "FitAI",
+    "slug": "fitness",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/images/logo.svg",
+    "splash": {
+      "image": "./assets/images/logo.svg",
+      "resizeMode": "contain",
+      "backgroundColor": "#171429"
+    },
+    "assetBundlePatterns": [
+      "**/*"
+    ],
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.fitai.fitness"
+    },
+    "android": {
+      "package": "com.fitai.fitness",
+      "adaptiveIcon": {
+        "foregroundImage": "./assets/images/logo.svg",
+        "backgroundColor": "#171429"
+      },
+      "versionCode": 1
+    },
+    "web": {
+      "favicon": "./assets/images/logo.svg",
+      "bundler": "metro"
+    },
+    "extra": {
+      "eas": {}
+    }
+  }
+}
