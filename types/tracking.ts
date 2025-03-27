@@ -41,6 +41,14 @@ export interface MealStats {
   lastMealDate: string | null;
 }
 
+// Water analytics types
+export interface WaterStats {
+  dailyIntake: Record<string, number>;
+  averageIntake: number;
+  goalCompletionRate: number;
+  streak: number;
+}
+
 // Combined analytics for the Progress screen
 export interface TrackingAnalytics {
   workout: WorkoutStats;
@@ -54,4 +62,7 @@ export interface TrackingAnalytics {
     currentStreak: number;
     bestStreak: number;
   };
+  
+  // Add water tracking stats
+  water: WaterStats;
 }

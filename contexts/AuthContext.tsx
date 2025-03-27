@@ -3,6 +3,11 @@ import * as SecureStore from 'expo-secure-store';
 import { Session, User } from '@supabase/supabase-js';
 import supabase, { auth } from '../lib/supabase';
 import { router } from 'expo-router';
+import { verifyOnboardingCompletion } from '../utils/profileMigration';
+
+// Auth session storage keys
+const AUTH_SESSION_KEY = 'auth-session';
+const AUTH_USER_KEY = 'auth-user';
 
 // Define types for auth context
 type AuthContextType = {
@@ -37,8 +42,20 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const isMounted = useRef(true);
   
   // Safe setState functions that only update state if component is mounted
-  const safeSetSession = useCallback((data: Session | null) => {
-    if (isMounted.current) setSession(data);
+  const safeSetSession = useCallback(async (data: Session | null) => {
+    if (isMounted.current) {
+      setSession(data);
+      
+      // Also store in secure storage for persistence
+      if (data) {
+        try {
+          await SecureStore.setItemAsync(AUTH_SESSION_KEY, JSON.stringify(data));
+          await SecureStore.setItemAsync(AUTH_USER_KEY, JSON.stringify(data.user));
+        } catch (error) {
+          console.error('Error saving session to secure storage:', error);
+        }
+      }
+    }
   }, []);
   
   const safeSetUser = useCallback((data: User | null) => {
@@ -56,16 +73,80 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       try {
         safeSetLoading(true);
         
-        // Get current session
+        // Try to restore session from secure storage first (faster startup)
+        try {
+          const storedSession = await SecureStore.getItemAsync(AUTH_SESSION_KEY);
+          const storedUser = await SecureStore.getItemAsync(AUTH_USER_KEY);
+          
+          if (storedSession && storedUser) {
+            const sessionData = JSON.parse(storedSession);
+            const userData = JSON.parse(storedUser);
+            
+            // Only temporarily set these while we verify with Supabase
+            if (isMounted.current) {
+              setSession(sessionData);
+              setUser(userData);
+            }
+            
+            console.log('Restored session from secure storage');
+          }
+        } catch (storageError) {
+          console.error('Error reading session from secure storage:', storageError);
+        }
+        
+        // Get current session from Supabase (the source of truth)
         const { data: sessionData } = await supabase.auth.getSession();
-        safeSetSession(sessionData.session);
-        safeSetUser(sessionData.session?.user ?? null);
+        
+        if (sessionData.session) {
+          await safeSetSession(sessionData.session);
+          safeSetUser(sessionData.session?.user ?? null);
+          console.log('Session restored from Supabase');
+        } else if (session) {
+          // If we have a session in state but Supabase doesn't recognize it,
+          // try to refresh the session
+          try {
+            const { data: refreshData, error: refreshError } = await supabase.auth.refreshSession();
+            
+            if (refreshError) {
+              throw refreshError;
+            }
+            
+            if (refreshData.session) {
+              await safeSetSession(refreshData.session);
+              safeSetUser(refreshData.session.user);
+              console.log('Session refreshed successfully');
+            } else {
+              // No valid session, clear storage
+              await SecureStore.deleteItemAsync(AUTH_SESSION_KEY);
+              await SecureStore.deleteItemAsync(AUTH_USER_KEY);
+              safeSetSession(null);
+              safeSetUser(null);
+              console.log('No valid session found after refresh attempt');
+            }
+          } catch (refreshError) {
+            console.error('Error refreshing session:', refreshError);
+            // Clear invalid session
+            await SecureStore.deleteItemAsync(AUTH_SESSION_KEY);
+            await SecureStore.deleteItemAsync(AUTH_USER_KEY);
+            safeSetSession(null);
+            safeSetUser(null);
+          }
+        }
         
         // Listen for auth changes
         const { data: { subscription } } = supabase.auth.onAuthStateChange(
-          (_event, session) => {
-            safeSetSession(session);
-            safeSetUser(session?.user ?? null);
+          async (event, newSession) => {
+            console.log('Auth state changed:', event);
+            if (newSession) {
+              await safeSetSession(newSession);
+              safeSetUser(newSession.user);
+            } else if (event === 'SIGNED_OUT') {
+              // Clear session on sign out
+              await SecureStore.deleteItemAsync(AUTH_SESSION_KEY);
+              await SecureStore.deleteItemAsync(AUTH_USER_KEY);
+              safeSetSession(null);
+              safeSetUser(null);
+            }
           }
         );
         
@@ -103,8 +184,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       
       // Update state with the session and user
       if (data && data.session) {
-        safeSetSession(data.session);
+        await safeSetSession(data.session);
         safeSetUser(data.session.user);
+        
+        // Verify and fix onboarding status before redirecting the user
+        // This prevents onboarding from repeating on different devices
+        if (data.session.user) {
+          console.log("Verifying onboarding completion status...");
+          try {
+            const verificationResult = await verifyOnboardingCompletion(data.session.user.id);
+            if (verificationResult.success) {
+              console.log("Onboarding verification result:", verificationResult.message);
+              if (verificationResult.wasFixed) {
+                console.log("Fixed onboarding status during login!");
+              }
+            } else {
+              console.error("Error verifying onboarding status:", verificationResult.message);
+            }
+          } catch (verificationError) {
+            console.error("Exception during onboarding verification:", verificationError);
+            // Continue with login despite verification error
+          }
+        }
+        
         console.log("Sign-in successful, redirecting to app");
         router.replace('/(tabs)/');
       } else {
@@ -149,6 +251,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       
       // Sign out from Supabase first
       await supabase.auth.signOut();
+      
+      // Clear secure storage
+      await SecureStore.deleteItemAsync(AUTH_SESSION_KEY);
+      await SecureStore.deleteItemAsync(AUTH_USER_KEY);
       
       // Then clear the local state
       safeSetSession(null);

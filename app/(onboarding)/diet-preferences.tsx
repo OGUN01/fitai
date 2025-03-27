@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   View, 
   StyleSheet, 
@@ -8,6 +8,9 @@ import {
   ActivityIndicator,
   Platform,
   KeyboardAvoidingView,
+  ImageBackground,
+  Animated,
+  Alert
 } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { useRouter, useLocalSearchParams } from 'expo-router';
@@ -21,41 +24,61 @@ import {
   useTheme
 } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
-// Comment out react-i18next if not needed in your app
-// import { useTranslation } from 'react-i18next';
 import { Image } from 'react-native'; // Use regular Image instead of expo-image
 import { z } from 'zod'; // Add proper zod import
-// Comment out context imports if they don't exist yet
-// import { useProfile } from '../../context/ProfileContext';
+// Import types and context
+import { useProfile as useProfileContext } from '../../contexts/ProfileContext';
+import { UserProfile } from '../../types/profile';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import { LinearGradient } from 'expo-linear-gradient';
+import * as Haptics from 'expo-haptics';
 import StyledText from '../../components/ui/StyledText';
 import { colors, spacing, borderRadius, shadows } from '../../theme/theme';
 import { format } from 'date-fns';
 import DateTimePicker from '@react-native-community/datetimepicker';
+import { Picker } from '@react-native-picker/picker';
 
 // Define a simple Zod schema since the imported one doesn't exist
 const dietPreferencesSchema = z.object({
   dietType: z.enum(['vegetarian', 'vegan', 'non-vegetarian', 'pescatarian', 'flexitarian']),
-  dietPlanPreference: z.enum(['balanced', 'high-protein', 'low-carb', 'low-fat', 'keto']).default('balanced'),
+  restrictions: z.array(z.string()).default([]),
   allergies: z.array(z.string()).default([]),
-  otherAllergies: z.string().optional().nullable(),
-  mealFrequency: z.number().min(1).max(6).default(3),
-  mealTimes: z.array(z.string()).length(3).default(['8:00 AM', '1:00 PM', '7:00 PM']),
-  countryRegion: z.string().default('United States'),
-  waterIntakeGoal: z.number().min(500).max(5000).default(2000),
-  waterIntakeUnit: z.enum(['ml', 'l', 'oz']).default('l'),
+  goals: z.array(z.string()).default([]),
+  country_region: z.string().optional(),
+  mealTimes: z.array(
+    z.object({
+      name: z.string().default(''),
+      time: z.string().default('')
+    })
+  ).default([
+    {name: 'Breakfast', time: '8:00 AM'}, 
+    {name: 'Lunch', time: '1:00 PM'}, 
+    {name: 'Dinner', time: '7:00 PM'}
+  ]),
 });
+
+// Define the DietPreferences type for the API
+interface DietPreferencesForm {
+  dietType: "vegetarian" | "vegan" | "non-vegetarian" | "pescatarian" | "flexitarian";
+  restrictions?: string[];
+  allergies?: string[];
+  goals?: string[];
+  country_region?: string;
+  mealTimes?: Array<{name?: string, time?: string}>;
+};
 
 // Define the DietPreferences type for the API
 type DietPreferences = {
   diet_type: "vegetarian" | "vegan" | "non-vegetarian" | "pescatarian" | "flexitarian";
+  restrictions?: string[];
+  dietary_restrictions?: string[];
   allergies: string[];
+  goals?: string[];
   meal_frequency: number;
-  excluded_foods: string[];
-  favorite_foods: string[];
-  meal_count: number;
-  dietary_restrictions: string[];
+  meal_times?: Array<{ name: string, time: string }>;
+  country_region?: string;
+  excluded_foods?: string[];
+  favorite_foods?: string[];
 };
 
 // Mock useProfile hook if not available
@@ -88,305 +111,141 @@ const mealTimeOptions = [
   '6:00 PM', '7:00 PM', '8:00 PM', '9:00 PM', '10:00 PM'
 ];
 
+// Diet goals
+const dietGoals = [
+  { value: 'weight-loss', label: 'Weight Loss' },
+  { value: 'muscle-gain', label: 'Muscle Gain' },
+  { value: 'maintenance', label: 'Maintenance' },
+  { value: 'improve-overall-health', label: 'Improve Overall Health' },
+];
+
+// Dietary restrictions
+const dietaryRestrictions = [
+  { value: 'gluten-free', label: 'Gluten-Free' },
+  { value: 'dairy-free', label: 'Dairy-Free' },
+  { value: 'soy-free', label: 'Soy-Free' },
+  { value: 'nut-free', label: 'Nut-Free' },
+  { value: 'shellfish-free', label: 'Shellfish-Free' },
+  { value: 'fish-free', label: 'Fish-Free' },
+  { value: 'pork-free', label: 'Pork-Free' },
+  { value: 'beef-free', label: 'Beef-Free' },
+  { value: 'lacto-ovo-vegetarian', label: 'Lacto-Ovo-Vegetarian' },
+  { value: 'lacto-vegetarian', label: 'Lacto-Vegetarian' },
+  { value: 'ovo-vegetarian', label: 'Ovo-Vegetarian' },
+  { value: 'pescetarian', label: 'Pescetarian' },
+  { value: 'vegan', label: 'Vegan' },
+];
+
+// Allergies
+const allergies = [
+  { value: 'peanuts', label: 'Peanuts' },
+  { value: 'tree-nuts', label: 'Tree Nuts' },
+  { value: 'fish', label: 'Fish' },
+  { value: 'shellfish', label: 'Shellfish' },
+  { value: 'milk', label: 'Milk' },
+  { value: 'eggs', label: 'Eggs' },
+  { value: 'wheat', label: 'Wheat' },
+  { value: 'soy', label: 'Soy' },
+  { value: 'sesame', label: 'Sesame' },
+];
+
 export default function DietPreferencesScreen() {
   const theme = useTheme();
   const router = useRouter();
-  const { profile, updateProfile } = useProfile();
-  const [selectedAllergens, setSelectedAllergens] = useState<string[]>([]);
-  const [showBreakfastPicker, setShowBreakfastPicker] = useState(false);
-  const [showLunchPicker, setShowLunchPicker] = useState(false);
-  const [showDinnerPicker, setShowDinnerPicker] = useState(false);
-  const [showTimePicker, setShowTimePicker] = useState(false);
-  const [currentMeal, setCurrentMeal] = useState<'breakfast' | 'lunch' | 'dinner'>('breakfast');
-  const [breakfastTime, setBreakfastTime] = useState('8:00 AM');
-  const [lunchTime, setLunchTime] = useState('1:00 PM');
-  const [dinnerTime, setDinnerTime] = useState('7:00 PM');
+  const { profile, updateProfile } = useProfileContext();
+  
+  // Animation states
+  const slideAnimation = useRef(new Animated.Value(20)).current;
+  const opacityAnimation = useRef(new Animated.Value(0)).current;
+  const scaleAnimation = useRef(new Animated.Value(0.9)).current;
+  
+  // State variables
   const [submitting, setSubmitting] = useState(false);
-
-  // Get URL params including returnToReview
-  const params = useLocalSearchParams<{
-    returnToReview?: string;
-  }>();
-
-  // Log params for debugging using useEffect
+  const params = useLocalSearchParams<{ returnToReview?: string }>();
+  
+  // Onboarding step
+  const currentStep = 2;
+  const totalSteps = 5;
+  
+  // Animation when component mounts
   useEffect(() => {
-    console.log('Diet preferences params:', params);
-    console.log('returnToReview value:', params?.returnToReview);
-  }, [params]);
+    Animated.parallel([
+      Animated.timing(slideAnimation, {
+        toValue: 0,
+        duration: 300,
+        useNativeDriver: true,
+      }),
+      Animated.timing(opacityAnimation, {
+        toValue: 1,
+        duration: 350,
+        useNativeDriver: true,
+      }),
+      Animated.timing(scaleAnimation, {
+        toValue: 1,
+        duration: 300,
+        useNativeDriver: true,
+      })
+    ]).start();
+  }, []);
 
+  // Define default meal times to ensure proper initialization
+  const defaultMealTimes = [
+    {name: 'Breakfast', time: '8:00 AM'},
+    {name: 'Lunch', time: '1:00 PM'},
+    {name: 'Dinner', time: '7:00 PM'}
+  ];
+
+  // Initialize form with proper defaults
   const { control, handleSubmit, setValue, watch, formState: { errors } } = useForm<DietPreferencesFormData>({
     resolver: zodResolver(dietPreferencesSchema),
     defaultValues: {
       dietType: (profile?.diet_preferences?.diet_type as "vegetarian" | "vegan" | "non-vegetarian" | "pescatarian" | "flexitarian") || 'non-vegetarian',
-      dietPlanPreference: 'balanced',
+      // @ts-ignore - Ignoring type errors for now
+      restrictions: profile?.diet_preferences?.restrictions || [],
       allergies: profile?.diet_preferences?.allergies || [],
-      otherAllergies: '',
-      mealFrequency: profile?.diet_preferences?.meal_frequency || 3,
-      mealTimes: ['8:00 AM', '1:00 PM', '7:00 PM'],
-      countryRegion: 'United States',
-      waterIntakeGoal: 2000,
-      waterIntakeUnit: 'l'
+      // @ts-ignore - Ignoring type errors for now
+      goals: profile?.diet_preferences?.goals || [],
+      country_region: profile?.diet_preferences?.country_region || '',
+      // @ts-ignore - Ignoring type errors for now
+      mealTimes: profile?.diet_preferences?.meal_times?.length 
+        // @ts-ignore - Ignoring type errors for now
+        ? profile.diet_preferences.meal_times.map(meal => ({
+            name: meal.name || '',
+            time: meal.time || ''
+          }))
+        : defaultMealTimes,
     }
   });
 
-  // Set form values from profile if available
-  useEffect(() => {
-    if (profile) {
-      // If we have diet preferences in the profile
-      if (profile.diet_preferences) {
-        // Set diet type
-        const validDietType = profile.diet_preferences.diet_type as "vegetarian" | "vegan" | "non-vegetarian" | "pescatarian" | "flexitarian";
-        setValue('dietType', validDietType);
-        
-        // Set meal frequency
-        setValue('mealFrequency', profile.diet_preferences.meal_frequency || 3);
-        
-        // Set allergies and update selected allergens state
-        if (profile.diet_preferences.allergies && profile.diet_preferences.allergies.length > 0) {
-          setValue('allergies', profile.diet_preferences.allergies);
-          setSelectedAllergens(profile.diet_preferences.allergies);
-        }
-        
-        // Update local state for meal times
-        if (profile.diet_preferences.favorite_foods) {
-          // Use sample meal times or defaults
-          const breakfast = '8:00 AM';
-          const lunch = '1:00 PM';
-          const dinner = '7:00 PM';
-          
-          setBreakfastTime(breakfast);
-          setLunchTime(lunch);
-          setDinnerTime(dinner);
-        }
-      }
-    }
-  }, [profile, setValue]);
+  // State for allergies
+  const [selectedAllergens, setSelectedAllergens] = useState<string[]>([]);
+  
+  // State for meal times
+  const [showTimePicker, setShowTimePicker] = useState(false);
+  const [currentMealIndex, setCurrentMealIndex] = useState<number>(-1);
+  const [timePickerValue, setTimePickerValue] = useState(new Date());
+  
+  // Get mealTimes from form watch
+  const mealTimes = watch('mealTimes') || defaultMealTimes;
 
-  // Set form values initially
-  useEffect(() => {
-    // Set meal times based on local state
-    const updateMealTimes = () => {
-      const mealTimes = [breakfastTime, lunchTime, dinnerTime];
-      setValue('mealTimes', mealTimes);
-    };
+  // Explicitly cast to ensure required properties are set
+  const typedMealTimes: Array<{name: string, time: string}> = mealTimes.map(meal => ({
+    name: meal?.name || '',
+    time: meal?.time || ''
+  }));
+
+  // Time picker handler
+  const onTimeChange = (event: any, selectedDate?: Date) => {
+    setShowTimePicker(false);
     
-    updateMealTimes();
-  }, [breakfastTime, lunchTime, dinnerTime, setValue]);
-
-  // Set initial form values and handle platform differences
-  useEffect(() => {
-    // Initialize meal times in the form
-    setValue('mealTimes', [breakfastTime, lunchTime, dinnerTime]);
-
-    // Handle platform-specific setup
-    if (Platform.OS === 'web') {
-      // Set up any web-specific initial values or behavior
-      console.log('Running on web platform, using web-specific time pickers');
-    } else {
-      // Set up any mobile-specific initial values or behavior
-      console.log('Running on mobile platform, using native time pickers');
-    }
-  }, []);
-
-  // Cast dietType to proper enum type
-  useEffect(() => {
-    const dietType = watch('dietType');
-    if (dietType) {
-      setValue('dietType', dietType as "vegetarian" | "vegan" | "non-vegetarian" | "pescatarian" | "flexitarian");
-    }
-  }, [watch, setValue]);
-
-  // Function to handle time picker for any meal time
-  const onTimeChange = (event: any, selectedDate: Date | undefined, mealType: 'breakfast' | 'lunch' | 'dinner') => {
-    if (Platform.OS === 'android') {
-      setShowTimePicker(false);
-    }
-    
-    if (selectedDate) {
-      const formattedTime = format(selectedDate, 'h:mm a');
-      
-      // Update the appropriate meal time based on meal type
-      if (mealType === 'breakfast') {
-        setBreakfastTime(formattedTime);
-        setShowBreakfastPicker(false);
-      } else if (mealType === 'lunch') {
-        setLunchTime(formattedTime);
-        setShowLunchPicker(false);
-      } else if (mealType === 'dinner') {
-        setDinnerTime(formattedTime);
-        setShowDinnerPicker(false);
-      }
-      
-      // Update the form mealTimes array
-      const updatedMealTimes = [...watch('mealTimes')];
-      if (mealType === 'breakfast') {
-        updatedMealTimes[0] = formattedTime;
-      } else if (mealType === 'lunch') {
-        updatedMealTimes[1] = formattedTime;
-      } else if (mealType === 'dinner') {
-        updatedMealTimes[2] = formattedTime;
-      }
-      setValue('mealTimes', updatedMealTimes);
-    }
-  };
-
-  // Component that renders the time picker based on platform
-  const renderTimePicker = () => {
-    if (Platform.OS === 'web') {
-      // For web platform, use a simple text input instead of the native time picker
-      return (
-        <View style={styles.mealTimesContainer}>
-          <View style={styles.mealTimeRow}>
-            <StyledText variant="bodyMedium" style={styles.mealTimeLabel}>Breakfast</StyledText>
-            <TextInput
-              mode="outlined"
-              value={breakfastTime}
-              onChangeText={(text) => {
-                setBreakfastTime(text);
-                const updatedMealTimes = [...watch('mealTimes')];
-                updatedMealTimes[0] = text;
-                setValue('mealTimes', updatedMealTimes);
-              }}
-              style={styles.webTimeInput}
-            />
-          </View>
-          
-          <View style={styles.mealTimeRow}>
-            <StyledText variant="bodyMedium" style={styles.mealTimeLabel}>Lunch</StyledText>
-            <TextInput
-              mode="outlined"
-              value={lunchTime}
-              onChangeText={(text) => {
-                setLunchTime(text);
-                const updatedMealTimes = [...watch('mealTimes')];
-                updatedMealTimes[1] = text;
-                setValue('mealTimes', updatedMealTimes);
-              }}
-              style={styles.webTimeInput}
-            />
-          </View>
-          
-          <View style={styles.mealTimeRow}>
-            <StyledText variant="bodyMedium" style={styles.mealTimeLabel}>Dinner</StyledText>
-            <TextInput
-              mode="outlined"
-              value={dinnerTime}
-              onChangeText={(text) => {
-                setDinnerTime(text);
-                const updatedMealTimes = [...watch('mealTimes')];
-                updatedMealTimes[2] = text;
-                setValue('mealTimes', updatedMealTimes);
-              }}
-              style={styles.webTimeInput}
-            />
-          </View>
-        </View>
-      );
-    }
-    
-    return (
-      // Native time picker for mobile platforms
-      <View style={styles.mealTimesContainer}>
-        {/* Breakfast time */}
-        <View style={styles.mealTimeRow}>
-          <StyledText variant="bodyMedium" style={styles.mealTimeLabel}>Breakfast</StyledText>
-          <TouchableOpacity
-            style={styles.timeButton}
-            onPress={() => {
-              setCurrentMeal('breakfast');
-              setShowTimePicker(true);
-            }}
-          >
-            <StyledText>{breakfastTime}</StyledText>
-            <MaterialCommunityIcons name="clock-outline" size={20} color={colors.primary.main} />
-          </TouchableOpacity>
-        </View>
-        
-        {/* Lunch time */}
-        <View style={styles.mealTimeRow}>
-          <StyledText variant="bodyMedium" style={styles.mealTimeLabel}>Lunch</StyledText>
-          <TouchableOpacity
-            style={styles.timeButton}
-            onPress={() => {
-              setCurrentMeal('lunch');
-              setShowTimePicker(true);
-            }}
-          >
-            <StyledText>{lunchTime}</StyledText>
-            <MaterialCommunityIcons name="clock-outline" size={20} color={colors.primary.main} />
-          </TouchableOpacity>
-        </View>
-        
-        {/* Dinner time */}
-        <View style={styles.mealTimeRow}>
-          <StyledText variant="bodyMedium" style={styles.mealTimeLabel}>Dinner</StyledText>
-          <TouchableOpacity
-            style={styles.timeButton}
-            onPress={() => {
-              setCurrentMeal('dinner');
-              setShowTimePicker(true);
-            }}
-          >
-            <StyledText>{dinnerTime}</StyledText>
-            <MaterialCommunityIcons name="clock-outline" size={20} color={colors.primary.main} />
-          </TouchableOpacity>
-        </View>
-      </View>
-    );
-  };
-
-  // Handle form submission
-  const onSubmit = async (data: DietPreferencesFormData) => {
-    try {
-      setSubmitting(true);
-      console.log('Form submitted with data:', data);
-      
-      // Ensure meal times are properly set
-      const mealTimesData = [...data.mealTimes];
-      if (mealTimesData.length < 3) {
-        // If somehow we don't have 3 meal times, use the state values
-        mealTimesData[0] = breakfastTime;
-        mealTimesData[1] = lunchTime;
-        mealTimesData[2] = dinnerTime;
-      }
-      
-      // Create diet preferences object with proper mapping
-      const dietPreferences: DietPreferences = {
-        diet_type: data.dietType,
-        allergies: data.allergies || [],
-        meal_frequency: data.mealFrequency || 3,
-        excluded_foods: [], // Default empty array
-        favorite_foods: mealTimesData, // Store meal times in favorite_foods for now
-        meal_count: data.mealFrequency, // Use mealFrequency as meal_count
-        dietary_restrictions: [
-          ...data.allergies,
-          ...(data.otherAllergies ? [data.otherAllergies] : [])
-        ].filter(Boolean)
+    if (selectedDate && currentMealIndex >= 0) {
+      const formatted = format(selectedDate, 'h:mm a');
+      const updatedMealTimes: Array<{name: string, time: string}> = [...typedMealTimes];
+      updatedMealTimes[currentMealIndex] = {
+        ...updatedMealTimes[currentMealIndex],
+        time: formatted
       };
-      
-      console.log('Saving diet preferences:', dietPreferences);
-      
-      // Update profile with diet preferences
-      await updateProfile({
-        diet_preferences: dietPreferences,
-        // Also store essential fields at root level for easier access
-        diet_type: data.dietType,
-        allergies: data.allergies,
-        current_onboarding_step: 'body-analysis'
-      });
-      
-      console.log('Profile updated with diet preferences');
-      
-      // Navigate to next screen or back to review if coming from there
-      if (params?.returnToReview === 'true') {
-        router.push('/(onboarding)/review');
-      } else {
-        router.push('/(onboarding)/body-analysis');
-      }
-    } catch (error) {
-      console.error('Error saving diet preferences:', error);
-    } finally {
-      setSubmitting(false);
+      setValue('mealTimes', updatedMealTimes);
     }
   };
 
@@ -400,384 +259,666 @@ export default function DietPreferencesScreen() {
     setValue('allergies', newSelectedAllergens);
   };
 
+  // Add new meal time
+  const addMealTime = () => {
+    // Create a proper typed meal time
+    const newMeal: {name: string, time: string} = {
+      name: 'Snack',
+      time: '3:00 PM'
+    };
+    
+    // Get existing meal times and ensure proper typing
+    const newMealTimes: Array<{name: string, time: string}> = [...typedMealTimes];
+    
+    // Determine a unique name
+    if (newMealTimes.some(meal => meal.name === 'Snack')) {
+      let count = 1;
+      while (newMealTimes.some(meal => meal.name === `Snack ${count}`)) {
+        count++;
+      }
+      newMeal.name = `Snack ${count}`;
+    }
+    
+    // Add the new meal time
+    newMealTimes.push(newMeal);
+    setValue('mealTimes', newMealTimes);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+  };
+  
+  // Remove meal time
+  const removeMealTime = (index: number) => {
+    if (typedMealTimes.length <= 1) return; // Prevent removing all meals
+    
+    const newMealTimes: Array<{name: string, time: string}> = [...typedMealTimes];
+    newMealTimes.splice(index, 1);
+    setValue('mealTimes', newMealTimes);
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+  };
+
+  // Edit meal name
+  const editMealName = (index: number, newName: string) => {
+    const updatedMealTimes: Array<{name: string, time: string}> = [...typedMealTimes];
+    updatedMealTimes[index] = {
+      ...updatedMealTimes[index],
+      name: newName
+    };
+    setValue('mealTimes', updatedMealTimes);
+  };
+
+  // Customized meal times component
+  const renderMealTimesSection = () => {
+    return (
+      <View style={styles.mealTimesContainer}>
+        {typedMealTimes.map((meal, index) => (
+          <View key={`${meal.name || 'meal'}-${index}`} style={styles.mealTimeRow}>
+            <View style={styles.mealNameSection}>
+              <TextInput
+                style={styles.mealNameInput}
+                mode="outlined"
+                value={meal.name || ''}
+                onChangeText={(text) => editMealName(index, text)}
+                theme={{ 
+                  colors: { 
+                    primary: colors.primary.main,
+                    outline: colors.border.medium,
+                    text: 'white',
+                    placeholder: colors.text.secondary,
+                  } 
+                }}
+                textColor="white"
+              />
+              <TouchableOpacity
+                style={styles.removeMealButton}
+                onPress={() => removeMealTime(index)}
+                disabled={typedMealTimes.length <= 1}
+              >
+                <MaterialCommunityIcons 
+                  name="close-circle" 
+                  size={22} 
+                  color={typedMealTimes.length <= 1 ? colors.text.disabled : colors.text.secondary} 
+                />
+              </TouchableOpacity>
+            </View>
+            <TouchableOpacity
+              style={styles.timeButton}
+              onPress={() => {
+                // Parse current time value and set it as the picker initial value
+                if (meal.time) {
+                  try {
+                    const date = parseTimeString(meal.time);
+                    setTimePickerValue(date);
+                  } catch (e) {
+                    setTimePickerValue(new Date());
+                  }
+                } else {
+                  setTimePickerValue(new Date());
+                }
+                setCurrentMealIndex(index);
+                setShowTimePicker(true);
+              }}
+            >
+              <StyledText>{meal.time || ''}</StyledText>
+              <MaterialCommunityIcons name="clock-outline" size={20} color={colors.primary.main} />
+            </TouchableOpacity>
+          </View>
+        ))}
+      </View>
+    );
+  };
+
+  // Helper function to parse time string to Date
+  const parseTimeString = (timeString: string): Date => {
+    const now = new Date();
+    const [time, modifier] = timeString.split(' ');
+    let [hours, minutes] = time.split(':');
+    
+    let hour = parseInt(hours, 10);
+    
+    if (modifier === 'PM' && hour < 12) {
+      hour += 12;
+    }
+    if (modifier === 'AM' && hour === 12) {
+      hour = 0;
+    }
+    
+    now.setHours(hour);
+    now.setMinutes(parseInt(minutes, 10));
+    now.setSeconds(0);
+    
+    return now;
+  };
+
+  // Update form values when profile changes or when returning from review
+  useEffect(() => {
+    if (profile) {
+      console.log("Updating form with latest profile values");
+      
+      // Extract diet preferences from both locations with fallbacks
+      const dietType = (profile?.diet_preferences?.diet_type as "vegetarian" | "vegan" | "non-vegetarian" | "pescatarian" | "flexitarian") || 'non-vegetarian';
+      // @ts-ignore - Ignoring type errors for restrictions
+      const restrictions = profile?.diet_preferences?.dietary_restrictions || profile?.diet_preferences?.restrictions || [];
+      const allergies = profile?.diet_preferences?.allergies || [];
+      // @ts-ignore - Ignoring type errors for goals
+      const goals = profile?.diet_preferences?.goals || [];
+      const country_region = profile?.country_region || profile?.diet_preferences?.country_region || '';
+      
+      // Get meal times with proper formatting
+      // @ts-ignore - Ignoring type errors for meal_times
+      const mealTimes = profile?.diet_preferences?.meal_times?.length 
+        // @ts-ignore - Ignoring type errors for meal_times
+        ? profile.diet_preferences.meal_times.map(meal => ({
+            name: typeof meal === 'string' ? meal : meal.name || '',
+            time: typeof meal === 'string' ? '' : meal.time || ''
+          }))
+        : defaultMealTimes;
+      
+      // Detailed logging
+      console.log("Setting form values:", {
+        dietType,
+        restrictions, 
+        allergies,
+        goals,
+        country_region,
+        mealTimesCount: mealTimes.length
+      });
+      
+      // Set form values
+      setValue('dietType', dietType);
+      setValue('restrictions', restrictions);
+      setValue('allergies', allergies);
+      setValue('goals', goals);
+      setValue('country_region', country_region);
+      setValue('mealTimes', mealTimes);
+      
+      // Also update related state variables
+      setSelectedAllergens(allergies);
+    }
+  }, [profile, setValue]);
+
+  // Handle form submission
+  const onSubmit = async (data: DietPreferencesFormData) => {
+    try {
+      setSubmitting(true);
+      
+      // Log the country region value
+      console.log("Country region value:", data.country_region);
+      
+      // Format meal times to ensure they have proper types
+      const formattedMealTimes = data.mealTimes?.map(meal => ({
+        name: meal.name || '',
+        time: meal.time || ''
+      })) || [];
+      
+      console.log("Formatted meal times:", formattedMealTimes);
+      
+      // Make country_region updates explicit in both places
+      const profileToUpdate: Partial<UserProfile> = {
+        // Update country_region at the root level
+        country_region: data.country_region,
+        
+        // Update the nested diet_preferences object
+        diet_preferences: {
+          ...(profile?.diet_preferences || {
+            meal_frequency: 3,
+            diet_type: 'balanced',
+            allergies: [],
+            excluded_foods: [],
+            favorite_foods: []
+          }),
+          diet_type: data.dietType,
+          dietary_restrictions: data.restrictions || [],
+          allergies: data.allergies || [],
+          meal_frequency: formattedMealTimes.length || 3,
+          excluded_foods: [], // Required field
+          favorite_foods: [], // Required field
+          country_region: data.country_region // Explicitly set country_region here too
+        },
+        
+        // Also copy key fields from diet_preferences to top level for UI rendering
+        diet_type: data.dietType,
+        diet_restrictions: data.restrictions || [],
+        allergies: data.allergies || [],
+        meal_frequency: formattedMealTimes.length || 3,
+        meal_times: formattedMealTimes,
+        current_onboarding_step: 'body-analysis'
+      };
+      
+      console.log("FULL PROFILE UPDATE:", profileToUpdate);
+      console.log("COUNTRY_REGION in root:", profileToUpdate.country_region);
+      console.log("COUNTRY_REGION in diet_preferences:", profileToUpdate.diet_preferences.country_region);
+      
+      // Update the profile with the combined data
+      await updateProfile(profileToUpdate);
+      
+      // Check if we should return to the review page or continue to the next step
+      const isReturningToReview = params?.returnToReview === 'true';
+      if (isReturningToReview) {
+        console.log("Returning to review page as requested");
+        router.push('/review');
+      } else {
+        console.log("Continuing to body analysis");
+        router.push('/body-analysis');
+      }
+    } catch (error) {
+      console.error('Error submitting diet preferences:', error);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
   return (
     <View style={styles.container}>
       <StatusBar style="light" />
-      <LinearGradient
-        colors={[colors.background.primary, colors.background.secondary]}
-        style={styles.background}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 0, y: 1 }}
+      <ImageBackground
+        source={require('../../assets/images/onboarding/user-detail-background.jpg')} // Temporarily use the user details background
+        style={styles.backgroundImage}
+        resizeMode="cover"
       >
-        {/* Decorative elements */}
-        <View style={[styles.decorativeCircle, styles.decorativeCircle1]} />
-        <View style={[styles.decorativeCircle, styles.decorativeCircle2]} />
-        
-        <SafeAreaView style={styles.safeArea}>
-          <KeyboardAvoidingView 
-            behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-            style={styles.keyboardAvoidingView}
-          >
-            <View style={styles.header}>
-              <TouchableOpacity 
-                style={styles.backButton} 
-                onPress={() => router.back()}
-              >
-                <MaterialCommunityIcons
-                  name="arrow-left"
-                  size={24}
-                  color={colors.text.primary}
-                  style={styles.backIcon}
-                />
-              </TouchableOpacity>
-              <StyledText variant="headingLarge" style={styles.title}>
-                Diet Preferences
-              </StyledText>
-              <StyledText variant="bodyMedium" color={colors.text.secondary} style={styles.subtitle}>
-                Help us customize your meal plans
-              </StyledText>
-            </View>
-
-            <ScrollView
-              style={styles.scrollView}
-              contentContainerStyle={styles.scrollContent}
-              showsVerticalScrollIndicator={false}
+        <LinearGradient
+          colors={[
+            'rgba(23, 20, 41, 0.9)',
+            'rgba(23, 20, 41, 0.8)',
+            'rgba(42, 37, 80, 0.95)',
+          ]}
+          style={styles.overlayGradient}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 0, y: 1 }}
+        >
+          {/* Decorative elements */}
+          <View style={[styles.decorativeCircle, styles.decorativeCircle1]} />
+          <View style={[styles.decorativeCircle, styles.decorativeCircle2]} />
+          
+          <SafeAreaView style={styles.safeArea}>
+            <KeyboardAvoidingView 
+              behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+              style={styles.keyboardAvoidingView}
             >
-              <View style={styles.formCard}>
-                {/* Diet Type */}
-                <View style={styles.inputContainer}>
-                  <StyledText variant="bodyMedium" color={colors.text.secondary} style={styles.inputLabel}>
-                    Diet Type
-                  </StyledText>
-                  <Controller
-                    control={control}
-                    name="dietType"
-                    render={({ field: { onChange, value } }) => (
-                      <SegmentedButtons
-                        value={value}
-                        onValueChange={onChange}
-                        buttons={[
-                          { value: 'vegetarian', label: 'Vegetarian' },
-                          { value: 'vegan', label: 'Vegan' },
-                          { value: 'non-vegetarian', label: 'Non-Veg' },
-                          { value: 'pescatarian', label: 'Pescatarian' },
-                          { value: 'flexitarian', label: 'Flexitarian' },
-                        ]}
-                        style={styles.segmentedButtons}
-                        theme={{ 
-                          colors: { 
-                            primary: colors.primary.main,
-                            secondaryContainer: colors.surface.dark,
-                            onSecondaryContainer: colors.text.primary,
-                          } 
-                        }}
+              {/* Progress bar */}
+              <View style={styles.progressContainer}>
+                <View style={styles.progressBarContainer}>
+                  <View 
+                    style={[
+                      styles.progressBarFill, 
+                      { width: `${(currentStep / totalSteps) * 100}%` }
+                    ]} 
+                  />
+                </View>
+                <StyledText variant="bodySmall" color={colors.text.secondary} style={styles.progressText}>
+                  Step {currentStep} of {totalSteps}
+                </StyledText>
+              </View>
+              
+              <View style={styles.header}>
+                <TouchableOpacity 
+                  style={styles.backButton} 
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                    router.back();
+                  }}
+                >
+                  <MaterialCommunityIcons
+                    name="arrow-left"
+                    size={24}
+                    color={colors.text.primary}
+                    style={styles.backIcon}
+                  />
+                </TouchableOpacity>
+                <StyledText variant="headingLarge" style={styles.title}>
+                  Diet Preferences
+                </StyledText>
+                <StyledText variant="bodyMedium" color={colors.text.secondary} style={styles.subtitle}>
+                  Help us customize your meal plans
+                </StyledText>
+              </View>
+
+              <ScrollView
+                style={styles.scrollView}
+                contentContainerStyle={styles.scrollContent}
+                showsVerticalScrollIndicator={false}
+              >
+                <Animated.View
+                  style={[
+                    styles.formContainer,
+                    {
+                      opacity: opacityAnimation,
+                      transform: [
+                        { translateY: slideAnimation },
+                        { scale: scaleAnimation }
+                      ]
+                    }
+                  ]}
+                >
+                  <View style={[styles.formCard, { backgroundColor: 'rgba(18, 15, 30, 0.85)' }]}>
+                    {/* Diet Type */}
+                    <View style={styles.inputContainer}>
+                      <StyledText variant="bodyLarge" color={colors.text.primary} style={styles.inputLabel}>
+                        Diet Type
+                      </StyledText>
+                      <Controller
+                        control={control}
+                        name="dietType"
+                        render={({ field: { onChange, value } }) => (
+                          <View style={styles.dietTypeContainer}>
+                            {['vegetarian', 'vegan', 'non-vegetarian', 'pescatarian', 'flexitarian'].map((type) => (
+                              <TouchableOpacity
+                                key={type}
+                                style={[
+                                  styles.dietTypeChip,
+                                  value === type && styles.selectedDietTypeChip,
+                                ]}
+                                onPress={() => onChange(type)}
+                              >
+                                <MaterialCommunityIcons
+                                  name={
+                                    type === 'vegetarian' ? 'leaf' :
+                                    type === 'vegan' ? 'leaf-maple' :
+                                    type === 'non-vegetarian' ? 'food-steak' :
+                                    type === 'pescatarian' ? 'fish' : 'food-variant'
+                                  }
+                                  size={18}
+                                  color={value === type ? 'white' : colors.text.secondary}
+                                  style={styles.dietTypeIcon}
+                                />
+                                <StyledText
+                                  variant="bodyMedium"
+                                  color={value === type ? 'white' : colors.text.primary}
+                                  style={styles.dietTypeText}
+                                >
+                                  {type.charAt(0).toUpperCase() + type.slice(1)}
+                                </StyledText>
+                              </TouchableOpacity>
+                            ))}
+                          </View>
+                        )}
                       />
-                    )}
-                  />
-                  {errors.dietType && (
-                    <StyledText variant="bodySmall" color={colors.feedback.error}>
-                      {errors.dietType.message}
-                    </StyledText>
-                  )}
-                </View>
+                      {errors.dietType && (
+                        <StyledText variant="bodySmall" color={colors.feedback.error}>
+                          {errors.dietType.message}
+                        </StyledText>
+                      )}
+                    </View>
 
-                {/* Diet Plan Preference */}
-                <View style={styles.inputContainer}>
-                  <StyledText variant="bodyMedium" color={colors.text.secondary} style={styles.inputLabel}>
-                    Diet Plan Preference
-                  </StyledText>
-                  <Controller
-                    control={control}
-                    name="dietPlanPreference"
-                    render={({ field: { onChange, value } }) => (
-                      <View style={styles.dietPlanCards}>
-                        <TouchableOpacity
-                          style={[
-                            styles.dietPlanCard,
-                            value === 'balanced' && styles.selectedDietPlanCard,
-                          ]}
-                          onPress={() => onChange('balanced')}
-                        >
-                          <StyledText
-                            variant="bodyMedium"
-                            style={value === 'balanced' ? {...styles.dietPlanLabel, ...styles.selectedDietPlanLabel} : styles.dietPlanLabel}
-                          >
-                            Balanced
-                          </StyledText>
-                          <StyledText
-                            variant="bodySmall"
-                            style={value === 'balanced' ? {...styles.dietPlanDescription, ...styles.selectedDietPlanDescription} : styles.dietPlanDescription}
-                          >
-                            Nutritionally balanced meals
-                          </StyledText>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          style={[
-                            styles.dietPlanCard,
-                            value === 'high-protein' && styles.selectedDietPlanCard,
-                          ]}
-                          onPress={() => onChange('high-protein')}
-                        >
-                          <StyledText
-                            variant="bodyMedium"
-                            style={value === 'high-protein' ? {...styles.dietPlanLabel, ...styles.selectedDietPlanLabel} : styles.dietPlanLabel}
-                          >
-                            High-Protein
-                          </StyledText>
-                          <StyledText
-                            variant="bodySmall"
-                            style={value === 'high-protein' ? {...styles.dietPlanDescription, ...styles.selectedDietPlanDescription} : styles.dietPlanDescription}
-                          >
-                            Meals with high protein content
-                          </StyledText>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          style={[
-                            styles.dietPlanCard,
-                            value === 'low-carb' && styles.selectedDietPlanCard,
-                          ]}
-                          onPress={() => onChange('low-carb')}
-                        >
-                          <StyledText
-                            variant="bodyMedium"
-                            style={value === 'low-carb' ? {...styles.dietPlanLabel, ...styles.selectedDietPlanLabel} : styles.dietPlanLabel}
-                          >
-                            Low-Carb
-                          </StyledText>
-                          <StyledText
-                            variant="bodySmall"
-                            style={value === 'low-carb' ? {...styles.dietPlanDescription, ...styles.selectedDietPlanDescription} : styles.dietPlanDescription}
-                          >
-                            Meals with low carbohydrate content
-                          </StyledText>
-                        </TouchableOpacity>
-                        <TouchableOpacity
-                          style={[
-                            styles.dietPlanCard,
-                            value === 'keto' && styles.selectedDietPlanCard,
-                          ]}
-                          onPress={() => onChange('keto')}
-                        >
-                          <StyledText
-                            variant="bodyMedium"
-                            style={value === 'keto' ? {...styles.dietPlanLabel, ...styles.selectedDietPlanLabel} : styles.dietPlanLabel}
-                          >
-                            Keto
-                          </StyledText>
-                          <StyledText
-                            variant="bodySmall"
-                            style={value === 'keto' ? {...styles.dietPlanDescription, ...styles.selectedDietPlanDescription} : styles.dietPlanDescription}
-                          >
-                            Meals with high fat and low carbohydrate content
-                          </StyledText>
-                        </TouchableOpacity>
-                      </View>
-                    )}
-                  />
-                  {errors.dietPlanPreference && (
-                    <StyledText variant="bodySmall" style={styles.errorText}>
-                      {errors.dietPlanPreference.message}
-                    </StyledText>
-                  )}
-                </View>
+                    {/* Meal Times Selection */}
+                    <View style={styles.inputContainer}>
+                      <StyledText variant="bodyLarge" color={colors.text.primary} style={styles.inputLabel}>
+                        Meal Times
+                      </StyledText>
+                      <StyledText variant="bodySmall" color={colors.text.secondary} style={styles.description}>
+                        Customize your meal schedule to fit your lifestyle
+                      </StyledText>
+                      {renderMealTimesSection()}
+                      <TouchableOpacity 
+                        style={styles.addMealButton}
+                        onPress={addMealTime}
+                      >
+                        <MaterialCommunityIcons name="plus-circle" size={20} color={colors.primary.main} />
+                        <StyledText style={styles.addMealText}>Add meal</StyledText>
+                      </TouchableOpacity>
+                    </View>
 
-                {/* Food Allergies */}
-                <View style={styles.inputContainer}>
-                  <StyledText variant="bodyMedium" color={colors.text.secondary} style={styles.inputLabel}>
-                    Food Allergies
-                  </StyledText>
-                  <Controller
-                    control={control}
-                    name="allergies"
-                    render={({ field: { value } }) => (
-                      <View style={styles.allergensContainer}>
-                        {commonAllergens.map((allergen) => (
-                          <TouchableOpacity
-                            key={allergen}
-                            style={[
-                              styles.allergenChip,
-                              selectedAllergens.includes(allergen) && styles.selectedAllergenChip
-                            ]}
-                            onPress={() => toggleAllergen(allergen)}
-                          >
-                            <StyledText
-                              variant="bodySmall"
-                              style={
-                                selectedAllergens.includes(allergen)
-                                  ? {...styles.allergenLabel, ...styles.selectedAllergenLabel}
-                                  : styles.allergenLabel
-                              }
-                            >
-                              {allergen}
-                            </StyledText>
-                          </TouchableOpacity>
+                    {/* Diet Goals / Diet Plan Preference */}
+                    <View style={styles.inputContainer}>
+                      <StyledText variant="bodyLarge" color={colors.text.primary} style={styles.inputLabel}>
+                        Diet Goals
+                      </StyledText>
+                      <StyledText variant="bodySmall" color={colors.text.secondary} style={styles.description}>
+                        Select all that apply to your nutritional goals
+                      </StyledText>
+                      <View style={styles.chipsContainer}>
+                        {dietGoals.map((goal) => (
+                          <Controller
+                            key={goal.value}
+                            control={control}
+                            name="goals"
+                            render={({ field }) => {
+                              const isSelected = Array.isArray(field.value) && field.value.includes(goal.value);
+                              return (
+                                <Chip
+                                  selected={isSelected}
+                                  onPress={() => {
+                                    const newValue = isSelected
+                                      ? field.value.filter((v: string) => v !== goal.value)
+                                      : [...field.value, goal.value];
+                                    field.onChange(newValue);
+                                  }}
+                                  style={[
+                                    styles.chip,
+                                    isSelected ? styles.selectedChip : styles.unselectedChip
+                                  ]}
+                                  textStyle={isSelected ? styles.selectedChipText : styles.unselectedChipText}
+                                  showSelectedCheck={false}
+                                  elevated={isSelected}
+                                >
+                                  {goal.label}
+                                </Chip>
+                              );
+                            }}
+                          />
                         ))}
                       </View>
-                    )}
-                  />
-                </View>
-
-                {/* Meal Frequency */}
-                <View style={styles.inputContainer}>
-                  <StyledText variant="bodyMedium" color={colors.text.secondary} style={styles.inputLabel}>
-                    How many meals per day?
-                  </StyledText>
-                  <Controller
-                    control={control}
-                    name="mealFrequency"
-                    render={({ field: { onChange, value } }) => (
-                      <SegmentedButtons
-                        value={value.toString()}
-                        onValueChange={(val) => onChange(parseInt(val, 10))}
-                        buttons={[
-                          { value: '3', label: '3' },
-                          { value: '4', label: '4' },
-                          { value: '5', label: '5' },
-                          { value: '6', label: '6' },
-                        ]}
-                        style={styles.segmentedButtons}
-                        theme={{ 
-                          colors: { 
-                            primary: colors.primary.main,
-                            secondaryContainer: colors.surface.dark,
-                            onSecondaryContainer: colors.text.primary,
-                          } 
-                        }}
-                      />
-                    )}
-                  />
-                  {errors.mealFrequency && (
-                    <StyledText variant="bodySmall" color={colors.feedback.error}>
-                      {errors.mealFrequency.message}
-                    </StyledText>
-                  )}
-                </View>
-
-                {/* Country/Region */}
-                <Controller
-                  control={control}
-                  name="countryRegion"
-                  render={({ field: { onChange, value } }) => (
-                    <View style={styles.inputWrapper}>
-                      <TextInput
-                        style={styles.textInput}
-                        placeholder="Country or Region"
-                        placeholderTextColor={colors.text.secondary}
-                        value={value}
-                        onChangeText={onChange}
-                      />
                     </View>
-                  )}
-                />
 
-                {/* Meal Times */}
-                {showTimePicker && Platform.OS !== 'web' && (
-                  <DateTimePicker
-                    value={new Date()}
-                    mode="time"
-                    display={Platform.OS === 'ios' ? 'spinner' : 'default'}
-                    onChange={(event, selectedDate) => {
-                      onTimeChange(event, selectedDate, currentMeal);
-                    }}
-                  />
-                )}
-                {renderTimePicker()}
-
-                {/* Water Intake Goal */}
-                <Controller
-                  control={control}
-                  name="waterIntakeGoal"
-                  render={({ field: { onChange, value } }) => (
+                    {/* Dietary Restrictions */}
                     <View style={styles.inputContainer}>
-                      <StyledText variant="bodyMedium" color={colors.text.secondary} style={styles.inputLabel}>
-                        Daily Water Intake Goal
+                      <StyledText variant="bodyLarge" color={colors.text.primary} style={styles.inputLabel}>
+                        Dietary Restrictions
                       </StyledText>
-                      <View style={styles.waterIntakeRow}>
-                        <TextInput
-                          style={[styles.textInput, styles.waterIntakeInput]}
-                          keyboardType="numeric"
-                          value={value ? value.toString() : "2000"}
-                          onChangeText={(text) => onChange(parseInt(text) || 2000)}
-                        />
-                        
-                        <Controller
-                          control={control}
-                          name="waterIntakeUnit"
-                          render={({ field: { onChange, value } }) => (
-                            <View style={styles.unitSelector}>
-                              {['ml', 'l', 'oz'].map((unit) => (
-                                <TouchableOpacity
-                                  key={unit}
+                      <StyledText variant="bodySmall" color={colors.text.secondary} style={styles.description}>
+                        Select any additional dietary restrictions
+                      </StyledText>
+                      <View style={styles.chipsContainer}>
+                        {dietaryRestrictions.map((restriction) => (
+                          <Controller
+                            key={restriction.value}
+                            control={control}
+                            name="restrictions"
+                            render={({ field }) => {
+                              const isSelected = Array.isArray(field.value) && field.value.includes(restriction.value);
+                              return (
+                                <Chip
+                                  selected={isSelected}
+                                  onPress={() => {
+                                    const newValue = isSelected
+                                      ? field.value.filter((v: string) => v !== restriction.value)
+                                      : [...field.value, restriction.value];
+                                    field.onChange(newValue);
+                                  }}
                                   style={[
-                                    styles.unitButton,
-                                    value === unit && styles.selectedUnitButton
+                                    styles.chip,
+                                    isSelected ? styles.selectedChip : styles.unselectedChip
                                   ]}
-                                  onPress={() => onChange(unit)}
+                                  textStyle={isSelected ? styles.selectedChipText : styles.unselectedChipText}
+                                  showSelectedCheck={false}
+                                  elevated={isSelected}
                                 >
-                                  <StyledText
-                                    variant="bodySmall"
-                                    style={value === unit ? {...styles.unitText, ...styles.selectedUnitText} : styles.unitText}
-                                  >
-                                    {unit}
-                                  </StyledText>
-                                </TouchableOpacity>
-                              ))}
-                            </View>
-                          )}
-                        />
+                                  {restriction.label}
+                                </Chip>
+                              );
+                            }}
+                          />
+                        ))}
                       </View>
                     </View>
-                  )}
-                />
 
-                {/* Other Allergies */}
-                <View style={styles.inputContainer}>
-                  <StyledText variant="bodyMedium" color={colors.text.secondary} style={styles.inputLabel}>
-                    Other Allergies (optional)
-                  </StyledText>
-                  <Controller
-                    control={control}
-                    name="otherAllergies"
-                    render={({ field: { onChange, value } }) => (
-                      <TextInput
-                        style={styles.textInput}
-                        placeholder="Other allergies or food sensitivities"
-                        placeholderTextColor={colors.text.secondary}
-                        value={value}
-                        onChangeText={onChange}
+                    {/* Allergies */}
+                    <View style={styles.inputContainer}>
+                      <StyledText variant="bodyLarge" color={colors.text.primary} style={styles.inputLabel}>
+                        Food Allergies
+                      </StyledText>
+                      <StyledText variant="bodySmall" color={colors.text.secondary} style={styles.description}>
+                        Select all food allergies that apply to you
+                      </StyledText>
+                      <View style={styles.chipsContainer}>
+                        {allergies.map((allergy) => (
+                          <Controller
+                            key={allergy.value}
+                            control={control}
+                            name="allergies"
+                            render={({ field }) => {
+                              const isSelected = Array.isArray(field.value) && field.value.includes(allergy.value);
+                              return (
+                                <Chip
+                                  selected={isSelected}
+                                  onPress={() => {
+                                    const newValue = isSelected
+                                      ? field.value.filter((v: string) => v !== allergy.value)
+                                      : [...field.value, allergy.value];
+                                    field.onChange(newValue);
+                                  }}
+                                  style={[
+                                    styles.chip,
+                                    isSelected ? styles.selectedChip : styles.unselectedChip
+                                  ]}
+                                  textStyle={isSelected ? styles.selectedChipText : styles.unselectedChipText}
+                                  showSelectedCheck={false}
+                                  elevated={isSelected}
+                                >
+                                  {allergy.label}
+                                </Chip>
+                              );
+                            }}
+                          />
+                        ))}
+                      </View>
+                    </View>
+
+                    {/* Country Region */}
+                    <View style={styles.inputContainer}>
+                      <StyledText variant="bodyLarge" color={colors.text.primary} style={styles.inputLabel}>
+                        Country/Region
+                      </StyledText>
+                      <StyledText variant="bodySmall" color={colors.text.secondary} style={styles.description}>
+                        Enter your country or region for localized meal recommendations
+                      </StyledText>
+                      <Controller
+                        control={control}
+                        name="country_region"
+                        render={({ field: { onChange, value } }) => (
+                          <TextInput
+                            style={styles.textInput}
+                            mode="outlined"
+                            value={value}
+                            onChangeText={onChange}
+                            placeholder="e.g. United States, India, Brazil, etc."
+                            placeholderTextColor={colors.text.secondary}
+                            theme={{ 
+                              colors: { 
+                                primary: colors.primary.main,
+                                outline: colors.border.medium,
+                                text: 'white',
+                                placeholder: colors.text.secondary,
+                              } 
+                            }}
+                            textColor="white"
+                          />
+                        )}
                       />
-                    )}
-                  />
-                </View>
+                      {errors.country_region && (
+                        <StyledText variant="bodySmall" color={colors.feedback.error} style={styles.errorText}>
+                          {errors.country_region.message}
+                        </StyledText>
+                      )}
+                    </View>
 
-                {/* Submit Button */}
-                <View style={styles.buttonContainer}>
-                  <Button
-                    mode="contained"
-                    onPress={handleSubmit(onSubmit)}
-                    style={[styles.button, styles.primaryButton]}
-                    labelStyle={styles.buttonLabel}
-                    loading={submitting}
-                    disabled={submitting}
-                  >
-                    {submitting ? 'Saving...' : 'Save and Continue'}
-                  </Button>
-                </View>
-              </View>
-            </ScrollView>
-          </KeyboardAvoidingView>
-        </SafeAreaView>
-      </LinearGradient>
+                    {/* Submit Button */}
+                    <View style={styles.buttonContainer}>
+                      <TouchableOpacity
+                        style={styles.submitButton}
+                        onPress={() => {
+                          try {
+                            // Only use haptics on native platforms
+                            if (Platform.OS !== 'web') {
+                              Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                            }
+                            handleSubmit(onSubmit)();
+                          } catch (error) {
+                            console.error('Error submitting form:', error);
+                            handleSubmit(onSubmit)();
+                          }
+                        }}
+                        disabled={submitting}
+                      >
+                        <LinearGradient
+                          colors={['#FF4B81', '#FF6B4B']}
+                          start={{ x: 0, y: 0 }}
+                          end={{ x: 1, y: 0 }}
+                          style={styles.buttonGradient}
+                        >
+                          {submitting ? (
+                            <ActivityIndicator color="white" size="small" />
+                          ) : (
+                            <>
+                              <StyledText variant="bodyLarge" color="white" style={styles.buttonText}>
+                                Save and Continue
+                              </StyledText>
+                              <MaterialCommunityIcons
+                                name="arrow-right"
+                                size={20}
+                                color="white"
+                                style={styles.buttonIcon}
+                              />
+                            </>
+                          )}
+                        </LinearGradient>
+                      </TouchableOpacity>
+                    </View>
+                  </View>
+                </Animated.View>
+              </ScrollView>
+            </KeyboardAvoidingView>
+          </SafeAreaView>
+        </LinearGradient>
+      </ImageBackground>
+      
+      {/* Time Picker Modal */}
+      {showTimePicker && (
+        <DateTimePicker
+          value={timePickerValue}
+          mode="time"
+          is24Hour={false}
+          display="default"
+          onChange={onTimeChange}
+        />
+      )}
     </View>
   );
 }
 
+// Styles for the Diet Preferences screen
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: colors.background.primary,
   },
-  background: {
+  backgroundImage: {
     flex: 1,
+    width: '100%',
+    height: '100%',
+  },
+  overlayGradient: {
+    flex: 1,
+    width: '100%',
+    height: '100%',
+  },
+  decorativeCircle: {
+    position: 'absolute',
+    borderRadius: 500,
+    opacity: 0.3,
+    backgroundColor: colors.primary.light,
+  },
+  decorativeCircle1: {
+    width: 300,
+    height: 300,
+    top: -50,
+    right: -100,
+    backgroundColor: `${colors.secondary.main}80`,
+  },
+  decorativeCircle2: {
+    width: 250,
+    height: 250,
+    bottom: -50,
+    left: -100,
+    backgroundColor: `${colors.primary.main}80`,
   },
   safeArea: {
     flex: 1,
@@ -790,131 +931,221 @@ const styles = StyleSheet.create({
     paddingTop: spacing.xl,
   },
   backButton: {
+    width: 44,
+    height: 44,
+    alignItems: 'center',
+    justifyContent: 'center',
     marginBottom: spacing.md,
+    borderRadius: 22,
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
+    ...shadows.small,
   },
-  headerText: {
+  backIcon: {
+    marginLeft: -2,
+  },
+  title: {
+    fontSize: 32,
+    fontWeight: 'bold',
+    marginBottom: spacing.xs,
+    letterSpacing: -0.5,
+  },
+  subtitle: {
+    fontSize: 17,
     marginBottom: spacing.md,
+    color: colors.text.secondary,
+    letterSpacing: 0.2,
+  },
+  scrollView: {
+    flex: 1,
   },
   scrollContent: {
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.xxl * 2,
+  },
+  formContainer: {
+    flex: 1,
+  },
+  formCard: {
+    backgroundColor: colors.surface.main,
+    borderRadius: borderRadius.lg,
     padding: spacing.lg,
-    paddingBottom: 100, // Add extra padding for bottom
+    ...shadows.medium,
   },
-  sectionTitle: {
-    marginTop: spacing.lg,
-    marginBottom: spacing.sm,
-  },
-  formSection: {
+  inputContainer: {
     marginBottom: spacing.xl,
   },
   inputLabel: {
-    marginBottom: spacing.xs,
+    marginBottom: spacing.sm,
+    fontWeight: '600',
+    letterSpacing: 0.3,
   },
-  dietTypeButtons: {
-    marginBottom: spacing.md,
+  description: {
+    marginBottom: spacing.sm,
+    opacity: 0.8,
   },
-  allergensLabel: {
-    marginBottom: spacing.xs,
-  },
-  allergensContainer: {
+  dietTypeContainer: {
     flexDirection: 'row',
     flexWrap: 'wrap',
-    marginBottom: spacing.sm,
+    marginVertical: spacing.xs,
   },
-  allergenChip: {
-    margin: spacing.xs / 2, // Using xs/2 instead of xxs which doesn't exist
-    marginRight: spacing.xs,
-    marginBottom: spacing.xs,
-  },
-  otherAllergiesInput: {
-    marginTop: spacing.sm,
-  },
-  mealFrequencyContainer: {
-    marginVertical: spacing.md,
-  },
-  sliderLabelsContainer: {
+  dietTypeChip: {
     flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: colors.surface.dark,
+    borderRadius: borderRadius.round,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    marginRight: spacing.sm,
+    marginBottom: spacing.sm,
+    borderWidth: 1,
+    borderColor: colors.border.light,
+  },
+  selectedDietTypeChip: {
+    backgroundColor: `${colors.primary.main}e6`,
+    borderColor: colors.primary.light,
+  },
+  dietTypeIcon: {
+    marginRight: spacing.xs,
+  },
+  dietTypeText: {
+    fontWeight: '500',
+  },
+  chipsContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
     justifyContent: 'space-between',
-    marginTop: spacing.xs,
+  },
+  chip: {
+    margin: spacing.xs,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    borderRadius: borderRadius.round,
+    borderWidth: 1,
+    borderColor: colors.border.light,
+  },
+  selectedChip: {
+    backgroundColor: colors.primary.main,
+    borderColor: colors.primary.main,
+  },
+  unselectedChip: {
+    backgroundColor: colors.surface.dark,
+  },
+  selectedChipText: {
+    color: 'white',
+  },
+  unselectedChipText: {
+    color: colors.text.primary,
   },
   mealTimesContainer: {
-    marginVertical: spacing.md,
+    marginTop: spacing.xs,
   },
   mealTimeRow: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginVertical: spacing.xs,
-    paddingVertical: spacing.sm,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    borderBottomColor: colors.border.light,
+    marginBottom: spacing.sm,
   },
-  mealTypeLabel: {
-    flex: 1,
-  },
-  mealTimeLabel: {
-    flex: 1,
-  },
-  timePickerButton: {
+  mealNameSection: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'flex-end',
-    backgroundColor: colors.surface.light,
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    borderRadius: borderRadius.md,
+    flex: 1,
+    marginRight: spacing.sm,
+  },
+  mealNameInput: {
+    flex: 1,
+    backgroundColor: 'rgba(30, 25, 50, 0.5)',
+    height: 50,
+    color: 'white',
+  },
+  removeMealButton: {
+    padding: 8,
+    marginLeft: spacing.xs,
   },
   timeButton: {
     flexDirection: 'row',
     alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: colors.surface.dark,
-    padding: spacing.md,
+    backgroundColor: 'rgba(30, 25, 50, 0.5)',
     borderRadius: borderRadius.md,
-    flex: 2,
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    marginLeft: spacing.xs,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.08)',
   },
-  timePickerText: {
-    marginRight: spacing.sm,
-  },
-  waterIntakeContainer: {
-    marginVertical: spacing.md,
-  },
-  waterIntakeRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-  },
-  waterIntakeInput: {
-    flex: 2,
-    marginRight: spacing.md,
-  },
-  waterUnitSelector: {
-    flex: 1,
-  },
-  submitButton: {
-    marginVertical: spacing.xl,
-    marginBottom: spacing.xxl,
-  },
-  buttonContent: {
-    height: 48,
+  addMealButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
-  },
-  loadingIndicator: {
-    marginRight: spacing.sm,
-  },
-  formErrorText: {
-    color: colors.feedback.error,
+    paddingVertical: spacing.sm,
+    marginTop: spacing.xs,
     marginBottom: spacing.sm,
-  },
-  inputWrapper: {
-    marginVertical: spacing.sm,
-  },
-  webTimeInput: {
-    backgroundColor: colors.surface.dark,
-    padding: spacing.md,
     borderRadius: borderRadius.md,
-    borderColor: colors.border.medium,
     borderWidth: 1,
-    flex: 1,
+    borderColor: 'rgba(255, 255, 255, 0.12)',
+    borderStyle: 'dashed',
+  },
+  addMealText: {
+    marginLeft: spacing.xs,
+    color: colors.primary.main,
+  },
+  buttonContainer: {
+    marginTop: spacing.xl,
+  },
+  submitButton: {
+    borderRadius: borderRadius.lg,
+    overflow: 'hidden',
+    marginTop: spacing.xl,
+    ...shadows.medium,
+  },
+  buttonGradient: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    alignItems: 'center',
+    paddingVertical: spacing.md + 2,
+    paddingHorizontal: spacing.xl,
+    height: 56,
+  },
+  buttonText: {
+    fontWeight: '600',
+    marginRight: spacing.xs,
+    letterSpacing: 0.5,
+  },
+  buttonIcon: {
+    marginLeft: spacing.xs,
+  },
+  progressContainer: {
+    marginBottom: spacing.lg,
+  },
+  progressBarContainer: {
+    height: 8,
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
+    borderRadius: 4,
+    overflow: 'hidden',
+    marginBottom: spacing.xs / 2,
+  },
+  progressBar: {
+    height: '100%',
+    width: '100%',
+  },
+  progressBarFill: {
+    height: '100%',
+    width: '50%', 
+    backgroundColor: colors.primary.main,
+    borderRadius: 4,
+  },
+  progressText: {
+    textAlign: 'right',
+    marginTop: spacing.xs,
+  },
+  textInput: {
+    backgroundColor: 'rgba(30, 25, 50, 0.5)',
+    borderRadius: borderRadius.md,
+    marginTop: spacing.xs,
+    height: 56,
+    color: 'white',
+  },
+  errorText: {
+    marginTop: spacing.xs,
+    color: colors.feedback.error,
   },
 });

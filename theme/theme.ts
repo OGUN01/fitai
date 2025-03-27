@@ -34,6 +34,7 @@ export const colors = {
     gold: '#FFBF3C',     // Achievements
     green: '#4ADE80',    // Progress
     lavender: '#A78BFA', // Rest days
+    purple: '#9932CC',   // Body analysis
   },
   
   // Text colors

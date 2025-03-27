@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { View, TouchableOpacity, StyleSheet, Modal, Dimensions, Animated } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { View, TouchableOpacity, StyleSheet, Modal, Dimensions, Animated, Easing } from 'react-native';
 import { Text } from 'react-native-paper';
 import { Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -26,7 +26,7 @@ const fabActions = [
   { icon: 'stats-chart-outline' as IconName, label: 'Progress', action: () => router.push('/progress') },
   { icon: 'barbell-outline' as IconName, label: 'Log Workout', action: () => router.push('/workout') },
   { icon: 'restaurant-outline' as IconName, label: 'Log Meal', action: () => router.push('/nutrition') },
-  { icon: 'body-outline' as IconName, label: 'Log Weight', action: () => router.push('/progress/body-details') },
+  { icon: 'camera-outline' as IconName, label: 'Body Analysis', action: () => router.push('/(tabs)/progress/body-details') },
 ];
 
 // Animation values
@@ -36,53 +36,238 @@ const BUTTON_SIZE = 54;
 const CustomTabBar = ({ state, descriptors, navigation }: BottomTabBarProps) => {
   const [fabOpen, setFabOpen] = useState(false);
   const insets = useSafeAreaInsets();
-  const scaleAnim = React.useRef(new Animated.Value(0)).current;
-  const opacityAnim = React.useRef(new Animated.Value(0)).current;
-
-  // Debug: log all route information
-  console.log("All routes in state:", JSON.stringify(state.routes, null, 2));
-  console.log("State index:", state.index);
   
-  // Add a timeout to log route details after component mounts
+  // Create stable animation references
+  const backdropOpacity = useRef(new Animated.Value(0)).current;
+  const fabRotation = useRef(new Animated.Value(0)).current;
+  const { height: screenHeight, width: screenWidth } = Dimensions.get('window');
+  
+  // Initialize animation values in a stable way
+  const actionAnimations = useRef(null);
+  
+  // Initialize animation values only once
   useEffect(() => {
-    setTimeout(() => {
-      console.log("Routes after timeout:", JSON.stringify(state.routes, null, 2));
-      console.log("Descriptors keys:", Object.keys(descriptors));
-    }, 1000);
+    if (!actionAnimations.current) {
+      actionAnimations.current = fabActions.map(() => ({
+        translateY: new Animated.Value(0),
+        scale: new Animated.Value(0),
+        opacity: new Animated.Value(0),
+      }));
+    }
+  }, []);
+  
+  // Safe setValue function to avoid "undefined" errors
+  const safeSetValue = (animValue: Animated.Value | undefined, value: number) => {
+    if (animValue && typeof animValue.setValue === 'function') {
+      animValue.setValue(value);
+    }
+  };
+
+  // Reset animations when component unmounts
+  useEffect(() => {
+    return () => {
+      // Only reset if values exist
+      safeSetValue(backdropOpacity, 0);
+      safeSetValue(fabRotation, 0);
+      
+      // Safely reset animation values
+      if (actionAnimations.current) {
+        actionAnimations.current.forEach(anim => {
+          if (anim) {
+            safeSetValue(anim.translateY, 0);
+            safeSetValue(anim.scale, 0);
+            safeSetValue(anim.opacity, 0);
+          }
+        });
+      }
+    };
   }, []);
 
-  // Handle FAB press
+  // Handle FAB press with refined animations
   const toggleFab = () => {
-    // Open the action menu instead of direct navigation
-    setFabOpen(!fabOpen);
-    
     if (!fabOpen) {
-      Animated.parallel([
-        Animated.timing(scaleAnim, {
-          toValue: 1,
-          duration: 300,
-          useNativeDriver: true,
-        }),
-        Animated.timing(opacityAnim, {
-          toValue: 1,
-          duration: 300,
-          useNativeDriver: true,
-        }),
-      ]).start();
+      // Open the menu with smooth animations
+      openMenu();
     } else {
-      Animated.parallel([
-        Animated.timing(scaleAnim, {
-          toValue: 0,
-          duration: 200,
-          useNativeDriver: true,
-        }),
-        Animated.timing(opacityAnim, {
-          toValue: 0,
-          duration: 200,
-          useNativeDriver: true,
-        }),
-      ]).start();
+      // Close the menu with smooth animations
+      closeMenu();
     }
+    
+    // Update state after animation starts
+    setFabOpen(!fabOpen);
+  };
+  
+  // Open menu with smooth animations - with safety checks
+  const openMenu = () => {
+    // Rotate the FAB plus icon to "X"
+    Animated.timing(fabRotation, {
+      toValue: 1,
+      duration: 300,
+      useNativeDriver: true,
+      easing: Easing.bezier(0.175, 0.885, 0.32, 1.275),
+    }).start();
+    
+    // Fade in backdrop with subtle ease
+    Animated.timing(backdropOpacity, {
+      toValue: 1,
+      duration: 400,
+      useNativeDriver: true,
+      easing: Easing.out(Easing.cubic),
+    }).start();
+    
+    // Make sure actionAnimations is initialized
+    if (!actionAnimations.current) return;
+    
+    // Animate each action button with staggered timing
+    actionAnimations.current.forEach((anim, index) => {
+      if (!anim) return;
+      
+      // Reset values before animating - with safety checks
+      safeSetValue(anim.translateY, 20);
+      safeSetValue(anim.scale, 0.6);
+      safeSetValue(anim.opacity, 0);
+      
+      // Staggered delay for each button
+      const delay = 80 + (index * 50);
+      
+      // Translate Y animation - pop up from FAB
+      Animated.timing(anim.translateY, {
+        toValue: -90 - (index * 60),
+        duration: 400,
+        delay,
+        useNativeDriver: true,
+        easing: Easing.out(Easing.back(1.5)),
+      }).start();
+      
+      // Scale animation - grow from small to full size with slight bounce
+      Animated.timing(anim.scale, {
+        toValue: 1,
+        duration: 350,
+        delay,
+        useNativeDriver: true,
+        easing: Easing.bezier(0.175, 0.885, 0.32, 1.175), // Custom elastic effect
+      }).start();
+      
+      // Opacity animation - fade in smoothly
+      Animated.timing(anim.opacity, {
+        toValue: 1,
+        duration: 300,
+        delay,
+        useNativeDriver: true,
+        easing: Easing.in(Easing.cubic),
+      }).start();
+    });
+  };
+  
+  // Close menu with smooth animations - with safety checks
+  const closeMenu = () => {
+    // Rotate FAB back to plus icon
+    Animated.timing(fabRotation, {
+      toValue: 0,
+      duration: 300,
+      useNativeDriver: true,
+      easing: Easing.bezier(0.35, 0.01, 0.7, 1),
+    }).start();
+    
+    // Fade out backdrop
+    Animated.timing(backdropOpacity, {
+      toValue: 0,
+      duration: 200,
+      useNativeDriver: true,
+      easing: Easing.out(Easing.cubic),
+    }).start();
+    
+    // Make sure actionAnimations is initialized
+    if (!actionAnimations.current) return;
+    
+    // Animate action buttons in reverse order (last button first)
+    [...actionAnimations.current].reverse().forEach((anim, index) => {
+      if (!anim) return;
+      
+      const delay = index * 30; // Shorter staggered delays for closing
+      
+      // Fade out quickly
+      Animated.timing(anim.opacity, {
+        toValue: 0,
+        duration: 200,
+        delay,
+        useNativeDriver: true,
+        easing: Easing.out(Easing.quad),
+      }).start();
+      
+      // Scale down with subtle timing
+      Animated.timing(anim.scale, {
+        toValue: 0.8,
+        duration: 200,
+        delay,
+        useNativeDriver: true,
+        easing: Easing.out(Easing.quad),
+      }).start();
+      
+      // Move back to FAB position
+      Animated.timing(anim.translateY, {
+        toValue: 20,
+        duration: 200,
+        delay,
+        useNativeDriver: true,
+        easing: Easing.in(Easing.quad),
+      }).start();
+    });
+  };
+  
+  // Calculate rotation interpolation for FAB icon
+  const fabRotateInterpolation = fabRotation.interpolate({
+    inputRange: [0, 1],
+    outputRange: ['0deg', '45deg'],
+  });
+
+  // Render action buttons with safety checks
+  const renderActionButtons = () => {
+    if (!actionAnimations.current) return null;
+    
+    return fabActions.map((action, index) => {
+      const anim = actionAnimations.current?.[index];
+      if (!anim) return null;
+      
+      return (
+        <Animated.View 
+          key={index}
+          style={[
+            styles.actionButtonWrapper,
+            {
+              transform: [
+                { translateY: anim.translateY },
+                { scale: anim.scale }
+              ],
+              opacity: anim.opacity,
+            }
+          ]}
+        >
+          <TouchableOpacity 
+            style={styles.actionButton}
+            onPress={() => {
+              closeMenu();
+              setFabOpen(false);
+              // Slight delay for smoother visual transition
+              setTimeout(() => {
+                action.action();
+              }, 150);
+            }}
+            activeOpacity={0.7}
+          >
+            <LinearGradient
+              colors={[colors.primary.main, colors.primary.dark]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 1 }}
+              style={styles.actionIconContainer}
+            >
+              <Ionicons name={action.icon} size={22} color={colors.background.primary} />
+            </LinearGradient>
+            <Text style={styles.actionLabel}>{action.label}</Text>
+          </TouchableOpacity>
+        </Animated.View>
+      );
+    });
   };
 
   return (
@@ -174,58 +359,43 @@ const CustomTabBar = ({ state, descriptors, navigation }: BottomTabBarProps) => 
             end={{ x: 1, y: 1 }}
             style={styles.fabGradient}
           >
-            <Ionicons name="add" size={32} color={colors.background.primary} />
+            <Animated.View style={{
+              transform: [{ rotate: fabRotateInterpolation }]
+            }}>
+              <Ionicons name="add" size={32} color={colors.background.primary} />
+            </Animated.View>
           </LinearGradient>
         </TouchableOpacity>
       </View>
 
-      {/* Modal for quick actions */}
+      {/* FAB Menu Overlay */}
       <Modal
         visible={fabOpen}
         transparent={true}
-        animationType="fade"
-        onRequestClose={() => setFabOpen(false)}
+        animationType="none"
+        onRequestClose={() => {
+          closeMenu();
+          setFabOpen(false);
+        }}
       >
         <TouchableOpacity 
           style={styles.modalOverlay} 
           activeOpacity={1} 
-          onPress={() => setFabOpen(false)}
+          onPress={() => {
+            closeMenu();
+            setFabOpen(false);
+          }}
         >
-          <Animated.View style={[styles.actionContainer, { transform: [{ scale: scaleAnim }] }]}>
-            {fabActions.map((action, index) => (
-              <Animated.View 
-                key={index}
-                style={[
-                  styles.actionButton,
-                  { 
-                    opacity: opacityAnim,
-                    transform: [{ translateY: opacityAnim.interpolate({
-                      inputRange: [0, 1],
-                      outputRange: [20 * (fabActions.length - index), 0]
-                    }) }] 
-                  }
-                ]}
-              >
-                <TouchableOpacity 
-                  style={styles.actionTouchable}
-                  onPress={() => {
-                    setFabOpen(false);
-                    action.action();
-                  }}
-                >
-                  <LinearGradient
-                    colors={[colors.primary.main, colors.primary.dark]}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                    style={styles.actionGradient}
-                  >
-                    <Ionicons name={action.icon} size={24} color={colors.background.primary} />
-                  </LinearGradient>
-                  <Text style={styles.actionLabel}>{action.label}</Text>
-                </TouchableOpacity>
-              </Animated.View>
-            ))}
-          </Animated.View>
+          {/* Animated backdrop */}
+          <Animated.View 
+            style={[
+              styles.backdrop, 
+              { opacity: backdropOpacity }
+            ]} 
+          />
+          
+          {/* Action buttons - using the safe render function */}
+          {renderActionButtons()}
         </TouchableOpacity>
       </Modal>
     </>
@@ -291,35 +461,48 @@ const styles = StyleSheet.create({
   },
   modalOverlay: {
     flex: 1,
-    backgroundColor: 'rgba(0, 0, 0, 0.7)',
     justifyContent: 'flex-end',
-    padding: spacing.lg,
-    paddingBottom: 100,
+    alignItems: 'center',
   },
-  actionContainer: {
-    marginBottom: spacing.xxl,
+  backdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.75)',
+  },
+  actionButtonWrapper: {
+    position: 'absolute',
+    bottom: 30, // Same as FAB position
+    alignItems: 'center',
+    width: '100%',
+    paddingHorizontal: spacing.xl,
   },
   actionButton: {
-    marginBottom: spacing.md,
-  },
-  actionTouchable: {
     flexDirection: 'row',
     alignItems: 'center',
-  },
-  actionGradient: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: 'rgba(30, 30, 45, 0.9)',
+    borderRadius: borderRadius.lg,
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.md,
+    width: '85%',
     ...shadows.medium,
   },
-  actionLabel: {
-    marginLeft: spacing.md,
-    fontSize: 16,
-    fontWeight: '600',
-    color: colors.text.primary,
+  actionIconContainer: {
+    width: 38,
+    height: 38,
+    borderRadius: 19,
+    justifyContent: 'center',
+    alignItems: 'center',
+    marginRight: spacing.md,
   },
+  actionLabel: {
+    color: colors.text.primary,
+    fontSize: 16,
+    fontWeight: '500',
+    flex: 1,
+  }
 });
 
 export default CustomTabBar;

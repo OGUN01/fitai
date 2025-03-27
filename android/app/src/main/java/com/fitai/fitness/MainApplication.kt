@@ -1,4 +1,4 @@
-package com.anonymous.fitness
+package com.fitai.fitness
 
 import android.app.Application
 import android.content.res.Configuration

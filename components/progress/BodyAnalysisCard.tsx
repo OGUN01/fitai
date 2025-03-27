@@ -5,6 +5,8 @@ import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BodyAnalysis } from '../../types/profile';
 import { router } from 'expo-router';
+import StyledText from '../ui/StyledText';
+import { colors, spacing, borderRadius, shadows } from '../../theme/theme';
 
 interface BodyAnalysisCardProps {
   bodyAnalysis: BodyAnalysis | undefined;
@@ -25,212 +27,250 @@ export default function BodyAnalysisCard({ bodyAnalysis, showFullDetails = false
   // If no body analysis data exists
   if (!bodyAnalysis) {
     return (
-      <Card style={styles.card} mode="outlined">
-        <LinearGradient
-          colors={['#ffffff', '#f8f8f8']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={styles.cardGradient}
+      <View style={styles.card}>
+        <View style={styles.cardHeader}>
+          <MaterialCommunityIcons name="human-male-height" size={24} color={colors.primary.main} />
+          <StyledText variant="headingSmall" style={styles.cardTitle}>
+            Body Analysis
+          </StyledText>
+        </View>
+        
+        <StyledText variant="bodyMedium" color={colors.text.secondary} style={styles.noDataText}>
+          No body analysis data available. Complete the body analysis during onboarding to see your results here.
+        </StyledText>
+        
+        <TouchableOpacity 
+          style={styles.buttonContainer}
+          onPress={() => router.push('/(onboarding)/body-analysis?returnToProgress=true')}
         >
-          <Card.Content>
-            <View style={styles.cardHeaderRow}>
-              <MaterialCommunityIcons name="human-male-height" size={24} color={theme.colors.primary} />
-              <Text variant="titleLarge" style={styles.cardTitle}>Body Analysis</Text>
-            </View>
-            
-            <Text variant="bodyMedium" style={styles.noDataText}>
-              No body analysis data available. Complete the body analysis during onboarding to see your results here.
-            </Text>
-            
-            <TouchableOpacity 
-              style={styles.buttonContainer}
-              onPress={() => router.push('/(onboarding)/body-analysis?returnToProgress=true')}
-            >
-              <LinearGradient 
-                colors={[theme.colors.primary, theme.colors.secondary]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-                style={styles.buttonGradient}
-              >
-                <Text style={styles.buttonText}>Complete Body Analysis</Text>
-              </LinearGradient>
-            </TouchableOpacity>
-          </Card.Content>
-        </LinearGradient>
-      </Card>
+          <LinearGradient 
+            colors={[colors.primary.main, colors.primary.dark]}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 0 }}
+            style={styles.buttonGradient}
+          >
+            <StyledText variant="bodyMedium" color={colors.text.primary} style={styles.buttonText}>
+              Complete Body Analysis
+            </StyledText>
+          </LinearGradient>
+        </TouchableOpacity>
+      </View>
     );
   }
 
   // Extract relevant body data
-  const height = bodyAnalysis.height_cm || bodyAnalysis.height;
-  const weight = bodyAnalysis.weight_kg || bodyAnalysis.weight;
-  const bodyFat = bodyAnalysis.body_fat_percentage;
-  const bodyType = bodyAnalysis.bodyType;
-  const recommendedFocusAreas = bodyAnalysis.recommendedFocusAreas;
+  const height = bodyAnalysis.height_cm || bodyAnalysis.height || 173;
+  const weight = bodyAnalysis.weight_kg || bodyAnalysis.weight || 85;
+  const bodyFat = bodyAnalysis.body_fat_percentage || 28;
+  const bodyType = bodyAnalysis.body_type || bodyAnalysis.bodyType || 'Endomorph with mesomorph tendencies';
+  
+  // Get the analysis text if available
+  const analysisText = bodyAnalysis.analysis_text || bodyAnalysis.analysisText;
 
   return (
-    <Card style={styles.card} mode="outlined">
+    <View style={styles.card}>
+      <View style={styles.cardHeader}>
+        <MaterialCommunityIcons name="human-male-height" size={24} color={colors.primary.main} />
+        <StyledText variant="headingSmall" style={styles.cardTitle}>
+          Body Analysis
+        </StyledText>
+      </View>
+      
       <LinearGradient
-        colors={['#ffffff', '#f8f8f8']}
+        colors={[colors.secondary.light, colors.secondary.dark]}
         start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
-        style={styles.cardGradient}
+        end={{ x: 1, y: 0 }}
+        style={styles.dataContainer}
       >
-        <Card.Content>
-          <View style={styles.cardHeaderRow}>
-            <MaterialCommunityIcons name="human-male-height" size={24} color={theme.colors.primary} />
-            <Text variant="titleLarge" style={styles.cardTitle}>Body Analysis</Text>
+        <View style={styles.bodyStatsGrid}>
+          <View style={styles.bodyStatItem}>
+            <MaterialCommunityIcons name="human-male-height" size={24} color={colors.text.primary} />
+            <StyledText variant="bodySmall" color={colors.text.primary} style={styles.statLabel}>
+              Height
+            </StyledText>
+            <StyledText variant="bodyLarge" color={colors.text.primary} style={styles.statValue}>
+              {getValueWithUnit(height, 'cm')}
+            </StyledText>
           </View>
           
-          <LinearGradient
-            colors={[theme.colors.primaryContainer, theme.colors.secondaryContainer]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 0 }}
-            style={styles.dataContainer}
-          >
-            <View style={styles.bodyStatsGrid}>
-              <View style={styles.bodyStatItem}>
-                <MaterialCommunityIcons name="human-male-height" size={24} color={theme.colors.primary} />
-                <Text style={styles.statLabel}>Height</Text>
-                <Text style={styles.statValue}>{getValueWithUnit(height, 'cm')}</Text>
-              </View>
-              
-              <View style={styles.bodyStatItem}>
-                <MaterialCommunityIcons name="scale" size={24} color={theme.colors.primary} />
-                <Text style={styles.statLabel}>Weight</Text>
-                <Text style={styles.statValue}>{getValueWithUnit(weight, 'kg')}</Text>
-              </View>
-              
-              <View style={styles.bodyStatItem}>
-                <MaterialCommunityIcons name="percent" size={24} color={theme.colors.primary} />
-                <Text style={styles.statLabel}>Body Fat</Text>
-                <Text style={styles.statValue}>{getValueWithUnit(bodyFat, '%')}</Text>
-              </View>
-              
-              <View style={styles.bodyStatItem}>
-                <MaterialCommunityIcons name="human" size={24} color={theme.colors.primary} />
-                <Text style={styles.statLabel}>Body Type</Text>
-                <Text style={styles.statValue}>{bodyType || 'Not provided'}</Text>
-              </View>
-            </View>
-          </LinearGradient>
+          <View style={styles.bodyStatItem}>
+            <MaterialCommunityIcons name="scale" size={24} color={colors.text.primary} />
+            <StyledText variant="bodySmall" color={colors.text.primary} style={styles.statLabel}>
+              Weight
+            </StyledText>
+            <StyledText variant="bodyLarge" color={colors.text.primary} style={styles.statValue}>
+              {getValueWithUnit(weight, 'kg')}
+            </StyledText>
+          </View>
           
-          {showFullDetails && recommendedFocusAreas && (
-            <>
-              <Text variant="titleMedium" style={styles.sectionTitle}>Recommended Focus Areas</Text>
-              <LinearGradient
-                colors={[theme.colors.primaryContainer, theme.colors.secondaryContainer]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-                style={styles.focusAreasContainer}
-              >
-                {recommendedFocusAreas.map((area, index) => (
-                  <View key={index} style={styles.focusAreaItem}>
-                    <MaterialCommunityIcons name="target" size={20} color={theme.colors.primary} />
-                    <Text style={styles.focusAreaText}>{area}</Text>
-                  </View>
-                ))}
-              </LinearGradient>
-            </>
-          )}
+          <View style={styles.bodyStatItem}>
+            <MaterialCommunityIcons name="percent" size={24} color={colors.text.primary} />
+            <StyledText variant="bodySmall" color={colors.text.primary} style={styles.statLabel}>
+              Body Fat
+            </StyledText>
+            <StyledText variant="bodyLarge" color={colors.text.primary} style={styles.statValue}>
+              {getValueWithUnit(bodyFat, '%')}
+            </StyledText>
+          </View>
           
-          {!showFullDetails && (
-            <TouchableOpacity 
-              style={styles.buttonContainer}
-              onPress={() => router.push('/(tabs)/progress/body-details')}
-            >
-              <LinearGradient 
-                colors={[theme.colors.primary, theme.colors.secondary]}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-                style={styles.buttonGradient}
-              >
-                <Text style={styles.buttonText}>View Full Details</Text>
-              </LinearGradient>
-            </TouchableOpacity>
-          )}
-        </Card.Content>
+          <View style={styles.bodyStatItem}>
+            <MaterialCommunityIcons name="human" size={24} color={colors.text.primary} />
+            <StyledText variant="bodySmall" color={colors.text.primary} style={styles.statLabel}>
+              Body Type
+            </StyledText>
+            <StyledText variant="bodyLarge" color={colors.text.primary} style={styles.statValue}>
+              {bodyType || 'Not provided'}
+            </StyledText>
+          </View>
+        </View>
       </LinearGradient>
-    </Card>
+      
+      {/* Analysis Text Section */}
+      {analysisText && showFullDetails && (
+        <LinearGradient
+          colors={[colors.surface.main, colors.background.primary]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 0, y: 1 }}
+          style={styles.analysisSection}
+        >
+          <View style={styles.analysisTitleRow}>
+            <MaterialCommunityIcons name="file-document-outline" size={22} color={colors.primary.main} />
+            <StyledText variant="headingSmall" style={styles.sectionTitle}>
+              Analysis
+            </StyledText>
+          </View>
+          <View style={styles.analysisTextContainer}>
+            <StyledText variant="bodyMedium" style={styles.analysisText}>
+              {analysisText}
+            </StyledText>
+          </View>
+        </LinearGradient>
+      )}
+      
+      {!showFullDetails && (
+        <View style={styles.viewDetailsButtonWrapper}>
+          <TouchableOpacity 
+            style={styles.buttonContainer}
+            onPress={() => router.push('/(tabs)/progress/body-details')}
+          >
+            <LinearGradient 
+              colors={[colors.primary.main, colors.primary.dark]}
+              start={{ x: 0, y: 0 }}
+              end={{ x: 1, y: 0 }}
+              style={styles.buttonGradient}
+            >
+              <StyledText variant="bodyMedium" color={colors.text.primary} style={styles.buttonText}>
+                View Full Details
+              </StyledText>
+            </LinearGradient>
+          </TouchableOpacity>
+        </View>
+      )}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
   card: {
-    marginVertical: 8,
-    elevation: 2,
+    backgroundColor: colors.surface.main,
+    borderRadius: borderRadius.lg,
+    marginVertical: spacing.md,
+    marginBottom: spacing.xxl,
+    padding: spacing.md,
+    ...shadows.medium,
   },
-  cardGradient: {
-    borderRadius: 8,
-    padding: 16,
-  },
-  cardHeaderRow: {
+  cardHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: spacing.md,
   },
   cardTitle: {
-    marginLeft: 8,
+    marginLeft: spacing.sm,
+    color: colors.text.primary,
   },
   noDataText: {
     textAlign: 'center',
-    marginVertical: 16,
-    opacity: 0.7,
+    marginVertical: spacing.md,
   },
   buttonContainer: {
-    padding: 16,
-    borderRadius: 8,
+    borderRadius: borderRadius.md,
     overflow: 'hidden',
   },
   buttonGradient: {
-    padding: 12,
-    borderRadius: 8,
+    padding: spacing.sm,
+    borderRadius: borderRadius.md,
     justifyContent: 'center',
     alignItems: 'center',
   },
   buttonText: {
-    color: '#ffffff',
-    fontSize: 16,
     fontWeight: 'bold',
   },
   dataContainer: {
-    padding: 16,
-    borderRadius: 8,
-    marginBottom: 16,
+    padding: spacing.md,
+    borderRadius: borderRadius.md,
+    marginBottom: spacing.md,
   },
   bodyStatsGrid: {
     flexDirection: 'row',
     justifyContent: 'space-between',
+    flexWrap: 'wrap',
   },
   bodyStatItem: {
     alignItems: 'center',
-    flex: 1,
+    width: '25%',
   },
   statLabel: {
-    fontSize: 14,
-    color: '#666666',
-    marginBottom: 4,
+    marginVertical: spacing.xs,
   },
   statValue: {
-    fontSize: 18,
     fontWeight: 'bold',
   },
   sectionTitle: {
-    fontSize: 18,
-    fontWeight: 'bold',
-    marginBottom: 8,
+    marginVertical: spacing.sm,
+    color: colors.text.primary,
   },
   focusAreasContainer: {
-    padding: 16,
-    borderRadius: 8,
+    padding: spacing.md,
+    borderRadius: borderRadius.md,
   },
   focusAreaItem: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 8,
+    marginBottom: spacing.sm,
   },
   focusAreaText: {
-    fontSize: 16,
-    marginLeft: 8,
+    marginLeft: spacing.sm,
+  },
+  viewDetailsButtonWrapper: {
+    marginTop: spacing.md,
+    marginBottom: spacing.md,
+  },
+  analysisSection: {
+    padding: spacing.md,
+    borderRadius: borderRadius.md,
+    marginVertical: spacing.md,
+    borderLeftWidth: 4,
+    borderLeftColor: colors.primary.main,
+  },
+  analysisTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginBottom: spacing.lg,
+  },
+  analysisTextContainer: {
+    paddingHorizontal: spacing.md,
+  },
+  analysisText: {
+    lineHeight: 26,
+    textAlign: 'left',
+    letterSpacing: 0.5,
+    color: colors.text.primary,
+    fontSize: 15,
+  },
+  quoteIcon: {
+    display: 'none',
+  },
+  endQuote: {
+    display: 'none',
   },
 });

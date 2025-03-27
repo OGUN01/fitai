@@ -19,16 +19,18 @@ export function getUserWeight(profile: UserProfile | null): number {
   
   // Try all possible weight fields in order of preference
   const weightValues = [
-    // Direct weight fields
-    typeof profile.weight === 'string' ? parseFloat(profile.weight) : (typeof profile.weight === 'number' ? profile.weight : 0),
-    typeof profile.weight_kg === 'string' ? parseFloat(profile.weight_kg) : (typeof profile.weight_kg === 'number' ? profile.weight_kg : 0),
+    // Standard database column
+    typeof profile.weight_kg === 'string' ? parseFloat(profile.weight_kg) : 
+      (typeof profile.weight_kg === 'number' ? profile.weight_kg : 0),
     
-    // Body analysis weight fields
-    profile.body_analysis?.weight_kg ? Number(profile.body_analysis.weight_kg) : 0,
-    profile.body_analysis?.weight ? Number(profile.body_analysis.weight) : 0,
+    // From body_analysis
+    profile.body_analysis?.weight_kg != null ? Number(profile.body_analysis.weight_kg) : 0,
     
-    // Other possible weight fields
-    (profile as any).current_weight ? Number((profile as any).current_weight) : 0
+    // For backward compatibility
+    profile.body_analysis?.original_weight != null ? Number(profile.body_analysis.original_weight) : 0,
+    
+    // Current weight alias
+    profile.current_weight_kg != null ? Number(profile.current_weight_kg) : 0
   ];
   
   // Use the first non-zero value
@@ -52,11 +54,17 @@ export function getTargetWeight(profile: UserProfile | null): number {
   
   const currentWeight = getUserWeight(profile);
   
-  // Try all possible target weight fields
+  // Try all possible target weight fields in order of precedence
   const targetWeightValues = [
-    typeof profile.target_weight === 'string' ? parseFloat(profile.target_weight) : (typeof profile.target_weight === 'number' ? profile.target_weight : 0),
-    typeof profile.target_weight_kg === 'string' ? parseFloat(profile.target_weight_kg) : (typeof profile.target_weight_kg === 'number' ? profile.target_weight_kg : 0),
-    (profile as any).goal_weight ? Number((profile as any).goal_weight) : 0
+    // Try the standard column first
+    typeof profile.target_weight_kg === 'string' ? parseFloat(profile.target_weight_kg) : 
+      (typeof profile.target_weight_kg === 'number' ? profile.target_weight_kg : 0),
+    
+    // Then try in body_analysis
+    profile.body_analysis?.target_weight_kg != null ? Number(profile.body_analysis.target_weight_kg) : 0,
+    
+    // For backward compatibility, try the original target weight stored in body_analysis
+    profile.body_analysis?.original_target_weight != null ? Number(profile.body_analysis.original_target_weight) : 0
   ];
   
   // Use the first non-zero value
@@ -81,11 +89,17 @@ export function getStartingWeight(profile: UserProfile | null): number {
   
   const currentWeight = getUserWeight(profile);
   
-  // Try all possible starting weight fields
+  // Try all possible starting weight fields in order of preference
   const startingWeightValues = [
-    typeof (profile as any).starting_weight === 'string' ? parseFloat((profile as any).starting_weight) : (typeof (profile as any).starting_weight === 'number' ? (profile as any).starting_weight : 0),
-    typeof (profile as any).initial_weight === 'string' ? parseFloat((profile as any).initial_weight) : (typeof (profile as any).initial_weight === 'number' ? (profile as any).initial_weight : 0),
-    typeof (profile as any).start_weight === 'string' ? parseFloat((profile as any).start_weight) : (typeof (profile as any).start_weight === 'number' ? (profile as any).start_weight : 0)
+    // Standard columns
+    typeof profile.starting_weight_kg === 'string' ? parseFloat(profile.starting_weight_kg) : 
+      (typeof profile.starting_weight_kg === 'number' ? profile.starting_weight_kg : 0),
+    typeof profile.initial_weight_kg === 'string' ? parseFloat(profile.initial_weight_kg) : 
+      (typeof profile.initial_weight_kg === 'number' ? profile.initial_weight_kg : 0),
+    
+    // From body_analysis
+    profile.body_analysis?.starting_weight_kg != null ? Number(profile.body_analysis.starting_weight_kg) : 0,
+    profile.body_analysis?.initial_weight_kg != null ? Number(profile.body_analysis.initial_weight_kg) : 0,
   ];
   
   // Use the first non-zero value
@@ -95,12 +109,12 @@ export function getStartingWeight(profile: UserProfile | null): number {
     }
   }
   
-  // If no starting weight found, use current weight as fallback
+  // If no starting weight is found, default to current weight
   return currentWeight;
 }
 
 /**
- * Gets the user's streak days from any available source
+ * Get the user's workout streak
  * 
  * @param profile The user profile
  * @param workoutCompletions Optional workout completion data to calculate streak
@@ -109,11 +123,23 @@ export function getStartingWeight(profile: UserProfile | null): number {
 export function getUserStreak(profile: UserProfile | null, workoutCompletions?: any[]): number {
   if (!profile) return 0;
   
-  // Try to get streak from profile fields first
+  // First try to get streak from workout_tracking JSONB field (new approach)
+  if (profile.workout_tracking && 
+      typeof profile.workout_tracking === 'object' && 
+      !Array.isArray(profile.workout_tracking)) {
+    // Use type assertion to access the properties since TypeScript doesn't know the structure
+    const trackingData = profile.workout_tracking as Record<string, any>;
+    const trackingStreak = Number(trackingData.streak || 0);
+    if (trackingStreak > 0) {
+      return trackingStreak;
+    }
+  }
+  
+  // Fallback: Try to get streak from legacy profile fields
   const streakFromProfile = Math.max(
-    Number((profile as any).streak_days || 0),
+    Number((profile as any).streak || 0),
     Number((profile as any).streak_count || 0),
-    Number((profile as any).streak || 0)
+    Number((profile as any).streak_days || 0)
   );
   
   // If we have a valid streak from profile, use it
@@ -171,13 +197,15 @@ export function synchronizeWeightFields(profile: UserProfile, weight: number): P
   
   // Create a deep copy of body_analysis to avoid mutation issues
   const bodyAnalysis = profile.body_analysis 
-    ? { ...profile.body_analysis, weight_kg: weight, weight: weight }
-    : { weight_kg: weight, weight: weight };
+    ? { ...profile.body_analysis, weight_kg: weight }
+    : { weight_kg: weight };
   
-  // Return object with all weight fields synchronized
+  // Only use valid database columns
   return {
-    weight: weight,
+    // Store in the standardized column
     weight_kg: weight,
+    
+    // Update the body_analysis JSONB column with the weight value
     body_analysis: bodyAnalysis
   };
 }

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { 
   View, 
   StyleSheet, 
@@ -8,7 +8,8 @@ import {
   Dimensions, 
   TouchableOpacity, 
   Platform,
-  ImageBackground 
+  ImageBackground,
+  Animated
 } from 'react-native';
 import { 
   Button, 
@@ -17,7 +18,8 @@ import {
   ActivityIndicator, 
   IconButton, 
   ProgressBar,
-  useTheme 
+  useTheme,
+  Divider 
 } from 'react-native-paper';
 import { router, useLocalSearchParams } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
@@ -29,8 +31,10 @@ import { StatusBar } from 'expo-status-bar';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { LinearGradient } from 'expo-linear-gradient';
 import StyledText from '../../components/ui/StyledText';
-import { colors, spacing, borderRadius, shadows } from '../../theme/theme';
+import { colors, spacing, borderRadius, shadows, gradients } from '../../theme/theme';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
+import * as Haptics from 'expo-haptics';
+import SafeBlurView from '../../components/ui/SafeBlurView';
 
 // Get screen dimensions for responsive sizing
 const { width, height } = Dimensions.get('window');
@@ -38,6 +42,7 @@ const { width, height } = Dimensions.get('window');
 /**
  * Body Analysis Screen
  * Part of the onboarding flow - allows users to upload photos for AI body analysis
+ * Redesigned with premium UI elements and animations
  */
 export default function BodyAnalysisScreen() {
   const params = useLocalSearchParams<{
@@ -60,19 +65,68 @@ export default function BodyAnalysisScreen() {
   const [result, setResult] = useState<BodyAnalysisResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [analyzeProgress, setAnalyzeProgress] = useState(0);
+  const [showResults, setShowResults] = useState(false);
   
+  // Animation values
+  const fadeAnim = useRef(new Animated.Value(0)).current;
+  const scaleAnim = useRef(new Animated.Value(0.95)).current;
+  const pulseAnim = useRef(new Animated.Value(1)).current;
+
   // Create user details from params and profile
   const userDetails: UserPhysicalDetails = {
     age: params?.age ? parseInt(params.age) : 30, // Default if not available
     gender: params?.gender || 'male', // Default if not available
-    height: params?.height ? parseInt(params.height) : profile?.height || 175, // in cm
+    height: params?.height ? parseInt(params.height) : profile?.height_cm || 175, // in cm
     weight: getUserWeight(profile) || 70, // in kg
-    fitnessGoal: (params?.fitnessGoal || profile?.fitness_goal || 'build_muscle') as "weight loss" | "muscle gain" | "improved fitness" | "maintenance",
+    fitnessGoal: (params?.fitnessGoal || profile?.weight_goal || 'build_muscle') as "weight loss" | "muscle gain" | "improved fitness" | "maintenance",
   };
+
+  useEffect(() => {
+    // Animate entry
+    Animated.parallel([
+      Animated.timing(fadeAnim, {
+        toValue: 1,
+        duration: 600,
+        useNativeDriver: true,
+      }),
+      Animated.timing(scaleAnim, {
+        toValue: 1,
+        duration: 600,
+        useNativeDriver: true,
+      })
+    ]).start();
+
+    // Setup pulsing animation for the main CTA button
+    const setupPulseAnimation = () => {
+      Animated.sequence([
+        Animated.timing(pulseAnim, {
+          toValue: 1.05,
+          duration: 1000,
+          useNativeDriver: true,
+        }),
+        Animated.timing(pulseAnim, {
+          toValue: 1,
+          duration: 1000,
+          useNativeDriver: true,
+        })
+      ]).start(() => {
+        if (photos.length > 0 && !isAnalyzing) {
+          setupPulseAnimation();
+        }
+      });
+    };
+
+    if (photos.length > 0 && !isAnalyzing) {
+      setupPulseAnimation();
+    }
+  }, [fadeAnim, scaleAnim, pulseAnim, photos, isAnalyzing]);
   
   // Function to pick image from gallery
   const pickImage = async (type: 'front' | 'side' | 'back') => {
     try {
+      // Provide haptic feedback
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      
       const permissionResult = await ImagePicker.requestMediaLibraryPermissionsAsync();
       
       if (!permissionResult.granted) {
@@ -101,10 +155,15 @@ export default function BodyAnalysisScreen() {
         }
         
         setPhotos(newPhotos);
+        
+        // Success haptic feedback
+        Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
       }
     } catch (err) {
       console.error('Error picking image:', err);
       Alert.alert('Error', 'There was a problem picking your image. Please try again.');
+      // Error haptic feedback
+      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
     }
   };
   
@@ -148,16 +207,17 @@ export default function BodyAnalysisScreen() {
   
   // Function to analyze body photos
   const analyzeUserPhotos = async () => {
-    if (photos.length === 0) {
-      setError('Please upload at least one photo for analysis');
-      return;
-    }
-
-    setIsAnalyzing(true);
-    setAnalyzeProgress(0);
-    setError(null);
-
     try {
+      setIsAnalyzing(true);
+      setError('');
+      setAnalyzeProgress(0);
+      
+      // Validate we have enough photos
+      if (photos.length === 0) {
+        setError('Please upload at least one photo for analysis');
+        return;
+      }
+      
       // Start progress animation
       const timer = setInterval(() => {
         setAnalyzeProgress((prevProgress) => {
@@ -165,13 +225,14 @@ export default function BodyAnalysisScreen() {
           return newProgress > 90 ? 90 : newProgress;
         });
       }, 500);
-
-      // Invoke the body analysis service
+      
+      // Call the body analysis service
       const analysisResult = await bodyAnalysisService.analyzeBodyComposition(photos, userDetails);
       
       clearInterval(timer);
       setAnalyzeProgress(100);
       
+      // Success! Process results
       // Convert to expected result format
       const formattedResult: BodyAnalysisResult = {
         bodyFatEstimate: analysisResult.bodyFatEstimate || 15,
@@ -189,14 +250,17 @@ export default function BodyAnalysisScreen() {
       await updateProfile({
         weight_kg: userDetails.weight,
         body_analysis: {
-          bodyType: analysisResult.bodyType,
-          analysisText: analysisResult.analysisText,
+          body_type: analysisResult.bodyType,
+          analysis_text: analysisResult.analysisText,
           body_fat_percentage: analysisResult.bodyFatEstimate,
-          bodyProportions: analysisResult.bodyProportions,
+          body_proportions: analysisResult.bodyProportions,
           posture: analysisResult.posture,
-          recommendedFocusAreas: analysisResult.recommendedFocusAreas || analysisResult.recommendations,
+          recommended_focus_areas: analysisResult.recommendedFocusAreas || analysisResult.recommendations,
         }
       });
+      
+      // Show results instead of navigating
+      setShowResults(true);
     } catch (err) {
       setError('Failed to analyze photos. Please try again later.');
       console.error('Body analysis error:', err);
@@ -221,14 +285,17 @@ export default function BodyAnalysisScreen() {
       await updateProfile({
         weight_kg: fallbackData.leanMassKg,
         body_analysis: {
-          bodyType: fallbackData.bodyType,
-          analysisText: fallbackData.analysisText,
+          body_type: fallbackData.bodyType,
+          analysis_text: fallbackData.analysisText,
           body_fat_percentage: fallbackData.bodyFatPercentage,
-          bodyProportions: fallbackData.bodyProportions,
+          body_proportions: fallbackData.bodyProportions,
           posture: fallbackData.posture,
-          recommendedFocusAreas: fallbackData.recommendedFocusAreas,
+          recommended_focus_areas: fallbackData.recommendedFocusAreas,
         }
       });
+      
+      // Show results instead of navigating
+      setShowResults(true);
     } finally {
       setIsAnalyzing(false);
     }
@@ -252,10 +319,10 @@ export default function BodyAnalysisScreen() {
       // Create body analysis object to save to profile
       const bodyAnalysis: BodyAnalysis = {
         weight_kg: fallbackAnalysis.leanMassKg,
-        bodyType: fallbackAnalysis.bodyType,
-        analysisText: fallbackAnalysis.recommendations.join('\n'),  // Convert recommendations to analysis text
+        body_type: fallbackAnalysis.bodyType,
+        analysis_text: fallbackAnalysis.recommendations.join('\n'),  // Convert recommendations to analysis text
         // Add recommended focus areas from recommendations
-        recommendedFocusAreas: fallbackAnalysis.recommendations,
+        recommended_focus_areas: fallbackAnalysis.recommendations,
       };
       
       // Update profile with fallback body analysis
@@ -281,15 +348,17 @@ export default function BodyAnalysisScreen() {
   
   // Function to skip analysis and continue
   const skipAnalysis = async () => {
-    router.push('/review');
-    
-    // Mark that the user has moved to the next step
-    await updateProfile({
-      current_onboarding_step: 'review'
-    });
+    // Proceed to next step in onboarding
+    if (params?.returnToReview === 'true') {
+      router.push('/(onboarding)/review');
+    } else if (params?.returnToProgress === 'true') {
+      router.push('/(tabs)/progress');
+    } else {
+      router.push('/(onboarding)/review');
+    }
   };
   
-  // Generate fallback analysis for development or when API fails
+  // Function to generate fallback analysis
   const generateFallbackAnalysis = () => {
     return {
       bodyFatPercentage: 15,
@@ -309,6 +378,27 @@ export default function BodyAnalysisScreen() {
       },
       recommendedFocusAreas: ['Core stabilization', 'Upper back strength', 'Shoulder mobility'],
     };
+  };
+  
+  // Add a function to handle navigation to the next screen
+  const navigateToNextScreen = () => {
+    // Update the profile to set current_onboarding_step to workout-preferences
+    updateProfile({
+      current_onboarding_step: 'workout-preferences'
+    }).then(() => {
+      if (params?.returnToReview === 'true') {
+        router.push('/(onboarding)/review');
+      } else if (params?.returnToProgress === 'true') {
+        router.push('/(tabs)/progress');
+      } else {
+        // Navigate to workout preferences as the next step in onboarding
+        router.push('/(onboarding)/workout-preferences');
+      }
+    }).catch(error => {
+      console.error('Error updating onboarding step:', error);
+      // Still try to navigate even if update fails
+      router.push('/(onboarding)/workout-preferences');
+    });
   };
   
   return (
@@ -344,7 +434,7 @@ export default function BodyAnalysisScreen() {
                 Body Analysis
               </StyledText>
               <StyledText variant="bodyMedium" color={colors.text.secondary} style={styles.subtitle}>
-                For personalized workout recommendations
+                Upload photos for personalized body analysis
               </StyledText>
             </View>
           </View>
@@ -360,239 +450,355 @@ export default function BodyAnalysisScreen() {
                 Wear form-fitting clothes and ensure your full body is visible.
               </StyledText>
 
-              {/* Photo Upload Section */}
-              <View style={styles.photoSection}>
-                {/* Front Photo */}
-                <View style={styles.photoContainer}>
-                  <View style={styles.photoLabelContainer}>
-                    <MaterialCommunityIcons 
-                      name="human-male" 
-                      size={18} 
-                      color={colors.text.secondary}
-                      style={{marginRight: spacing.xs}}
+              {/* Interactive body visualization - Premium design */}
+              <View style={styles.bodyVisualizationContainer}>
+                {/* Front View Silhouette */}
+                <TouchableOpacity 
+                  style={[
+                    styles.silhouetteContainer, 
+                    styles.frontSilhouetteContainer,
+                    photos.find(p => p.type === 'front') ? styles.activeSilhouetteContainer : {}
+                  ]}
+                  onPress={() => pickImage('front')}
+                >
+                  <View style={styles.silhouetteImageWrapper}>
+                    <Image 
+                      source={require('../../assets/images/onboarding/front.png')} 
+                      style={styles.silhouetteImage} 
                     />
-                    <StyledText variant="bodyMedium" color={colors.text.secondary}>
-                      Front View
-                    </StyledText>
-                  </View>
-                  <View style={styles.photoFrame}>
-                    {photos.find(p => p.type === 'front') ? (
-                      <Image 
-                        source={{ uri: photos.find(p => p.type === 'front')?.uri }} 
-                        style={styles.photo} 
-                      />
-                    ) : (
-                      <View style={styles.photoPlaceholder}>
-                        <MaterialCommunityIcons
-                          name="camera-plus-outline"
-                          size={40}
-                          color={colors.text.muted}
+                    {photos.find(p => p.type === 'front') && (
+                      <View style={styles.checkmarkOverlay}>
+                        <MaterialCommunityIcons 
+                          name="check-circle" 
+                          size={32} 
+                          color={colors.accent.green} 
                         />
-                        <StyledText variant="bodySmall" color={colors.text.muted} style={{marginTop: spacing.xs}}>
-                          Tap to add photo
-                        </StyledText>
                       </View>
                     )}
                   </View>
-                  <View style={styles.photoActions}>
-                    <TouchableOpacity
-                      style={[styles.actionButton, styles.cameraButton]}
-                      onPress={() => takePhoto('front')}
-                    >
-                      <MaterialCommunityIcons name="camera" size={20} color={colors.text.primary} />
-                      <StyledText variant="bodyMedium" color={colors.text.primary} style={{marginLeft: spacing.xs}}>
-                        Camera
-                      </StyledText>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.actionButton, styles.galleryButton]}
-                      onPress={() => pickImage('front')}
-                    >
-                      <MaterialCommunityIcons name="image-multiple" size={20} color={colors.text.primary} />
-                      <StyledText variant="bodyMedium" color={colors.text.primary} style={{marginLeft: spacing.xs}}>
-                        Gallery
-                      </StyledText>
-                    </TouchableOpacity>
+                  <View style={styles.silhouetteLabel}>
+                    <StyledText variant="bodyMedium" style={styles.silhouetteText}>
+                      Front
+                    </StyledText>
                   </View>
-                </View>
+                </TouchableOpacity>
 
-                {/* Side Photo */}
-                <View style={styles.photoContainer}>
-                  <View style={styles.photoLabelContainer}>
-                    <MaterialCommunityIcons 
-                      name="human-male-height-variant" 
-                      size={18} 
-                      color={colors.text.secondary}
-                      style={{marginRight: spacing.xs}}
+                {/* Side View Silhouette */}
+                <TouchableOpacity 
+                  style={[
+                    styles.silhouetteContainer, 
+                    styles.sideSilhouetteContainer,
+                    photos.find(p => p.type === 'side') ? styles.activeSilhouetteContainer : {}
+                  ]}
+                  onPress={() => pickImage('side')}
+                >
+                  <View style={styles.silhouetteImageWrapper}>
+                    <Image 
+                      source={require('../../assets/images/onboarding/side.png')} 
+                      style={styles.silhouetteImage} 
                     />
-                    <StyledText variant="bodyMedium" color={colors.text.secondary}>
-                      Side View
-                    </StyledText>
-                  </View>
-                  <View style={styles.photoFrame}>
-                    {photos.find(p => p.type === 'side') ? (
-                      <Image 
-                        source={{ uri: photos.find(p => p.type === 'side')?.uri }} 
-                        style={styles.photo} 
-                      />
-                    ) : (
-                      <View style={styles.photoPlaceholder}>
-                        <MaterialCommunityIcons
-                          name="camera-plus-outline"
-                          size={40}
-                          color={colors.text.muted}
+                    {photos.find(p => p.type === 'side') && (
+                      <View style={styles.checkmarkOverlay}>
+                        <MaterialCommunityIcons 
+                          name="check-circle" 
+                          size={32} 
+                          color={colors.accent.green} 
                         />
-                        <StyledText variant="bodySmall" color={colors.text.muted} style={{marginTop: spacing.xs}}>
-                          Tap to add photo
-                        </StyledText>
                       </View>
                     )}
                   </View>
-                  <View style={styles.photoActions}>
-                    <TouchableOpacity
-                      style={[styles.actionButton, styles.cameraButton]}
-                      onPress={() => takePhoto('side')}
-                    >
-                      <MaterialCommunityIcons name="camera" size={20} color={colors.text.primary} />
-                      <StyledText variant="bodyMedium" color={colors.text.primary} style={{marginLeft: spacing.xs}}>
-                        Camera
-                      </StyledText>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.actionButton, styles.galleryButton]}
-                      onPress={() => pickImage('side')}
-                    >
-                      <MaterialCommunityIcons name="image-multiple" size={20} color={colors.text.primary} />
-                      <StyledText variant="bodyMedium" color={colors.text.primary} style={{marginLeft: spacing.xs}}>
-                        Gallery
-                      </StyledText>
-                    </TouchableOpacity>
+                  <View style={styles.silhouetteLabel}>
+                    <StyledText variant="bodyMedium" style={styles.silhouetteText}>
+                      Side
+                    </StyledText>
                   </View>
-                </View>
+                </TouchableOpacity>
 
-                {/* Back Photo */}
-                <View style={styles.photoContainer}>
-                  <View style={styles.photoLabelContainer}>
-                    <MaterialCommunityIcons 
-                      name="human-male-height" 
-                      size={18} 
-                      color={colors.text.secondary}
-                      style={{marginRight: spacing.xs}}
+                {/* Back View Silhouette */}
+                <TouchableOpacity 
+                  style={[
+                    styles.silhouetteContainer, 
+                    styles.backSilhouetteContainer,
+                    photos.find(p => p.type === 'back') ? styles.activeSilhouetteContainer : {}
+                  ]}
+                  onPress={() => pickImage('back')}
+                >
+                  <View style={styles.silhouetteImageWrapper}>
+                    <Image 
+                      source={require('../../assets/images/onboarding/back.png')} 
+                      style={styles.silhouetteImage} 
                     />
-                    <StyledText variant="bodyMedium" color={colors.text.secondary}>
-                      Back View
-                    </StyledText>
-                  </View>
-                  <View style={styles.photoFrame}>
-                    {photos.find(p => p.type === 'back') ? (
-                      <Image 
-                        source={{ uri: photos.find(p => p.type === 'back')?.uri }} 
-                        style={styles.photo} 
-                      />
-                    ) : (
-                      <View style={styles.photoPlaceholder}>
-                        <MaterialCommunityIcons
-                          name="camera-plus-outline"
-                          size={40}
-                          color={colors.text.muted}
+                    {photos.find(p => p.type === 'back') && (
+                      <View style={styles.checkmarkOverlay}>
+                        <MaterialCommunityIcons 
+                          name="check-circle" 
+                          size={32} 
+                          color={colors.accent.green} 
                         />
-                        <StyledText variant="bodySmall" color={colors.text.muted} style={{marginTop: spacing.xs}}>
-                          Tap to add photo
-                        </StyledText>
                       </View>
                     )}
                   </View>
-                  <View style={styles.photoActions}>
-                    <TouchableOpacity
-                      style={[styles.actionButton, styles.cameraButton]}
-                      onPress={() => takePhoto('back')}
-                    >
-                      <MaterialCommunityIcons name="camera" size={20} color={colors.text.primary} />
-                      <StyledText variant="bodyMedium" color={colors.text.primary} style={{marginLeft: spacing.xs}}>
-                        Camera
+                  <View style={styles.silhouetteLabel}>
+                    <StyledText variant="bodyMedium" style={styles.silhouetteText}>
+                      Back
+                    </StyledText>
+                  </View>
+                </TouchableOpacity>
+              </View>
+
+              {/* Photo Thumbnails */}
+              <View style={styles.thumbnailsContainer}>
+                {photos.map((photo, index) => (
+                  <View key={`thumb-${index}`} style={styles.thumbnailWrapper}>
+                    <Image source={{ uri: photo.uri }} style={styles.thumbnail} />
+                    <View style={styles.thumbnailLabel}>
+                      <StyledText variant="bodySmall" style={styles.thumbnailText}>
+                        {photo.type.charAt(0).toUpperCase() + photo.type.slice(1)}
                       </StyledText>
-                    </TouchableOpacity>
-                    <TouchableOpacity
-                      style={[styles.actionButton, styles.galleryButton]}
-                      onPress={() => pickImage('back')}
+                    </View>
+                    <TouchableOpacity 
+                      style={styles.removePhotoButton}
+                      onPress={() => {
+                        const newPhotos = photos.filter((_, i) => i !== index);
+                        setPhotos(newPhotos);
+                      }}
                     >
-                      <MaterialCommunityIcons name="image-multiple" size={20} color={colors.text.primary} />
-                      <StyledText variant="bodyMedium" color={colors.text.primary} style={{marginLeft: spacing.xs}}>
-                        Gallery
-                      </StyledText>
+                      <MaterialCommunityIcons name="close-circle" size={22} color={colors.feedback.error} />
                     </TouchableOpacity>
                   </View>
-                </View>
+                ))}
+              </View>
+
+              {/* Upload Options with Premium Design */}
+              <View style={styles.uploadOptionsContainer}>
+                <TouchableOpacity
+                  style={styles.uploadOption}
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                    Alert.alert(
+                      'Select Photo Type',
+                      'Which view would you like to capture?',
+                      [
+                        { text: 'Front View', onPress: () => takePhoto('front') },
+                        { text: 'Side View', onPress: () => takePhoto('side') },
+                        { text: 'Back View', onPress: () => takePhoto('back') },
+                        { text: 'Cancel', style: 'cancel' }
+                      ]
+                    );
+                  }}
+                >
+                  <LinearGradient 
+                    colors={[colors.secondary.light, colors.secondary.dark]}
+                    style={styles.uploadOptionGradient}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                  >
+                    <SafeBlurView intensity={20} style={styles.uploadOptionBlur}>
+                      <MaterialCommunityIcons name="camera" size={24} color={colors.text.primary} />
+                      <StyledText variant="bodyMedium" style={styles.uploadOptionText}>Camera</StyledText>
+                    </SafeBlurView>
+                  </LinearGradient>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={styles.uploadOption}
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                    Alert.alert(
+                      'Select Photo Type',
+                      'Which view would you like to upload?',
+                      [
+                        { text: 'Front View', onPress: () => pickImage('front') },
+                        { text: 'Side View', onPress: () => pickImage('side') },
+                        { text: 'Back View', onPress: () => pickImage('back') },
+                        { text: 'Cancel', style: 'cancel' }
+                      ]
+                    );
+                  }}
+                >
+                  <LinearGradient 
+                    colors={[colors.primary.light, colors.primary.dark]}
+                    style={styles.uploadOptionGradient}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
+                  >
+                    <SafeBlurView intensity={20} style={styles.uploadOptionBlur}>
+                      <MaterialCommunityIcons name="image-multiple" size={24} color={colors.text.primary} />
+                      <StyledText variant="bodyMedium" style={styles.uploadOptionText}>Gallery</StyledText>
+                    </SafeBlurView>
+                  </LinearGradient>
+                </TouchableOpacity>
               </View>
 
               {/* Analysis Progress */}
               {isAnalyzing && (
                 <View style={styles.analysisProgressContainer}>
                   <View style={styles.progressTextContainer}>
-                    <MaterialCommunityIcons name="chart-bar" size={20} color={colors.primary.main} />
-                    <StyledText variant="bodyMedium" color={colors.text.primary} style={styles.progressText}>
-                      Analyzing your body composition...
-                    </StyledText>
+                    <ActivityIndicator size="small" color={colors.primary.main} />
+                    <StyledText variant="bodyMedium" style={styles.progressText}>Analyzing your photos...</StyledText>
                   </View>
-                  <ProgressBar 
-                    progress={analyzeProgress / 100} 
-                    color={colors.primary.main} 
-                    style={styles.progressBar} 
+                  <ProgressBar
+                    progress={analyzeProgress / 100}
+                    color={colors.primary.main}
+                    style={styles.progressBar}
                   />
                 </View>
               )}
 
-              {/* Error Message */}
+              {/* Error Display */}
               {error && (
                 <View style={styles.errorContainer}>
-                  <MaterialCommunityIcons name="alert-circle-outline" size={20} color={colors.feedback.error} style={{marginRight: spacing.sm}} />
-                  <StyledText variant="bodyMedium" color={colors.feedback.error}>
+                  <MaterialCommunityIcons name="alert" size={24} color={colors.feedback.error} />
+                  <StyledText variant="bodyMedium" color={colors.feedback.error} style={{ marginLeft: spacing.sm }}>
                     {error}
                   </StyledText>
                 </View>
               )}
 
-              {/* Actions */}
+              {/* Action Buttons - Premium Design */}
               <View style={styles.actionsContainer}>
+                <Animated.View style={{
+                  transform: [{ scale: pulseAnim }],
+                  width: '100%',
+                }}>
+                  <TouchableOpacity
+                    style={[
+                      styles.analyzeButton,
+                      photos.length === 0 && styles.disabledButton
+                    ]}
+                    onPress={() => {
+                      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy);
+                      analyzeUserPhotos();
+                    }}
+                    disabled={photos.length === 0 || isAnalyzing}
+                  >
+                    <LinearGradient
+                      colors={[colors.primary.main, colors.primary.dark]}
+                      style={styles.buttonGradient}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 0 }}
+                    >
+                      <View style={styles.analyzeButtonContent}>
+                        <MaterialCommunityIcons name="account-search" size={24} color={colors.text.primary} style={{ marginRight: spacing.sm }} />
+                        <StyledText variant="bodyLarge" style={{ color: colors.text.primary, fontWeight: 'bold' }}>
+                          Analyze My Body
+                        </StyledText>
+                      </View>
+                    </LinearGradient>
+                  </TouchableOpacity>
+                </Animated.View>
+                
                 <TouchableOpacity
-                  onPress={skipAnalysis}
                   style={styles.skipButton}
+                  onPress={() => {
+                    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                    skipAnalysis();
+                  }}
+                  disabled={isAnalyzing}
                 >
-                  <StyledText variant="bodyMedium" color={colors.text.secondary}>
+                  <StyledText variant="bodyMedium" color={colors.text.secondary} style={styles.skipText}>
                     Skip for now
                   </StyledText>
                 </TouchableOpacity>
+              </View>
 
-                <TouchableOpacity
-                  onPress={analyzeUserPhotos}
-                  disabled={photos.length === 0 || isAnalyzing}
-                  style={[styles.analyzeButton, photos.length === 0 || isAnalyzing ? styles.disabledButton : {}]}
-                >
-                  <View style={styles.analyzeButtonContent}>
-                    {isAnalyzing ? (
-                      <ActivityIndicator size="small" color={colors.surface.light} style={{marginRight: spacing.sm}} />
-                    ) : (
-                      <MaterialCommunityIcons name="clipboard-check-outline" size={20} color={colors.surface.light} style={{marginRight: spacing.sm}} />
-                    )}
-                    <StyledText variant="bodyMedium" style={{color: colors.surface.light, fontWeight: 'bold'}}>
-                      {isAnalyzing ? 'Analyzing...' : 'Analyze Photos'}
+              {/* Privacy Notice - Enhanced Design */}
+              <View style={styles.privacyNotice}>
+                <SafeBlurView intensity={10} style={styles.privacyBlur}>
+                  <View style={styles.privacyHeader}>
+                    <MaterialCommunityIcons name="shield-lock" size={20} color={colors.accent.lavender} style={{ marginRight: spacing.sm }} />
+                    <StyledText variant="bodyMedium" color={colors.accent.lavender} style={{ fontWeight: 'bold' }}>
+                      Privacy Notice
                     </StyledText>
                   </View>
-                </TouchableOpacity>
+                  <StyledText variant="bodySmall" color={colors.text.secondary} style={styles.privacyText}>
+                    Your photos are processed securely and privately. They are not stored on our servers beyond the analysis period and are never shared with third parties.
+                  </StyledText>
+                </SafeBlurView>
               </View>
 
-              {/* Privacy Notice */}
-              <View style={styles.privacyNotice}>
-                <View style={styles.privacyHeader}>
-                  <MaterialCommunityIcons name="shield-check-outline" size={20} color={colors.text.muted} />
-                  <StyledText variant="bodyMedium" color={colors.text.muted} style={{marginLeft: spacing.xs, fontWeight: 'bold'}}>
-                    Privacy Protection
-                  </StyledText>
+              {/* Analysis Results Section - Only shown after analysis completes */}
+              {showResults && result && (
+                <View style={styles.resultsContainer}>
+                  <SafeBlurView intensity={15} style={styles.resultsCard}>
+                    <StyledText variant="headingSmall" color={colors.primary.main} style={styles.resultsTitle}>
+                      Analysis Results
+                    </StyledText>
+                    
+                    {/* Body Type */}
+                    <View style={styles.resultSection}>
+                      <StyledText variant="bodyMedium" color={colors.text.primary} style={styles.resultLabel}>
+                        Body Type:
+                      </StyledText>
+                      <StyledText variant="bodyLarge" color={colors.text.primary} style={styles.resultValue}>
+                        {result.bodyType}
+                      </StyledText>
+                    </View>
+                    
+                    {/* Body Fat */}
+                    <View style={styles.resultSection}>
+                      <StyledText variant="bodyMedium" color={colors.text.primary} style={styles.resultLabel}>
+                        Estimated Body Fat:
+                      </StyledText>
+                      <StyledText variant="bodyLarge" color={colors.text.primary} style={styles.resultValue}>
+                        {result.bodyFatEstimate}%
+                      </StyledText>
+                    </View>
+                    
+                    {/* Analysis Summary */}
+                    <View style={styles.resultSection}>
+                      <StyledText variant="bodyMedium" color={colors.text.primary} style={styles.resultLabel}>
+                        Analysis:
+                      </StyledText>
+                      <StyledText variant="bodyMedium" color={colors.text.secondary} style={styles.resultText}>
+                        {result.analysisText}
+                      </StyledText>
+                    </View>
+                    
+                    {/* Recommended Focus Areas */}
+                    {result.recommendedFocusAreas && result.recommendedFocusAreas.length > 0 && (
+                      <View style={styles.resultSection}>
+                        <StyledText variant="bodyMedium" color={colors.text.primary} style={styles.resultLabel}>
+                          Recommended Focus Areas:
+                        </StyledText>
+                        <View style={styles.focusAreasContainer}>
+                          {result.recommendedFocusAreas.map((area, index) => (
+                            <View key={`focus-${index}`} style={styles.focusAreaChip}>
+                              <StyledText variant="bodySmall" color={colors.text.primary}>
+                                {area}
+                              </StyledText>
+                            </View>
+                          ))}
+                        </View>
+                      </View>
+                    )}
+                    
+                    {/* Next Button */}
+                    <TouchableOpacity
+                      style={styles.nextButton}
+                      onPress={navigateToNextScreen}
+                    >
+                      <LinearGradient
+                        colors={[colors.primary.main, colors.primary.dark]}
+                        style={styles.buttonGradient}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 0 }}
+                      >
+                        <View style={styles.nextButtonContent}>
+                          <StyledText variant="bodyLarge" style={{ color: colors.text.primary, fontWeight: 'bold' }}>
+                            Continue
+                          </StyledText>
+                          <MaterialCommunityIcons 
+                            name="arrow-right" 
+                            size={20} 
+                            color={colors.text.primary} 
+                            style={{ marginLeft: spacing.sm }} 
+                          />
+                        </View>
+                      </LinearGradient>
+                    </TouchableOpacity>
+                  </SafeBlurView>
                 </View>
-                <StyledText variant="bodySmall" color={colors.text.muted} style={styles.privacyText}>
-                  Your photos are processed securely and not stored permanently. They are used only to generate your body analysis results.
-                </StyledText>
-              </View>
+              )}
             </View>
           </ScrollView>
         </SafeAreaView>
@@ -604,107 +810,241 @@ export default function BodyAnalysisScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: colors.background.primary,
   },
   background: {
     flex: 1,
+    width: '100%',
+    height: '100%',
+  },
+  decorativeCircle: {
+    position: 'absolute',
+    borderRadius: 1000,
+    opacity: 0.2,
+  },
+  decorativeCircle1: {
+    width: width * 0.8,
+    height: width * 0.8,
+    backgroundColor: colors.primary.light,
+    top: -width * 0.4,
+    right: -width * 0.2,
+    transform: [{ scale: 1.5 }],
+    opacity: 0.15,
+  },
+  decorativeCircle2: {
+    width: width * 0.7,
+    height: width * 0.7,
+    backgroundColor: colors.secondary.light,
+    bottom: -width * 0.35,
+    left: -width * 0.35,
+    opacity: 0.1,
+  },
+  decorativeCircle3: {
+    width: width * 0.4,
+    height: width * 0.4,
+    backgroundColor: colors.accent.lavender,
+    top: height * 0.3,
+    right: -width * 0.2,
+    opacity: 0.08,
   },
   safeArea: {
     flex: 1,
   },
   headerContainer: {
-    padding: spacing.lg,
-    paddingTop: spacing.xl,
     flexDirection: 'row',
-    justifyContent: 'space-between',
     alignItems: 'center',
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.sm,
   },
   backButton: {
-    marginBottom: spacing.md,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    ...shadows.small,
   },
   headerContent: {
     flex: 1,
-    justifyContent: 'center',
+    marginLeft: spacing.sm,
   },
   title: {
-    fontSize: 32,
+    color: colors.text.primary,
     fontWeight: 'bold',
     marginBottom: spacing.xs,
   },
   subtitle: {
-    marginBottom: spacing.md,
+    opacity: 0.8,
   },
   scrollView: {
     flex: 1,
   },
   scrollContent: {
-    flexGrow: 1,
-    paddingBottom: spacing.xxl,
-    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.xl * 2,
   },
   formCard: {
-    backgroundColor: colors.surface.light,
+    marginHorizontal: spacing.md,
+    marginTop: spacing.md,
+    padding: spacing.md,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
     borderRadius: borderRadius.lg,
-    padding: spacing.lg,
     ...shadows.medium,
+    overflow: 'hidden',
   },
   instructionText: {
-    marginBottom: spacing.md,
+    marginBottom: spacing.lg,
+    textAlign: 'center',
     lineHeight: 22,
   },
-  photoSection: {
-    marginBottom: spacing.lg,
-  },
-  photoContainer: {
-    marginBottom: spacing.md,
-  },
-  photoLabelContainer: {
+  bodyVisualizationContainer: {
+    width: '100%',
+    height: 220,
+    position: 'relative',
+    marginBottom: spacing.xl,
     flexDirection: 'row',
+    justifyContent: 'space-around',
     alignItems: 'center',
-    marginBottom: spacing.sm,
   },
-  photoFrame: {
-    width: '100%',
-    height: 200,
-    borderRadius: borderRadius.md,
-    overflow: 'hidden',
-    backgroundColor: colors.surface.dark,
-    marginVertical: spacing.sm,
-    ...shadows.small,
-  },
-  photoPlaceholder: {
-    width: '100%',
-    height: '100%',
+  silhouetteContainer: {
+    width: 100,
+    height: 180,
+    borderRadius: 12,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
     justifyContent: 'center',
     alignItems: 'center',
+    overflow: 'hidden',
+    ...shadows.medium,
     borderWidth: 1,
-    borderStyle: 'dashed',
-    borderColor: colors.border.medium,
-    borderRadius: borderRadius.md,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
   },
-  photo: {
+  frontSilhouetteContainer: {
+    transform: [{ translateY: -10 }],
+  },
+  sideSilhouetteContainer: {
+    transform: [{ translateY: 10 }],
+  },
+  backSilhouetteContainer: {
+    transform: [{ translateY: -10 }],
+  },
+  activeSilhouetteContainer: {
+    backgroundColor: 'rgba(74, 222, 128, 0.15)',
+    borderColor: 'rgba(74, 222, 128, 0.3)',
+  },
+  silhouetteImageWrapper: {
+    width: '100%',
+    height: '100%',
+    borderRadius: 12,
+    overflow: 'hidden',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  silhouetteImage: {
     width: '100%',
     height: '100%',
     resizeMode: 'cover',
   },
-  photoActions: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  actionButton: {
-    flex: 1,
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.md,
-    borderRadius: borderRadius.md,
-    flexDirection: 'row',
+  checkmarkOverlay: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     justifyContent: 'center',
     alignItems: 'center',
-    backgroundColor: colors.surface.main,
+    backgroundColor: 'rgba(0, 0, 0, 0.3)',
+  },
+  silhouetteLabel: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    padding: spacing.xs,
+    alignItems: 'center',
+  },
+  silhouetteText: {
+    color: colors.text.primary,
+    fontSize: 12,
+    fontWeight: '600',
+  },
+  thumbnailsContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    justifyContent: 'center',
+    marginBottom: spacing.lg,
+  },
+  thumbnailWrapper: {
+    width: width * 0.25,
+    height: width * 0.25,
+    margin: spacing.xs,
+    borderRadius: borderRadius.md,
+    overflow: 'hidden',
+    position: 'relative',
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
     ...shadows.small,
   },
-  cameraButton: {
-    marginRight: spacing.xs,
+  thumbnail: {
+    width: '100%',
+    height: '100%',
+    borderRadius: borderRadius.md,
   },
-  galleryButton: {
+  thumbnailLabel: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    padding: spacing.xs,
+    alignItems: 'center',
+  },
+  thumbnailText: {
+    color: colors.text.primary,
+    fontSize: 10,
+    fontWeight: 'bold',
+  },
+  removePhotoButton: {
+    position: 'absolute',
+    top: 5,
+    right: 5,
+    backgroundColor: 'rgba(0, 0, 0, 0.6)',
+    borderRadius: 15,
+    width: 24,
+    height: 24,
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 10,
+  },
+  uploadOptionsContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: spacing.lg,
+    paddingHorizontal: spacing.xs,
+  },
+  uploadOption: {
+    flex: 1,
+    height: 60,
+    marginHorizontal: spacing.xs,
+    borderRadius: borderRadius.md,
+    overflow: 'hidden',
+    ...shadows.medium,
+  },
+  uploadOptionGradient: {
+    flex: 1,
+    borderRadius: borderRadius.md,
+    overflow: 'hidden',
+  },
+  uploadOptionBlur: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    flexDirection: 'row',
+    paddingHorizontal: spacing.md,
+  },
+  uploadOptionText: {
+    color: colors.text.primary,
+    fontWeight: 'bold',
     marginLeft: spacing.xs,
   },
   analysisProgressContainer: {
@@ -713,50 +1053,75 @@ const styles = StyleSheet.create({
   progressTextContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: spacing.xs,
+    marginBottom: spacing.sm,
   },
   progressText: {
     marginLeft: spacing.sm,
+    color: colors.text.secondary,
   },
   progressBar: {
-    height: 8,
-    borderRadius: borderRadius.xs,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
   },
   errorContainer: {
-    marginVertical: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(239, 68, 68, 0.1)',
     padding: spacing.md,
-    backgroundColor: 'rgba(248, 113, 113, 0.1)', // Light red background
-    borderRadius: borderRadius.sm,
-    borderLeftWidth: 4,
-    borderLeftColor: colors.feedback.error,
+    borderRadius: borderRadius.md,
+    marginBottom: spacing.lg,
   },
   actionsContainer: {
-    marginTop: spacing.lg,
-    flexDirection: 'column',
-    gap: spacing.md,
-  },
-  skipButton: {
-    borderColor: colors.border.medium,
+    alignItems: 'center',
+    marginBottom: spacing.lg,
   },
   analyzeButton: {
+    width: '100%',
+    height: 56,
     borderRadius: borderRadius.md,
-    backgroundColor: colors.primary.main,
-    paddingVertical: spacing.md,
-    paddingHorizontal: spacing.lg,
+    overflow: 'hidden',
+    marginBottom: spacing.md,
+    ...shadows.medium,
+  },
+  buttonGradient: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    borderRadius: borderRadius.md,
   },
   analyzeButtonContent: {
     flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  skipButton: {
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.lg,
+    borderRadius: borderRadius.md,
     justifyContent: 'center',
     alignItems: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    ...shadows.small,
+  },
+  skipText: {
+    textDecorationLine: 'underline',
+    opacity: 0.8,
   },
   disabledButton: {
     opacity: 0.5,
   },
   privacyNotice: {
-    marginTop: spacing.lg,
+    borderRadius: borderRadius.md,
+    overflow: 'hidden',
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+    marginTop: spacing.md,
+  },
+  privacyBlur: {
     padding: spacing.md,
-    backgroundColor: colors.surface.dark,
-    borderRadius: borderRadius.sm,
+    borderRadius: borderRadius.md,
   },
   privacyHeader: {
     flexDirection: 'row',
@@ -764,32 +1129,64 @@ const styles = StyleSheet.create({
     marginBottom: spacing.sm,
   },
   privacyText: {
+    lineHeight: 18,
+    fontSize: 12,
+    opacity: 0.8,
+  },
+  resultsContainer: {
+    marginHorizontal: spacing.md,
+    marginTop: spacing.lg,
+    marginBottom: spacing.lg,
+  },
+  resultsCard: {
+    borderRadius: borderRadius.lg,
+    padding: spacing.lg,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  resultsTitle: {
     textAlign: 'center',
+    marginBottom: spacing.md,
+    fontWeight: 'bold',
   },
-  decorativeCircle: {
-    position: 'absolute',
-    borderRadius: 150,
-    opacity: 0.2,
+  resultSection: {
+    marginBottom: spacing.md,
   },
-  decorativeCircle1: {
-    top: -50,
-    right: -50,
-    width: 200,
-    height: 200,
-    backgroundColor: colors.primary.light,
+  resultLabel: {
+    fontWeight: 'bold',
+    marginBottom: spacing.xs,
   },
-  decorativeCircle2: {
-    bottom: 100,
-    left: -100,
-    width: 300,
-    height: 300,
-    backgroundColor: colors.secondary.light,
+  resultValue: {
+    fontWeight: 'bold',
   },
-  decorativeCircle3: {
-    bottom: -50,
-    right: -50,
-    width: 200,
-    height: 200,
-    backgroundColor: colors.primary.light,
+  resultText: {
+    lineHeight: 22,
+  },
+  focusAreasContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginTop: spacing.xs,
+  },
+  focusAreaChip: {
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs,
+    borderRadius: 20,
+    marginRight: spacing.xs,
+    marginBottom: spacing.xs,
+  },
+  nextButton: {
+    marginTop: spacing.md,
+    width: '100%',
+    height: 50,
+    borderRadius: borderRadius.md,
+    overflow: 'hidden',
+  },
+  nextButtonContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+    height: '100%',
   },
 });

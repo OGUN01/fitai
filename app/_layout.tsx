@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useRef } from 'react';
 import { Slot, Stack, useSegments, useRouter } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
@@ -10,6 +10,17 @@ import { ProfileProvider, useProfile } from '../contexts/ProfileContext';
 import { Platform, View, Text } from 'react-native';
 import * as Font from 'expo-font';
 import 'react-native-url-polyfill/auto';
+import NotificationService from '../services/notifications';
+import { useFonts } from 'expo-font';
+import { NavigationContainerRef } from '@react-navigation/native';
+import { useColorScheme } from 'react-native';
+import * as Notifications from 'expo-notifications';
+import { InitialState } from '@react-navigation/routers';
+import FontAwesome from '@expo/vector-icons/FontAwesome';
+import { DarkTheme, DefaultTheme, ThemeProvider } from '@react-navigation/native';
+
+// Import initialization to ensure notifications are set up
+import '../services/notifications/init';
 
 // Keep the splash screen visible while we fetch resources
 SplashScreen.preventAutoHideAsync();
@@ -78,10 +89,28 @@ const cacheFonts = async () => {
 // Navigation guard to control user flow based on auth and onboarding status
 function NavigationGuard({ children }: { children: React.ReactNode }) {
   const { user, loading: authLoading } = useAuth();
-  const { profile, loading: profileLoading } = useProfile();
+  const { profile, loading: profileLoading, refreshProfile } = useProfile();
   const segments = useSegments();
   const router = useRouter();
   const [isNavigating, setIsNavigating] = useState(false);
+  const [initialCheckComplete, setInitialCheckComplete] = useState(false);
+  const initialAuthCheckRef = useRef(false);
+
+  // First effect just for initial auth verification
+  useEffect(() => {
+    if (!authLoading && user && !initialAuthCheckRef.current) {
+      console.log("Auth detected on app launch, attempting to restore previous session");
+      initialAuthCheckRef.current = true;
+      
+      // If we have auth but no profile yet, trigger profile refresh
+      if (!profileLoading && !profile) {
+        console.log("No profile loaded, forcing refresh for authenticated user");
+        refreshProfile(true)
+          .then(() => console.log("Initial profile loaded successfully"))
+          .catch(err => console.error("Error loading initial profile:", err));
+      }
+    }
+  }, [authLoading, user, profile, profileLoading, refreshProfile]);
 
   useEffect(() => {
     if (authLoading || profileLoading || isNavigating) return;
@@ -101,15 +130,40 @@ function NavigationGuard({ children }: { children: React.ReactNode }) {
       try {
         setIsNavigating(true);
         
-        if (!user && !inAuthGroup) {
-          // Not signed in, redirect to login
-          await router.replace('/(auth)/login');
+        // Check if we're already on login page to prevent infinite redirect
+        const isLoginPage = segments[0] === 'login' || segments[0] === '(auth)';
+        
+        // Only redirect to login if we're not already on a login page and user is not authenticated
+        if (!user && !isLoginPage && !inAuthGroup && !inDevGroup) {
+          await router.replace('/login');
         } else if (user && !inAuthGroup && !inOnboardingGroup) {
           // User is signed in, check if they've completed onboarding
-          if (profile && !profile.has_completed_onboarding) {
-            // Not completed onboarding, go to current step or start
-            const nextStep = profile.current_onboarding_step || 'user-details';
-            await router.replace(`/(onboarding)/${nextStep}`);
+          
+          if (!initialCheckComplete) {
+            // Force fresh profile load from database on initial app load
+            // This ensures we have the latest onboarding status
+            console.log("Initial app load, forcing profile refresh to get latest onboarding status");
+            await refreshProfile(true);
+            setInitialCheckComplete(true);
+            // We'll handle routing in the next effect cycle after profile is refreshed
+            setIsNavigating(false);
+            return;
+          }
+          
+          if (profile) {
+            console.log("Navigation check - has_completed_onboarding:", profile.has_completed_onboarding);
+            console.log("Navigation check - current_onboarding_step:", profile.current_onboarding_step);
+            
+            if (!profile.has_completed_onboarding) {
+              // Not completed onboarding, go to current step or start
+              const nextStep = profile.current_onboarding_step || 'user-details';
+              console.log(`User hasn't completed onboarding, redirecting to step: ${nextStep}`);
+              await router.replace(`/(onboarding)/${nextStep}`);
+            } else if (segments[0] !== '(tabs)') {
+              // Onboarding is complete, make sure they're in the main app
+              console.log("User has completed onboarding, redirecting to main app");
+              await router.replace('/(tabs)');
+            }
           }
         }
       } finally {
@@ -118,7 +172,7 @@ function NavigationGuard({ children }: { children: React.ReactNode }) {
     };
     
     handleNavigation();
-  }, [user, profile, segments, authLoading, profileLoading, router, isNavigating]);
+  }, [user, profile, segments, authLoading, profileLoading, router, isNavigating, initialCheckComplete]);
 
   return <>{children}</>;
 }
@@ -132,8 +186,36 @@ function AppLoadingFallback() {
   );
 }
 
+// Define RootStackParamList type
+type RootStackParamList = {
+  [key: string]: undefined | object;
+};
+
 export default function RootLayout() {
   const [appIsReady, setAppIsReady] = useState(false);
+  const [loaded, error] = useFonts({
+    ...FontAwesome.font,
+  });
+
+  // Use to persist navigation state
+  const [initialNavigationState, setInitialNavigationState] = useState<InitialState | undefined>(
+    undefined
+  );
+  const navigationRef = useRef<NavigationContainerRef<RootStackParamList>>();
+  
+  // Initialize notification service when app starts
+  useEffect(() => {
+    async function initializeNotifications() {
+      try {
+        await NotificationService.setupNotifications();
+        console.log('Notification service initialized');
+      } catch (error) {
+        console.error('Failed to initialize notification service:', error);
+      }
+    }
+    
+    initializeNotifications();
+  }, []);
 
   useEffect(() => {
     async function prepare() {
@@ -161,6 +243,17 @@ export default function RootLayout() {
 
     prepare();
   }, []);
+
+  // Prevent the splash screen from auto-hiding
+  useEffect(() => {
+    if (error) throw error;
+  }, [error]);
+
+  useEffect(() => {
+    if (loaded) {
+      SplashScreen.hideAsync();
+    }
+  }, [loaded]);
 
   // Show loading indicator while app is preparing
   if (!appIsReady) {

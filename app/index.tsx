@@ -2,6 +2,7 @@ import { ActivityIndicator, View } from 'react-native';
 import { Redirect } from 'expo-router';
 import { useAuth } from '../contexts/AuthContext';
 import 'react-native-url-polyfill/auto';
+import '../services/notifications/init';
 
 // This is the entry point of the app
 export default function Index() {
@@ -16,10 +17,9 @@ export default function Index() {
     );
   }
 
-  // Simple redirect based only on authentication
-  // The NavigationGuard in _layout.tsx will handle the rest of the navigation logic
+  // Redirect to the new landing page if not authenticated
   if (!user) {
-    return <Redirect href="/(auth)/login" />;
+    return <Redirect href="/login" />;
   } else {
     // Just redirect to tabs - NavigationGuard will handle onboarding check
     return <Redirect href="/(tabs)" />;

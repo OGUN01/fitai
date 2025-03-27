@@ -31,7 +31,11 @@ Create a personalized workout plan for the following user:
 - Exercise frequency: {{exerciseFrequency}} days per week
 - Time per session: {{timePerSession}} minutes
 - Focus areas: {{focusAreas}}
-- Injuries or limitations: {{limitations}}
+- Exercises/movements to avoid: {{exercisesToAvoid}}
+- Age: {{age}}
+- Gender: {{gender}}
+- Weight: {{weight}}
+- Height: {{height}}
 
 The workout plan should include:
 1. A weekly schedule with specific workouts for each day
@@ -80,9 +84,13 @@ Create a personalized meal plan for the following user:
 - Meal frequency: {{mealFrequency}} meals per day
 - Country/Region: {{region}}
 - Fitness goal: {{fitnessGoal}}
+- Age: {{age}}
+- Gender: {{gender}}
+- Weight: {{weight}}
+- Height: {{height}}
 
 The meal plan should include:
-1. Daily meal schedule with meal times
+1. Daily meal schedule with meal types (breakfast, lunch, dinner, snacks)
 2. Detailed recipes for each meal with ingredients and preparation instructions
 3. Nutritional information (calories, protein, carbs, fats)
 4. Shopping list for the week

@@ -1,184 +1,133 @@
-import React, { useState } from 'react';
+import React, { useState, useCallback } from 'react';
 import { 
   View, 
   StyleSheet, 
-  TouchableOpacity, 
   KeyboardAvoidingView, 
   Platform,
-  Image,
-  Dimensions
+  ImageBackground,
+  Dimensions,
+  TouchableHighlight,
+  Alert
 } from 'react-native';
-import { TextInput, Button, Snackbar } from 'react-native-paper';
+import { Snackbar, Button } from 'react-native-paper';
 import { router } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../contexts/AuthContext';
 import StyledText from '../components/ui/StyledText';
-import { colors, spacing, borderRadius, shadows, gradients } from '../theme/theme';
+import { colors, spacing, borderRadius, shadows } from '../theme/theme';
 
 // Get screen dimensions for responsive sizing
 const { width, height } = Dimensions.get('window');
 
+// Use the same background image for all platforms
+const backgroundImage = require('../assets/images/login/login.jpg');
+
 export default function LoginScreen() {
-  const [email, setEmail] = useState('');
-  const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [snackbarVisible, setSnackbarVisible] = useState(false);
   const { signIn } = useAuth();
 
-  const handleLogin = async () => {
-    if (!email || !password) {
-      setError('Please enter both email and password');
-      setSnackbarVisible(true);
-      return;
-    }
+  // Handle navigation to signup page
+  const handleGetStarted = useCallback(() => {
+    // Show loading state
+    setLoading(true);
+    
+    // Use standard router path format for group routes
+    setTimeout(() => {
+      router.push('/(auth)/signup');
+      // Reset loading after a short delay
+      setTimeout(() => setLoading(false), 500);
+    }, 100);
+  }, [setLoading]);
 
-    try {
-      setLoading(true);
-      setError('');
-      await signIn(email, password);
-      router.replace('/(tabs)/');
-    } catch (err) {
-      console.error('Login error:', err);
-      setError(err instanceof Error ? err.message : 'Failed to sign in');
-      setSnackbarVisible(true);
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleCreateAccount = () => {
-    router.push('/signup');
-  };
+  // Handle navigation to signin page
+  const handleSignIn = useCallback(() => {
+    // Use standard router path format for group routes
+    router.push('/(auth)/signin');
+  }, []);
 
   return (
     <View style={styles.container}>
       <StatusBar style="light" />
-      <LinearGradient
-        colors={[colors.background.primary, colors.background.secondary]}
-        style={styles.background}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 0, y: 1 }}
+      
+      <ImageBackground 
+        source={backgroundImage} 
+        style={styles.backgroundImage}
+        resizeMode="cover"
       >
-        {/* Floating decorative elements */}
-        <View style={[styles.decorativeCircle, styles.decorativeCircle1]} />
-        <View style={[styles.decorativeCircle, styles.decorativeCircle2]} />
-        <View style={[styles.decorativeCircle, styles.decorativeCircle3]} />
+        <View style={styles.overlay} />
         
         <KeyboardAvoidingView
           behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-          style={styles.keyboardAvoid}
+          style={styles.contentContainer}
         >
-          <View style={styles.contentContainer}>
-            {/* App Logo */}
-            <View style={styles.logoContainer}>
-              {/* Temporary placeholder for the app icon */}
-              <View style={styles.logoPlaceholder}>
-                <StyledText variant="headingLarge" color={colors.primary.main}>F</StyledText>
-              </View>
-              <StyledText variant="headingLarge" style={styles.appName}>
-                FitAI
-              </StyledText>
-              <StyledText variant="bodyMedium" style={styles.tagline}>
-                Your AI-powered fitness journey
-              </StyledText>
-            </View>
-
-            {/* Login Form */}
-            <View style={styles.formContainer}>
-              <TextInput
-                label="Email"
-                value={email}
-                onChangeText={setEmail}
-                style={styles.input}
-                mode="outlined"
-                autoCapitalize="none"
-                keyboardType="email-address"
-                outlineColor={colors.border.medium}
-                activeOutlineColor={colors.primary.main}
-                textColor={colors.text.primary}
-                theme={{ 
-                  colors: { 
-                    background: colors.surface.dark,
-                    placeholder: colors.text.muted,
-                    text: colors.text.primary
-                  }
-                }}
-              />
-              
-              <TextInput
-                label="Password"
-                value={password}
-                onChangeText={setPassword}
-                secureTextEntry
-                style={styles.input}
-                mode="outlined"
-                outlineColor={colors.border.medium}
-                activeOutlineColor={colors.primary.main}
-                textColor={colors.text.primary}
-                theme={{ 
-                  colors: { 
-                    background: colors.surface.dark,
-                    placeholder: colors.text.muted,
-                    text: colors.text.primary
-                  }
-                }}
-              />
-              
-              <Button
-                mode="contained"
-                onPress={handleLogin}
-                loading={loading}
-                disabled={loading}
-                style={styles.loginButton}
-                contentStyle={styles.buttonContent}
-                buttonColor={colors.primary.main}
+          {/* Main Content - Centered Text */}
+          <View style={styles.textContainer}>
+            <StyledText variant="headingLarge" style={styles.heading}>
+              Train Your Body,
+            </StyledText>
+            <StyledText variant="headingLarge" style={styles.heading}>
+              Elevate Your Spirit
+            </StyledText>
+            <StyledText variant="bodyLarge" style={styles.subheading}>
+              Your Virtual Coach For Health & Fitness
+            </StyledText>
+          </View>
+          
+          {/* Get Started Button */}
+          <View style={styles.buttonContainer}>
+            <Button 
+              mode="contained" 
+              onPress={handleGetStarted}
+              loading={loading}
+              style={styles.paperButton}
+              buttonColor="#c2ff3d"
+              textColor="#000"
+              labelStyle={styles.buttonText}
+              uppercase={false}
+              contentStyle={{ paddingVertical: 8 }}
+              rippleColor="rgba(0, 0, 0, 0.2)"
+              theme={{ roundness: 30 }}
+            >
+              Get Started
+            </Button>
+          </View>
+          
+          {/* Sign In Button */}
+          <View style={styles.signUpContainer}>
+            <StyledText variant="bodyMedium" color={colors.text.secondary}>
+              Already have an account?
+            </StyledText>
+            <TouchableHighlight 
+              onPress={handleSignIn} 
+              style={styles.signUpButton}
+              underlayColor="rgba(194, 255, 61, 0.1)"
+              activeOpacity={0.6}
+              hitSlop={{ top: 10, bottom: 10, left: 10, right: 10 }}
+            >
+              <StyledText
+                variant="bodyMedium"
+                color="#c2ff3d"
+                style={styles.signUpText}
               >
-                {loading ? 'Signing In...' : 'Sign In'}
-              </Button>
-              
-              <TouchableOpacity onPress={() => router.push('/forgot-password')}>
-                <StyledText
-                  variant="bodyMedium"
-                  color={colors.text.secondary}
-                  align="center"
-                  style={styles.forgotPassword}
-                >
-                  Forgot your password?
-                </StyledText>
-              </TouchableOpacity>
-            </View>
-
-            {/* Create Account Button */}
-            <View style={styles.createAccountContainer}>
-              <StyledText variant="bodyMedium" color={colors.text.secondary}>
-                Don't have an account?
+                Sign In
               </StyledText>
-              <TouchableOpacity onPress={handleCreateAccount}>
-                <StyledText
-                  variant="bodyMedium"
-                  color={colors.primary.main}
-                  style={styles.createAccountText}
-                >
-                  Create Account
-                </StyledText>
-              </TouchableOpacity>
-            </View>
-
+            </TouchableHighlight>
           </View>
         </KeyboardAvoidingView>
-        
-        {/* Error Snackbar */}
-        <Snackbar
-          visible={snackbarVisible}
-          onDismiss={() => setSnackbarVisible(false)}
-          duration={3000}
-          style={styles.snackbar}
-        >
-          {error}
-        </Snackbar>
-      </LinearGradient>
+      </ImageBackground>
+      
+      {/* Error Snackbar */}
+      <Snackbar
+        visible={snackbarVisible}
+        onDismiss={() => setSnackbarVisible(false)}
+        duration={3000}
+        style={styles.snackbar}
+      >
+        {error}
+      </Snackbar>
     </View>
   );
 }
@@ -186,100 +135,72 @@ export default function LoginScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: '#000', // Fallback background color
   },
-  background: {
+  backgroundImage: {
     flex: 1,
-    position: 'relative',
+    width: '100%',
+    height: '100%',
   },
-  keyboardAvoid: {
-    flex: 1,
+  overlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(0, 0, 0, 0.4)',
+    zIndex: 1, // Ensure overlay is below content
   },
   contentContainer: {
     flex: 1,
     justifyContent: 'center',
     padding: spacing.xl,
+    zIndex: 2, // Ensure content is above overlay
   },
-  logoContainer: {
-    alignItems: 'center',
+  textContainer: {
+    alignItems: 'center', // Center-align text
+    justifyContent: 'center',
+    marginBottom: spacing.xxl * 1.5,
+  },
+  heading: {
+    fontSize: 32,
+    fontWeight: 'bold',
+    letterSpacing: 0.5,
+    lineHeight: 38,
+    textAlign: 'center', // Center-align text
+  },
+  subheading: {
+    marginTop: spacing.md,
+    color: colors.text.secondary,
+    fontWeight: '400',
+    textAlign: 'center', // Center-align text
+  },
+  buttonContainer: {
+    zIndex: 10, // Ensure button is above other elements
+    elevation: 5, // Add elevation for Android
     marginBottom: spacing.xl,
   },
-  logoPlaceholder: {
-    width: width * 0.3,
-    height: width * 0.3,
-    borderRadius: width * 0.15,
-    backgroundColor: colors.surface.light,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: spacing.md,
-    ...shadows.medium,
+  paperButton: {
+    borderRadius: 30,
+    paddingVertical: 5,
   },
-  logo: {
-    width: width * 0.3,
-    height: width * 0.3,
-    marginBottom: spacing.md,
-  },
-  appName: {
-    marginBottom: spacing.xs,
-    fontSize: 42,
+  buttonText: {
     fontWeight: 'bold',
+    fontSize: 18,
   },
-  tagline: {
-    color: colors.text.secondary,
-  },
-  formContainer: {
-    backgroundColor: colors.surface.light,
-    borderRadius: borderRadius.lg,
-    padding: spacing.lg,
-    ...shadows.medium,
-  },
-  input: {
-    marginBottom: spacing.md,
-    backgroundColor: colors.surface.dark,
-  },
-  loginButton: {
-    marginTop: spacing.md,
-    borderRadius: borderRadius.round,
-  },
-  buttonContent: {
-    paddingVertical: spacing.sm,
-  },
-  forgotPassword: {
-    marginTop: spacing.md,
-  },
-  createAccountContainer: {
+  signUpContainer: {
     flexDirection: 'row',
     justifyContent: 'center',
-    marginTop: spacing.xl,
-  },
-  createAccountText: {
-    marginLeft: spacing.xs,
-    fontWeight: 'bold',
-  },
-  decorativeCircle: {
+    alignItems: 'center',
+    marginTop: 20,
+    zIndex: 10, // Ensure button is above other elements
     position: 'absolute',
-    borderRadius: borderRadius.round,
-    opacity: 0.1,
+    bottom: 40,
+    left: 0,
+    right: 0,
   },
-  decorativeCircle1: {
-    width: width * 0.4,
-    height: width * 0.4,
-    backgroundColor: colors.accent.lavender,
-    top: -width * 0.1,
-    right: -width * 0.1,
+  signUpButton: {
+    marginLeft: spacing.xs,
+    padding: 8, // Add padding for larger touch area
   },
-  decorativeCircle2: {
-    width: width * 0.3,
-    height: width * 0.3,
-    backgroundColor: colors.primary.main,
-    bottom: height * 0.3,
-    left: -width * 0.15,
-  },
-  decorativeCircle3: {
-    width: width * 0.5,
-    height: width * 0.5,
-    backgroundColor: colors.secondary.main,
-    bottom: -width * 0.2,
-    right: -width * 0.1,
+  signUpText: {
+    fontWeight: 'bold',
   },
   snackbar: {
     backgroundColor: colors.feedback.error,

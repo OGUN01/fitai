@@ -1,4 +1,4 @@
-package com.anonymous.fitness
+package com.fitai.fitness
 import expo.modules.splashscreen.SplashScreenManager
 
 import android.os.Build

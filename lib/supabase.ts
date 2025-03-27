@@ -1,12 +1,27 @@
 import { createClient } from '@supabase/supabase-js';
 import { SUPABASE_URL, SUPABASE_ANON_KEY } from '../constants/api';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+// Create a custom storage provider using AsyncStorage
+const customStorageProvider = {
+  getItem: (key: string) => {
+    return AsyncStorage.getItem(key);
+  },
+  setItem: (key: string, value: string) => {
+    return AsyncStorage.setItem(key, value);
+  },
+  removeItem: (key: string) => {
+    return AsyncStorage.removeItem(key);
+  },
+};
 
 // Create a single supabase client for the entire app
 const supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY, {
   auth: {
     persistSession: true,
     autoRefreshToken: true,
-    detectSessionInUrl: true,
+    detectSessionInUrl: false, // Set to false in React Native
+    storage: customStorageProvider,
   },
 });
 

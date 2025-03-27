@@ -4,12 +4,19 @@ export interface UserProfile {
   id: string; // Maps to auth.users.id
   username?: string;
   full_name?: string;
-  height?: number;
-  weight?: number;
-  weight_kg?: number; // Added for consistency with database schema
-  fitness_goal?: string;
-  target_weight?: number;
-  target_weight_kg?: number; // Added for consistency with database schema
+  
+  // Use standardized metric column names that match the database
+  height_cm?: number; // Standardized column for height in centimeters
+  weight_kg?: number; // Standardized column for weight in kilograms
+  target_weight_kg?: number; // Standardized column for target weight in kilograms
+  
+  // Legacy fields - kept for reference but should not be used for DB operations
+  // height?: number; // DEPRECATED - use height_cm instead
+  // weight?: number; // DEPRECATED - use weight_kg instead
+  // target_weight?: number; // DEPRECATED - use target_weight_kg instead
+  
+  // Keep existing fields
+  weight_goal?: string; // Actual column in database for fitness goal (singular)
   workout_preferences?: WorkoutPreferences;
   diet_preferences?: DietPreferences;
   body_analysis?: BodyAnalysis;
@@ -23,23 +30,27 @@ export interface UserProfile {
   streak_count?: number;
   streak?: number;
   
-  // Added weight tracking fields
-  starting_weight?: number;
-  initial_weight?: number;
-  start_weight?: number;
-  current_weight?: number;
+  // Added weight tracking fields - use standardized metric naming
+  starting_weight_kg?: number;
+  initial_weight_kg?: number;
+  current_weight_kg?: number;
   
   // Fields for workout preferences (from DB schema)
   fitness_level?: string;
   workout_days_per_week?: number;
   workout_duration_minutes?: number;
-  fitness_goals?: string[];
+  fitness_goals?: string[]; // Array of fitness goals in database
   
   // Fields for nutrition preferences
   diet_type?: string;
   diet_plan_preference?: string;
   allergies?: string[];
   meal_frequency?: number;
+  meal_times?: string[] | Array<{name: string, time: string}>; // Support both formats
+  country_region?: string;
+  diet_restrictions?: string[];
+  water_intake_goal?: number;
+  water_intake_unit?: string;
   
   // Generated content fields
   workout_plan?: any; // Using any for now, could be typed as WorkoutPlan
@@ -49,6 +60,15 @@ export interface UserProfile {
   workout_summary?: string;
   meal_summary?: string;
   motivational_quote?: string;
+  
+  // Demographic data fields
+  age?: number;
+  gender?: string;
+  activity_level?: string;
+  
+  // JSONB tracking columns (should be arrays)
+  workout_tracking?: any;
+  meal_tracking?: any[];
 }
 
 export interface WorkoutPreferences {
@@ -84,6 +104,13 @@ export interface DietPreferences {
   // Added fields from review page
   dietary_restrictions?: string[];
   meal_count?: number;
+  
+  // Additional properties for meal planning
+  country_region?: string; // Changed from countryRegion to country_region for consistency
+  calorieTarget?: number;
+  
+  // Meal times configuration for scheduling
+  meal_times?: Array<{name: string, time: string}>;
 }
 
 export interface BodyAnalysis {
@@ -94,9 +121,25 @@ export interface BodyAnalysis {
   weight_kg?: number; // new field from database
   bmi?: number;
   body_fat_percentage?: number;
-  bodyType?: string; // Body type classification
-  analysisText?: string; // Text analysis of body composition
-  bodyProportions?: {
+  
+  // Fields for unit conversions and original values
+  height_unit?: string; // 'cm' or 'ft'
+  weight_unit?: string; // 'kg' or 'lbs'
+  original_height?: number; // original height in user's preferred unit
+  original_weight?: number; // original weight in user's preferred unit
+  original_target_weight?: number; // original target weight in user's preferred unit
+  target_weight_kg?: number; // target weight in kg
+  
+  // Weight tracking fields
+  starting_weight_kg?: number;
+  initial_weight_kg?: number;
+  current_weight_kg?: number;
+  weight_history?: Array<{date: string, weight: number}>; // Array of weight entries
+  
+  // Using snake_case to match database schema
+  body_type?: string; // Body type classification (previously bodyType)
+  analysis_text?: string; // Text analysis of body composition (previously analysisText)
+  body_proportions?: {
     shoulders: string;
     torso: string;
     arms: string;
@@ -107,14 +150,18 @@ export interface BodyAnalysis {
     issues: string[];
     recommendations: string[];
   };
-  recommendedFocusAreas?: string[];
-  measurements?: {
-    waist?: number;
-    chest?: number;
-    hips?: number;
-    arms?: number;
-    legs?: number;
+  recommended_focus_areas?: string[];
+  
+  // Keep camelCase for backward compatibility
+  bodyType?: string;
+  analysisText?: string;
+  bodyProportions?: {
+    shoulders: string;
+    torso: string;
+    arms: string;
+    legs: string;
   };
+  recommendedFocusAreas?: string[];
 }
 
 export type OnboardingStep = 

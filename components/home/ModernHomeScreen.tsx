@@ -41,7 +41,7 @@ interface ModernHomeScreenProps {
   userStats: UserStats;
   workoutStats: WorkoutStats;
   mealStats: MealStats;
-  nextWorkout: NextWorkout;
+  nextWorkout: NextWorkout | null;
   motivationalQuote: string;
   onRefreshQuote: () => void;
 }
@@ -197,53 +197,76 @@ const ModernHomeScreen: React.FC<ModernHomeScreenProps> = ({
             </View>
             
             <View style={styles.todayWorkout}>
-              {workoutStats.scheduledForToday ? (
-                <Text style={styles.workoutDescription}>
-                  You have a workout scheduled for today: 
-                  <Text style={styles.workoutHighlight}> {workoutStats.todayWorkoutName}</Text>
-                </Text>
-              ) : (
-                <Text style={styles.workoutDescription}>
-                  No workout scheduled for today. Next workout:
-                  <Text style={styles.workoutHighlight}> {nextWorkout.name}</Text> in {nextWorkout.daysUntil} day{nextWorkout.daysUntil !== 1 ? 's' : ''}
-                </Text>
-              )}
-              
-              {workoutStats.todayCompleted ? (
-                <Chip 
-                  icon="checkmark-circle" 
-                  style={[styles.statusChip, { backgroundColor: colors.accent.green }]}
-                >
-                  Completed
-                </Chip>
-              ) : workoutStats.scheduledForToday ? (
-                <View style={styles.actionRow}>
-                  <Chip 
-                    icon="alert-circle" 
-                    style={[styles.statusChip, { backgroundColor: colors.accent.gold }]}
-                  >
-                    Action needed
-                  </Chip>
-                  
-                  <TouchableOpacity 
-                    style={styles.startButton}
-                    onPress={() => router.push('/(tabs)/workout')}
-                  >
-                    <LinearGradient
-                      colors={[colors.primary.main, colors.primary.dark]}
-                      style={styles.startButtonGradient}
+              {!nextWorkout ? (
+                <View>
+                  <Text style={styles.workoutDescription}>
+                    No workout plan generated yet.
+                  </Text>
+                  <View style={styles.actionRow}>
+                    <TouchableOpacity 
+                      style={styles.generateButton}
+                      onPress={() => router.push('/(tabs)/workout')}
                     >
-                      <Text style={styles.startButtonText}>Start</Text>
-                    </LinearGradient>
-                  </TouchableOpacity>
+                      <LinearGradient
+                        colors={[colors.primary.main, colors.primary.dark]}
+                        style={styles.startButtonGradient}
+                      >
+                        <Text style={styles.startButtonText}>Create Plan</Text>
+                      </LinearGradient>
+                    </TouchableOpacity>
+                  </View>
                 </View>
+              ) : workoutStats.scheduledForToday ? (
+                <>
+                  <Text style={styles.workoutDescription}>
+                    You have a workout scheduled for today: 
+                    <Text style={styles.workoutHighlight}> {workoutStats.todayWorkoutName}</Text>
+                  </Text>
+                  
+                  {workoutStats.todayCompleted ? (
+                    <Chip 
+                      icon="check-circle" 
+                      style={[styles.statusChip, { backgroundColor: colors.accent.green }]}
+                    >
+                      Completed
+                    </Chip>
+                  ) : (
+                    <View style={styles.actionRow}>
+                      <Chip 
+                        icon="alert" 
+                        style={[styles.statusChip, { backgroundColor: colors.accent.gold }]}
+                      >
+                        Action needed
+                      </Chip>
+                      
+                      <TouchableOpacity 
+                        style={styles.startButton}
+                        onPress={() => router.push('/(tabs)/workout')}
+                      >
+                        <LinearGradient
+                          colors={[colors.primary.main, colors.primary.dark]}
+                          style={styles.startButtonGradient}
+                        >
+                          <Text style={styles.startButtonText}>Start</Text>
+                        </LinearGradient>
+                      </TouchableOpacity>
+                    </View>
+                  )}
+                </>
               ) : (
-                <Chip 
-                  icon="calendar" 
-                  style={[styles.statusChip, { backgroundColor: colors.background.secondary }]}
-                >
-                  Rest day
-                </Chip>
+                <>
+                  <Text style={styles.workoutDescription}>
+                    No workout scheduled for today. Next workout:
+                    <Text style={styles.workoutHighlight}> {nextWorkout.name}</Text> in {nextWorkout.daysUntil} day{nextWorkout.daysUntil !== 1 ? 's' : ''}
+                  </Text>
+                  
+                  <Chip 
+                    icon="calendar" 
+                    style={[styles.statusChip, { backgroundColor: colors.background.secondary }]}
+                  >
+                    Rest day
+                  </Chip>
+                </>
               )}
             </View>
             
@@ -288,14 +311,14 @@ const ModernHomeScreen: React.FC<ModernHomeScreenProps> = ({
               
               {mealStats.allCompleted ? (
                 <Chip 
-                  icon="checkmark-circle" 
+                  icon="check-circle" 
                   style={[styles.statusChip, { backgroundColor: colors.accent.green }]}
                 >
                   All Complete
                 </Chip>
               ) : (
                 <Chip 
-                  icon="alert-circle" 
+                  icon="alert" 
                   style={[styles.statusChip, { backgroundColor: colors.accent.gold }]}
                 >
                   {mealStats.pendingMeals.length} meal{mealStats.pendingMeals.length !== 1 ? 's' : ''} remaining
@@ -534,6 +557,13 @@ const styles = StyleSheet.create({
   mealHighlight: {
     color: colors.text.primary,
     fontWeight: '500',
+  },
+  generateButton: {
+    flex: 1,
+    height: 36,
+    borderRadius: borderRadius.md,
+    overflow: 'hidden',
+    elevation: 2,
   },
 });
 

@@ -20,8 +20,7 @@ const mockFitnessPreferences: UserFitnessPreferences = {
   availableEquipment: ['dumbbells', 'resistance bands'],
   exerciseFrequency: 3,
   timePerSession: 45,
-  focusAreas: ['upper-body', 'core'],
-  injuries: 'None'
+  focusAreas: ['upper-body', 'core']
 };
 
 // Mock diet preferences for testing

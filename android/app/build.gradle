@@ -86,9 +86,9 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
-    namespace 'com.anonymous.fitness'
+    namespace 'com.fitai.fitness'
     defaultConfig {
-        applicationId 'com.anonymous.fitness'
+        applicationId 'com.fitai.fitness'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1

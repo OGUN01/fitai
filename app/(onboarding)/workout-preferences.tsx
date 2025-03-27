@@ -5,7 +5,8 @@ import {
   ScrollView, 
   Dimensions, 
   TouchableOpacity, 
-  Platform 
+  Platform,
+  ImageBackground 
 } from 'react-native';
 import { 
   Button, 
@@ -29,6 +30,10 @@ import { WorkoutPreferences } from '../../types/profile';
 import { LinearGradient } from 'expo-linear-gradient';
 import StyledText from '../../components/ui/StyledText';
 import { colors, spacing, borderRadius, shadows } from '../../theme/theme';
+import { MaterialCommunityIcons } from '@expo/vector-icons';
+import * as Haptics from 'expo-haptics';
+import SafeBlurView from '../../components/ui/SafeBlurView';
+import Animated, { FadeInDown, useAnimatedStyle, useSharedValue, withRepeat, withTiming } from 'react-native-reanimated';
 
 // Get screen dimensions for responsive sizing
 const { width, height } = Dimensions.get('window');
@@ -36,28 +41,146 @@ const { width, height } = Dimensions.get('window');
 // Define the type based on the Zod schema
 type WorkoutPreferencesFormData = z.infer<typeof workoutPreferencesSchema>;
 
-// Common equipment options
-const equipmentOptions = [
+// Equipment options based on location
+const homeEquipmentOptions = [
   'Dumbbells', 'Barbell', 'Kettlebells', 'Resistance bands', 
-  'Pull-up bar', 'Bench', 'Treadmill', 'Exercise bike', 
-  'Rowing machine', 'Yoga mat', 'Medicine ball', 'Stability ball'
+  'Pull-up bar', 'Bench', 'None'
 ];
 
-// Time options
-const timeOptions = [
-  'Early morning (5-7 AM)', 'Morning (7-10 AM)', 'Midday (10 AM-2 PM)', 
-  'Afternoon (2-5 PM)', 'Evening (5-8 PM)', 'Night (8-11 PM)'
+const gymEquipmentOptions: string[] = [
+  // Empty array as gym equipment is assumed to be available
 ];
 
-// Focus areas with icons
+const outdoorsEquipmentOptions = [
+  'Resistance bands', 'None'
+];
+
+const mixEquipmentOptions = [
+  'Dumbbells', 'Barbell', 'Kettlebells', 'Resistance bands', 
+  'Pull-up bar', 'Bench', 'None'
+];
+
+// Workout times
+const workoutTimeOptions = [
+  'Early morning', 'Morning', 'Afternoon', 'Evening', 'Late night'
+];
+
+// Focus area options with values matching the schema requirements
 const focusAreaOptions = [
-  { value: 'upper-body', label: 'Upper Body', icon: 'arm-flex' },
-  { value: 'lower-body', label: 'Lower Body', icon: 'foot-print' },
-  { value: 'core', label: 'Core', icon: 'stomach' },
-  { value: 'cardio', label: 'Cardio', icon: 'heart-pulse' },
-  { value: 'full-body', label: 'Full Body', icon: 'human' },
-  { value: 'flexibility', label: 'Flexibility', icon: 'yoga' }
+  { value: 'upper-body', label: 'Upper Body' },
+  { value: 'lower-body', label: 'Lower Body' },
+  { value: 'core', label: 'Core' },
+  { value: 'cardio', label: 'Cardio' },
+  { value: 'full-body', label: 'Full Body' },
+  { value: 'flexibility', label: 'Flexibility' }
 ];
+
+// Focus area type
+type FocusAreaType = 'upper-body' | 'lower-body' | 'core' | 'cardio' | 'full-body' | 'flexibility';
+
+// Custom styled segmented button component
+const PremiumSegmentedButton = ({ 
+  label, 
+  options, 
+  value, 
+  onChange, 
+  error 
+}: { 
+  label: string, 
+  options: {value: string, label: string}[], 
+  value: string, 
+  onChange: (value: string) => void,
+  error?: string
+}) => {
+  return (
+    <View style={styles.inputContainer}>
+      <StyledText variant="bodyMedium" color={colors.text.secondary} style={styles.inputLabel}>
+        {label}
+      </StyledText>
+      <SafeBlurView intensity={20} style={styles.blurContainer}>
+        <View style={styles.customSegmentedContainer}>
+          {options.map((option) => (
+            <TouchableOpacity
+              key={option.value}
+              style={[
+                styles.customSegmentButton,
+                value === option.value && styles.customSegmentButtonSelected
+              ]}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                onChange(option.value);
+              }}
+            >
+              <View style={value === option.value ? styles.selectedButtonBackground : null}>
+                <StyledText 
+                  variant="bodyMedium" 
+                  color={value === option.value ? colors.text.primary : colors.text.secondary} 
+                  style={styles.segmentButtonText}
+                >
+                  {option.label}
+                </StyledText>
+                {value === option.value && (
+                  <View style={styles.selectedIndicator} />
+                )}
+              </View>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </SafeBlurView>
+      {error && (
+        <StyledText variant="bodySmall" color={colors.feedback.error}>
+          {error}
+        </StyledText>
+      )}
+    </View>
+  );
+};
+
+// Custom chip component for a more premium look
+const PremiumChip = ({ 
+  label, 
+  selected, 
+  onPress,
+  icon
+}: { 
+  label: string; 
+  selected: boolean; 
+  onPress: () => void;
+  icon?: React.ReactNode;
+}) => {
+  return (
+    <TouchableOpacity 
+      style={[
+        styles.premiumChip,
+        selected && styles.premiumChipSelected
+      ]}
+      onPress={() => {
+        Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+        onPress();
+      }}
+    >
+      <SafeBlurView
+        intensity={15}
+        style={[
+          styles.premiumChipBlur,
+          selected && styles.premiumChipBlurSelected
+        ]}
+      >
+        <StyledText 
+          variant="bodyMedium" 
+          color={selected ? colors.text.primary : colors.text.secondary}
+          style={styles.chipLabel}
+        >
+          {icon && <View style={styles.chipIconContainer}>{icon}</View>}
+          {label}
+        </StyledText>
+        {selected && (
+          <View style={styles.chipSelectedDot} />
+        )}
+      </SafeBlurView>
+    </TouchableOpacity>
+  );
+};
 
 export default function WorkoutPreferencesScreen() {
   const theme = useTheme();
@@ -65,11 +188,16 @@ export default function WorkoutPreferencesScreen() {
   const { profile, updateProfile } = useProfile();
   const [selectedEquipment, setSelectedEquipment] = useState<string[]>([]);
   const [selectedTimes, setSelectedTimes] = useState<string[]>([]);
-  const [selectedFocusAreas, setSelectedFocusAreas] = useState<string[]>([]);
+  const [selectedFocusAreas, setSelectedFocusAreas] = useState<FocusAreaType[]>([]);
   const [submittedData, setSubmittedData] = useState<WorkoutPreferencesFormData | null>(null);
   const [navigateBack, setNavigateBack] = useState(false);
   const [recommendedAreas, setRecommendedAreas] = useState<string[]>([]);
-
+  const [currentWorkoutLocation, setCurrentWorkoutLocation] = useState<string>('home');
+  const [availableEquipment, setAvailableEquipment] = useState<string[]>(homeEquipmentOptions);
+  
+  // Animation values
+  const buttonScale = useSharedValue(1);
+  
   // Get URL params including returnToReview
   const params = useLocalSearchParams<{
     recommendedFocusAreas: string;
@@ -100,10 +228,11 @@ export default function WorkoutPreferencesScreen() {
 
       // Pre-select recommended areas
       setSelectedFocusAreas(prev => {
-        const newAreas = [...prev];
+        const newAreas: FocusAreaType[] = [...prev];
         areas.forEach(area => {
-          if (!newAreas.includes(area)) {
-            newAreas.push(area);
+          if (!newAreas.includes(area as FocusAreaType) && 
+              focusAreaOptions.some(option => option.value === area)) {
+            newAreas.push(area as FocusAreaType);
           }
         });
         return newAreas;
@@ -129,13 +258,38 @@ export default function WorkoutPreferencesScreen() {
     if (submittedData && navigateBack) {
       // Navigation logic
       if (params?.returnToReview === 'true') {
-        router.push('/(onboarding)/review');
+        console.log("Returning to review page as requested");
+        router.push('/review');
       } else {
         // Complete the onboarding
         router.push('/(tabs)/');
       }
     }
   }, [submittedData, navigateBack, router, params]);
+
+  // Update available equipment based on workout location
+  const updateEquipmentOptions = (location: string) => {
+    switch(location) {
+      case 'home':
+        setAvailableEquipment(homeEquipmentOptions);
+        break;
+      case 'gym':
+        setAvailableEquipment(gymEquipmentOptions);
+        // Clear any previously selected equipment that's not available in the gym
+        setSelectedEquipment(prev => prev.filter(item => gymEquipmentOptions.includes(item)));
+        break;
+      case 'outdoors':
+        setAvailableEquipment(outdoorsEquipmentOptions);
+        // Clear any previously selected equipment that's not available outdoors
+        setSelectedEquipment(prev => prev.filter(item => outdoorsEquipmentOptions.includes(item)));
+        break;
+      case 'mix':
+        setAvailableEquipment(mixEquipmentOptions);
+        break;
+      default:
+        setAvailableEquipment(homeEquipmentOptions);
+    }
+  };
 
   const toggleEquipment = (equipment: string) => {
     setSelectedEquipment(prev => 
@@ -153,259 +307,324 @@ export default function WorkoutPreferencesScreen() {
     );
   };
 
-  const toggleFocusArea = (area: string) => {
-    setSelectedFocusAreas(prev => 
-      prev.includes(area) 
-        ? prev.filter(a => a !== area) 
-        : [...prev, area]
-    );
+  const toggleFocusArea = (area: FocusAreaType) => {
+    setSelectedFocusAreas(prev => {
+      if (prev.includes(area)) {
+        return prev.filter(a => a !== area);
+      } else {
+        return [...prev, area];
+      }
+    });
   };
 
   const onSubmit = (data: WorkoutPreferencesFormData) => {
     console.log('Workout preferences form data:', data);
     
-    // Create a workout preferences object
-    const workoutPreferences: Partial<WorkoutPreferences> = {
+    // Create a workout preferences object for the JSONB column
+    const workoutPreferences: Partial<WorkoutPreferences> & { days_per_week?: number } = {
       fitness_level: data.fitnessLevel,
       workout_location: data.workoutLocation,
       workout_duration: data.workoutDuration,
-      equipment: data.availableEquipment,
-      preferred_days: data.preferredWorkoutTimes,
       focus_areas: data.focusAreas,
+      // For gym location, equipment is standard; otherwise use selected equipment
+      equipment: data.workoutLocation === 'gym' 
+        ? ["standard gym equipment"] 
+        : data.availableEquipment,
+      // Store preferred days
+      preferred_days: data.preferredWorkoutTimes,
+      // Store exercises to avoid if specified
       exercises_to_avoid: data.exercisesToAvoid ? data.exercisesToAvoid.split(',').map(ex => ex.trim()) : [],
+      // Add days_per_week for consistency
+      days_per_week: data.workoutFrequency
     };
     
-    // Update profile with workout preferences
+    // Update profile with workout preferences but don't mark onboarding as complete yet
     updateProfile({
+      // Store structured data in the JSONB column
       workout_preferences: workoutPreferences as WorkoutPreferences,
-      // Also store essential fields at root level
+      
+      // Also store essential fields in direct columns that exist in the database schema
       fitness_level: data.fitnessLevel,
-      workout_duration_minutes: data.workoutDuration,
       workout_days_per_week: data.workoutFrequency,
-      has_completed_onboarding: true,
-      current_onboarding_step: 'completed',
-    }).then(() => {
+      workout_duration_minutes: data.workoutDuration,
+      
+      // Update onboarding progress to the review step
+      current_onboarding_step: 'review',
+      
+      // Set fitness goals (source of truth for focus areas)
+      fitness_goals: data.focusAreas,
+    } as any).then(() => {
       console.log('Profile updated with workout preferences');
       setSubmittedData(data);
-      setNavigateBack(true);
+      
+      // Navigate to the review page as the next step
+      if (params?.returnToReview === 'true') {
+        console.log("Returning to review page as requested");
+        router.push('/review');
+      } else {
+        router.push('/(onboarding)/review');
+      }
     }).catch(error => {
       console.error('Error updating profile with workout preferences:', error);
       alert('There was an error saving your preferences. Please try again.');
     });
   };
 
+  // Update form with current profile values when component mounts or profile changes
+  useEffect(() => {
+    if (profile) {
+      console.log("Updating workout form with latest profile values");
+      
+      // Get values from profile with appropriate fallbacks
+      // @ts-ignore - Property workout_fitness_level exists at runtime but not in TypeScript definition
+      const fitnessLevel = profile.workout_fitness_level || 'beginner';
+      // @ts-ignore - Property workout_location exists at runtime but not in TypeScript definition
+      const workoutLocation = profile.workout_location || 'home';
+      // @ts-ignore - Property workout_duration_minutes exists at runtime but not in TypeScript definition
+      const workoutDuration = profile.workout_duration_minutes || 30;
+      // @ts-ignore - Property workout_days_per_week exists at runtime but not in TypeScript definition
+      const workoutFrequency = profile.workout_days_per_week || 3;
+      // @ts-ignore - Property available_equipment exists at runtime but not in TypeScript definition
+      const availableEquipment = profile.available_equipment || [];
+      // @ts-ignore - Property preferred_workout_times exists at runtime but not in TypeScript definition
+      const preferredWorkoutTimes = profile.preferred_workout_times || [];
+      // @ts-ignore - Properties focus_areas and preferred_workouts exist at runtime but not in TypeScript definition
+      const focusAreas = profile.focus_areas || profile.preferred_workouts || [];
+      // @ts-ignore - Property exercises_to_avoid exists at runtime but not in TypeScript definition
+      const exercisesToAvoid = profile.exercises_to_avoid || '';
+      
+      // Detailed logging
+      console.log("Setting workout form values:", {
+        fitnessLevel,
+        workoutLocation,
+        workoutDuration,
+        workoutFrequency,
+        equipmentCount: availableEquipment.length,
+        timesCount: preferredWorkoutTimes.length,
+        focusAreasCount: focusAreas.length,
+        hasExercisesToAvoid: !!exercisesToAvoid
+      });
+      
+      // Set form values
+      setValue('fitnessLevel', fitnessLevel);
+      setValue('workoutLocation', workoutLocation);
+      setValue('workoutDuration', workoutDuration);
+      setValue('workoutFrequency', workoutFrequency);
+      setValue('availableEquipment', availableEquipment);
+      setValue('preferredWorkoutTimes', preferredWorkoutTimes);
+      setValue('focusAreas', focusAreas);
+      setValue('exercisesToAvoid', exercisesToAvoid);
+      
+      // Update related state variables
+      setSelectedFocusAreas(focusAreas as FocusAreaType[]);
+      
+      // Update equipment options based on the workout location
+      updateEquipmentOptions(workoutLocation);
+    }
+  }, [profile, setValue]);
+
   // Helper to check if an area is recommended
-  const isRecommendedArea = (area: string) => {
+  const isRecommendedArea = (area: FocusAreaType) => {
     return recommendedAreas.includes(area);
   };
 
+  // Button animation style
+  const animatedButtonStyle = useAnimatedStyle(() => {
+    return {
+      transform: [{ scale: buttonScale.value }]
+    };
+  });
+
+  // Start button pulsing animation
+  useEffect(() => {
+    buttonScale.value = withRepeat(
+      withTiming(1.05, { duration: 1000 }),
+      -1,
+      true
+    );
+  }, []);
+
   return (
     <View style={styles.container}>
-      <StatusBar style="light" />
       <LinearGradient
         colors={[colors.background.primary, colors.background.secondary]}
         style={styles.background}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 0, y: 1 }}
       >
         {/* Decorative elements */}
         <View style={[styles.decorativeCircle, styles.decorativeCircle1]} />
         <View style={[styles.decorativeCircle, styles.decorativeCircle2]} />
+        <View style={[styles.decorativeCircle, styles.decorativeCircle3]} />
         
         <SafeAreaView style={styles.safeArea}>
-          <View style={styles.header}>
-            <TouchableOpacity 
+          <View style={styles.headerContainer}>
+            <TouchableOpacity
               style={styles.backButton} 
-              onPress={() => router.back()}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+                router.back();
+              }}
+              accessibilityLabel="Go back"
             >
-              <IconButton
-                icon="arrow-left"
+              <MaterialCommunityIcons
+                name="arrow-left"
                 size={24}
-                iconColor={colors.text.primary}
-                style={styles.backIcon}
+                color={colors.text.primary}
               />
             </TouchableOpacity>
-            <StyledText variant="headingLarge" style={styles.title}>
-              Workout Preferences
-            </StyledText>
-            <StyledText variant="bodyMedium" color={colors.text.secondary} style={styles.subtitle}>
-              Tell us how you want to train for a customized fitness plan
-            </StyledText>
+            
+            <View style={styles.headerContent}>
+              <StyledText variant="headingLarge" style={styles.title}>
+                Workout Preferences
+              </StyledText>
+              <StyledText variant="bodyMedium" color={colors.text.secondary} style={styles.subtitle}>
+                Customize your perfect workout routine
+              </StyledText>
+            </View>
           </View>
-          
+
           <ScrollView
             style={styles.scrollView}
             contentContainerStyle={styles.scrollContent}
             showsVerticalScrollIndicator={false}
           >
-            <View style={styles.formCard}>
+            <Animated.View 
+              entering={FadeInDown.delay(100).springify()} 
+              style={styles.formCard}
+            >
               {/* Fitness Level */}
-              <View style={styles.inputContainer}>
-                <StyledText variant="bodyMedium" color={colors.text.secondary} style={styles.inputLabel}>
-                  Fitness Level
-                </StyledText>
-                <Controller
-                  control={control}
-                  name="fitnessLevel"
-                  render={({ field: { onChange, value } }) => (
-                    <SegmentedButtons
-                      value={value}
-                      onValueChange={onChange}
-                      buttons={[
-                        { value: 'beginner', label: 'Beginner' },
-                        { value: 'intermediate', label: 'Intermediate' },
-                        { value: 'advanced', label: 'Advanced' },
-                      ]}
-                      style={styles.segmentedButtons}
-                      theme={{ 
-                        colors: { 
-                          primary: colors.primary.main,
-                          secondaryContainer: colors.surface.dark,
-                          onSecondaryContainer: colors.text.primary,
-                        } 
-                      }}
-                    />
-                  )}
-                />
-                {errors.fitnessLevel && (
-                  <StyledText variant="bodySmall" color={colors.feedback.error}>
-                    {errors.fitnessLevel.message}
-                  </StyledText>
+              <Controller
+                control={control}
+                name="fitnessLevel"
+                render={({ field: { onChange, value }, fieldState: { error } }) => (
+                  <PremiumSegmentedButton
+                    label="Fitness Level"
+                    options={[
+                      { value: 'beginner', label: 'Beginner' },
+                      { value: 'intermediate', label: 'Intermediate' },
+                      { value: 'advanced', label: 'Advanced' },
+                    ]}
+                    value={value}
+                    onChange={onChange}
+                    error={error?.message}
+                  />
                 )}
-              </View>
+              />
 
               {/* Workout Location */}
-              <View style={styles.inputContainer}>
-                <StyledText variant="bodyMedium" color={colors.text.secondary} style={styles.inputLabel}>
-                  Workout Location
-                </StyledText>
-                <Controller
-                  control={control}
-                  name="workoutLocation"
-                  render={({ field: { onChange, value } }) => (
-                    <SegmentedButtons
-                      value={value}
-                      onValueChange={onChange}
-                      buttons={[
-                        { value: 'home', label: 'Home' },
-                        { value: 'gym', label: 'Gym' },
-                        { value: 'outdoors', label: 'Outdoors' },
-                        { value: 'mix', label: 'Mix' },
-                      ]}
-                      style={styles.segmentedButtons}
-                      theme={{ 
-                        colors: { 
-                          primary: colors.primary.main,
-                          secondaryContainer: colors.surface.dark,
-                          onSecondaryContainer: colors.text.primary,
-                        } 
-                      }}
-                    />
-                  )}
-                />
-                {errors.workoutLocation && (
-                  <StyledText variant="bodySmall" color={colors.feedback.error}>
-                    {errors.workoutLocation.message}
-                  </StyledText>
+              <Controller
+                control={control}
+                name="workoutLocation"
+                render={({ field: { onChange, value }, fieldState: { error } }) => (
+                  <PremiumSegmentedButton
+                    label="Workout Location"
+                    options={[
+                      { value: 'home', label: 'Home' },
+                      { value: 'gym', label: 'Gym' },
+                      { value: 'outdoors', label: 'Outdoors' },
+                      { value: 'mix', label: 'Mix' },
+                    ]}
+                    value={value}
+                    onChange={(newValue) => {
+                      onChange(newValue);
+                      setCurrentWorkoutLocation(newValue);
+                      updateEquipmentOptions(newValue);
+                    }}
+                    error={error?.message}
+                  />
                 )}
-              </View>
+              />
 
               {/* Workout Duration */}
-              <View style={styles.inputContainer}>
-                <StyledText variant="bodyMedium" color={colors.text.secondary} style={styles.inputLabel}>
-                  Workout Duration (minutes)
-                </StyledText>
-                <Controller
-                  control={control}
-                  name="workoutDuration"
-                  render={({ field: { onChange, value } }) => (
-                    <SegmentedButtons
-                      value={value.toString()}
-                      onValueChange={(val) => onChange(parseInt(val, 10))}
-                      buttons={[
-                        { value: '15', label: '15' },
-                        { value: '30', label: '30' },
-                        { value: '45', label: '45' },
-                        { value: '60', label: '60' },
-                        { value: '90', label: '90' },
-                      ]}
-                      style={styles.segmentedButtons}
-                      theme={{ 
-                        colors: { 
-                          primary: colors.primary.main,
-                          secondaryContainer: colors.surface.dark,
-                          onSecondaryContainer: colors.text.primary,
-                        } 
-                      }}
-                    />
-                  )}
-                />
-                {errors.workoutDuration && (
-                  <StyledText variant="bodySmall" color={colors.feedback.error}>
-                    {errors.workoutDuration.message}
-                  </StyledText>
+              <Controller
+                control={control}
+                name="workoutDuration"
+                render={({ field: { onChange, value }, fieldState: { error } }) => (
+                  <PremiumSegmentedButton
+                    label="Workout Duration (minutes)"
+                    options={[
+                      { value: '15', label: '15' },
+                      { value: '30', label: '30' },
+                      { value: '45', label: '45' },
+                      { value: '60', label: '60' },
+                      { value: '90', label: '90' },
+                    ]}
+                    value={value.toString()}
+                    onChange={(val) => onChange(parseInt(val, 10))}
+                    error={error?.message}
+                  />
                 )}
-              </View>
+              />
               
               {/* Workout Frequency */}
-              <View style={styles.inputContainer}>
-                <StyledText variant="bodyMedium" color={colors.text.secondary} style={styles.inputLabel}>
-                  Workouts Per Week
-                </StyledText>
-                <Controller
-                  control={control}
-                  name="workoutFrequency"
-                  render={({ field: { onChange, value } }) => (
-                    <SegmentedButtons
-                      value={value.toString()}
-                      onValueChange={(val) => onChange(parseInt(val, 10))}
-                      buttons={[
-                        { value: '2', label: '2' },
-                        { value: '3', label: '3' },
-                        { value: '4', label: '4' },
-                        { value: '5', label: '5' },
-                        { value: '6', label: '6' },
-                      ]}
-                      style={styles.segmentedButtons}
-                      theme={{ 
-                        colors: { 
-                          primary: colors.primary.main,
-                          secondaryContainer: colors.surface.dark,
-                          onSecondaryContainer: colors.text.primary,
-                        } 
-                      }}
-                    />
-                  )}
-                />
-                {errors.workoutFrequency && (
-                  <StyledText variant="bodySmall" color={colors.feedback.error}>
-                    {errors.workoutFrequency.message}
-                  </StyledText>
+              <Controller
+                control={control}
+                name="workoutFrequency"
+                render={({ field: { onChange, value }, fieldState: { error } }) => (
+                  <PremiumSegmentedButton
+                    label="Workouts Per Week"
+                    options={[
+                      { value: '2', label: '2' },
+                      { value: '3', label: '3' },
+                      { value: '4', label: '4' },
+                      { value: '5', label: '5' },
+                      { value: '6', label: '6' },
+                    ]}
+                    value={value.toString()}
+                    onChange={(val) => onChange(parseInt(val, 10))}
+                    error={error?.message}
+                  />
                 )}
-              </View>
+              />
 
               {/* Available Equipment */}
               <View style={styles.inputContainer}>
                 <StyledText variant="bodyMedium" color={colors.text.secondary} style={styles.inputLabel}>
                   Available Equipment
                 </StyledText>
-                <View style={styles.chipsContainer}>
-                  {equipmentOptions.map((equipment) => (
-                    <Chip
-                      key={equipment}
-                      selected={selectedEquipment.includes(equipment)}
-                      onPress={() => toggleEquipment(equipment)}
-                      style={[
-                        styles.chip,
-                        selectedEquipment.includes(equipment) && styles.selectedChip
-                      ]}
-                      textStyle={selectedEquipment.includes(equipment) ? styles.selectedChipText : styles.chipText}
-                      showSelectedCheck={false}
+                {currentWorkoutLocation === 'gym' && (
+                  <View style={styles.infoMessageContainer}>
+                    <MaterialCommunityIcons
+                      name="information-outline"
+                      size={16}
+                      color={colors.primary.light}
+                      style={{ marginRight: spacing.xs }}
+                    />
+                    <StyledText 
+                      variant="bodyMedium" 
+                      style={{ color: colors.primary.light, flex: 1 }}
                     >
-                      {equipment}
-                    </Chip>
-                  ))}
-                </View>
+                      Standard gym equipment is assumed to be available
+                    </StyledText>
+                  </View>
+                )}
+                {currentWorkoutLocation === 'outdoors' && (
+                  <View style={styles.infoMessageContainer}>
+                    <MaterialCommunityIcons
+                      name="information-outline"
+                      size={16}
+                      color={colors.primary.light}
+                      style={{ marginRight: spacing.xs }}
+                    />
+                    <StyledText 
+                      variant="bodyMedium" 
+                      style={{ color: colors.primary.light, flex: 1 }}
+                    >
+                      For outdoor workouts, only portable equipment options are shown
+                    </StyledText>
+                  </View>
+                )}
+                {availableEquipment.length > 0 && (
+                  <View style={styles.premiumChipContainer}>
+                    {availableEquipment.map((equipment) => (
+                      <PremiumChip
+                        key={equipment}
+                        label={equipment}
+                        selected={selectedEquipment.includes(equipment)}
+                        onPress={() => toggleEquipment(equipment)}
+                      />
+                    ))}
+                  </View>
+                )}
                 {errors.availableEquipment && (
                   <StyledText variant="bodySmall" color={colors.feedback.error}>
                     {errors.availableEquipment.message}
@@ -418,21 +637,14 @@ export default function WorkoutPreferencesScreen() {
                 <StyledText variant="bodyMedium" color={colors.text.secondary} style={styles.inputLabel}>
                   Preferred Workout Times
                 </StyledText>
-                <View style={styles.chipsContainer}>
-                  {timeOptions.map((time) => (
-                    <Chip
+                <View style={styles.premiumChipContainer}>
+                  {workoutTimeOptions.map((time) => (
+                    <PremiumChip
                       key={time}
+                      label={time}
                       selected={selectedTimes.includes(time)}
                       onPress={() => toggleTime(time)}
-                      style={[
-                        styles.chip,
-                        selectedTimes.includes(time) && styles.selectedChip
-                      ]}
-                      textStyle={selectedTimes.includes(time) ? styles.selectedChipText : styles.chipText}
-                      showSelectedCheck={false}
-                    >
-                      {time}
-                    </Chip>
+                    />
                   ))}
                 </View>
                 {errors.preferredWorkoutTimes && (
@@ -448,43 +660,74 @@ export default function WorkoutPreferencesScreen() {
                   Focus Areas
                 </StyledText>
                 {recommendedAreas.length > 0 && (
-                  <View style={styles.recommendationBanner}>
-                    <StyledText variant="bodySmall" color={colors.text.primary} style={styles.recommendationText}>
-                      Based on your body analysis, we recommend focusing on these areas
+                  <View style={styles.infoMessageContainer}>
+                    <MaterialCommunityIcons
+                      name="star-outline"
+                      size={16}
+                      color={colors.primary.light}
+                      style={{ marginRight: spacing.xs }}
+                    />
+                    <StyledText 
+                      variant="bodyMedium" 
+                      style={{ color: colors.primary.light, flex: 1 }}
+                    >
+                      Based on your analysis, we recommend focusing on: {recommendedAreas.map(area => 
+                        focusAreaOptions.find(opt => opt.value === area)?.label || area).join(', ')}
                     </StyledText>
                   </View>
                 )}
-                <View style={styles.focusAreasGrid}>
-                  {focusAreaOptions.map((area) => (
-                    <TouchableOpacity
-                      key={area.value}
-                      style={[
-                        styles.focusAreaItem,
-                        selectedFocusAreas.includes(area.value) && styles.selectedFocusArea,
-                        isRecommendedArea(area.value) && styles.recommendedArea
-                      ]}
-                      onPress={() => toggleFocusArea(area.value)}
-                    >
-                      <IconButton
-                        icon={area.icon}
-                        size={28}
-                        iconColor={selectedFocusAreas.includes(area.value) ? colors.text.primary : colors.text.secondary}
-                      />
-                      <StyledText 
-                        variant="bodyMedium" 
-                        color={selectedFocusAreas.includes(area.value) ? colors.text.primary : colors.text.secondary}
+                <View style={{
+                  flexDirection: 'row',
+                  flexWrap: 'wrap',
+                  justifyContent: 'space-between',
+                  marginTop: spacing.xs
+                }}>
+                  {focusAreaOptions.map((area) => {
+                    const isSelected = selectedFocusAreas.includes(area.value as FocusAreaType);
+                    const isRecommended = isRecommendedArea(area.value as FocusAreaType);
+                    
+                    return (
+                      <TouchableOpacity
+                        key={area.value}
+                        style={[
+                          {
+                            width: '48%',
+                            backgroundColor: 'rgba(255, 255, 255, 0.08)',
+                            borderRadius: borderRadius.md,
+                            padding: spacing.sm,
+                            marginBottom: spacing.md,
+                            alignItems: 'center',
+                            position: 'relative',
+                            borderWidth: isRecommended ? 1 : 0,
+                            borderColor: 'rgba(59, 130, 246, 0.4)'
+                          },
+                          isSelected ? {
+                            backgroundColor: 'rgba(74, 222, 128, 0.2)'
+                          } : {}
+                        ]}
+                        onPress={() => toggleFocusArea(area.value as FocusAreaType)}
                       >
-                        {area.label}
-                      </StyledText>
-                      {isRecommendedArea(area.value) && (
-                        <View style={styles.recommendedBadge}>
-                          <StyledText variant="bodySmall" style={styles.recommendedBadgeText}>
-                            Recommended
-                          </StyledText>
-                        </View>
-                      )}
-                    </TouchableOpacity>
-                  ))}
+                        <MaterialCommunityIcons
+                          name="dumbbell"
+                          size={28}
+                          color={isSelected ? colors.text.primary : colors.text.secondary}
+                        />
+                        <StyledText 
+                          variant="bodyMedium" 
+                          color={isSelected ? colors.text.primary : colors.text.secondary}
+                        >
+                          {area.label}
+                        </StyledText>
+                        {isRecommended && (
+                          <View style={styles.recommendedLabel}>
+                            <StyledText variant="bodySmall" style={styles.recommendedText}>
+                              Recommended
+                            </StyledText>
+                          </View>
+                        )}
+                      </TouchableOpacity>
+                    );
+                  })}
                 </View>
                 {errors.focusAreas && (
                   <StyledText variant="bodySmall" color={colors.feedback.error}>
@@ -528,21 +771,38 @@ export default function WorkoutPreferencesScreen() {
                   </StyledText>
                 )}
               </View>
-
-              {/* Submit Button */}
-              <Button
-                mode="contained"
-                onPress={handleSubmit(onSubmit)}
-                style={styles.button}
-                contentStyle={styles.buttonContent}
-                buttonColor={colors.primary.main}
-              >
-                Complete Onboarding
-              </Button>
-            </View>
+            </Animated.View>
           </ScrollView>
+          
+          {/* Form submission button - Moved outside ScrollView */}
+          <View style={styles.fixedButtonContainer}>
+            <TouchableOpacity 
+              style={styles.submitButton}
+              onPress={() => {
+                Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+                handleSubmit(onSubmit)();
+              }}
+            >
+              <View style={{
+                flexDirection: 'row',
+                alignItems: 'center',
+                justifyContent: 'center',
+              }}>
+                <StyledText variant="headingSmall" color="#FFFFFF">
+                  Save & Continue
+                </StyledText>
+                <MaterialCommunityIcons
+                  name="arrow-right"
+                  size={24}
+                  color="white"
+                  style={{ marginLeft: 8 }}
+                />
+              </View>
+            </TouchableOpacity>
+          </View>
         </SafeAreaView>
       </LinearGradient>
+      <StatusBar style="light" />
     </View>
   );
 }
@@ -550,146 +810,274 @@ export default function WorkoutPreferencesScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    backgroundColor: colors.background.primary,
   },
   background: {
     flex: 1,
+    width: '100%',
+    height: '100%',
+  },
+  decorativeCircle: {
+    position: 'absolute',
+    borderRadius: 1000,
+    opacity: 0.2,
+  },
+  decorativeCircle1: {
+    width: width * 0.8,
+    height: width * 0.8,
+    backgroundColor: colors.primary.light,
+    top: -width * 0.4,
+    right: -width * 0.2,
+    transform: [{ scale: 1.5 }],
+    opacity: 0.15,
+  },
+  decorativeCircle2: {
+    width: width * 0.7,
+    height: width * 0.7,
+    backgroundColor: colors.secondary.light,
+    bottom: -width * 0.35,
+    left: -width * 0.35,
+    opacity: 0.1,
+  },
+  decorativeCircle3: {
+    width: width * 0.4,
+    height: width * 0.4,
+    backgroundColor: colors.accent.lavender,
+    top: height * 0.3,
+    right: -width * 0.2,
+    opacity: 0.08,
   },
   safeArea: {
     flex: 1,
   },
-  header: {
-    padding: spacing.lg,
-    paddingTop: spacing.xl,
+  headerContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.sm,
   },
   backButton: {
-    marginBottom: spacing.md,
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    ...shadows.small,
   },
-  backIcon: {
-    margin: 0,
-    padding: 0,
+  headerContent: {
+    flex: 1,
+    marginLeft: spacing.sm,
   },
   title: {
-    fontSize: 32,
+    color: colors.text.primary,
     fontWeight: 'bold',
     marginBottom: spacing.xs,
   },
   subtitle: {
-    marginBottom: spacing.md,
+    opacity: 0.8,
   },
   scrollView: {
     flex: 1,
   },
   scrollContent: {
-    flexGrow: 1,
-    paddingBottom: spacing.xxl,
-    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.xl * 5, // Extra padding at bottom to account for fixed button
+    paddingHorizontal: spacing.md,
   },
   formCard: {
-    backgroundColor: colors.surface.light,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
     borderRadius: borderRadius.lg,
     padding: spacing.lg,
     ...shadows.medium,
+    marginBottom: spacing.lg,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
+    overflow: 'hidden',
   },
   inputContainer: {
     marginBottom: spacing.lg,
   },
   inputLabel: {
     marginBottom: spacing.xs,
+    fontWeight: '600',
   },
   input: {
-    backgroundColor: colors.surface.dark,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    borderRadius: borderRadius.md,
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
   },
   segmentedButtons: {
+    backgroundColor: 'transparent',
+  },
+  segmentedButton: {
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    borderColor: 'rgba(255, 255, 255, 0.15)',
+  },
+  segmentedButtonActive: {
+    backgroundColor: 'rgba(74, 222, 128, 0.2)',
+  },
+  premiumChipContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
     marginTop: spacing.xs,
+    gap: spacing.xs,
+  },
+  premiumChip: {
     marginBottom: spacing.xs,
-  },
-  chipsContainer: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    marginTop: spacing.xs,
-  },
-  chip: {
-    margin: spacing.xs / 2,
-    backgroundColor: colors.surface.dark,
-  },
-  selectedChip: {
-    backgroundColor: colors.primary.dark,
-  },
-  chipText: {
-    color: colors.text.secondary,
-  },
-  selectedChipText: {
-    color: colors.text.primary,
-  },
-  focusAreasGrid: {
-    flexDirection: 'row',
-    flexWrap: 'wrap',
-    justifyContent: 'space-between',
-    marginTop: spacing.xs,
-  },
-  focusAreaItem: {
-    width: '48%',
-    backgroundColor: colors.surface.dark,
-    borderRadius: borderRadius.md,
-    padding: spacing.sm,
-    marginBottom: spacing.md,
-    alignItems: 'center',
-    position: 'relative',
-  },
-  selectedFocusArea: {
-    backgroundColor: colors.primary.dark,
-  },
-  recommendedArea: {
+    marginRight: spacing.xs,
+    borderRadius: 50,
+    overflow: 'hidden',
     borderWidth: 1,
-    borderColor: colors.accent.gold,
+    borderColor: 'rgba(255, 255, 255, 0.05)',
   },
-  recommendationBanner: {
-    backgroundColor: colors.accent.gold,
-    padding: spacing.xs,
-    borderRadius: borderRadius.sm,
-    marginBottom: spacing.sm,
+  premiumChipSelected: {
+    borderColor: colors.primary.light,
   },
-  recommendationText: {
-    textAlign: 'center',
+  premiumChipBlur: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.xs,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    flexDirection: 'row',
   },
-  recommendedBadge: {
+  premiumChipBlurSelected: {
+    backgroundColor: 'rgba(255, 255, 255, 0.12)',
+  },
+  chipSelectedDot: {
+    width: 4,
+    height: 4,
+    borderRadius: 2,
+    backgroundColor: colors.primary.main,
+    marginLeft: spacing.xs,
+  },
+  infoMessageContainer: {
+    backgroundColor: 'rgba(59, 130, 246, 0.1)',
+    padding: spacing.sm,
+    borderRadius: borderRadius.md,
+    marginBottom: spacing.md,
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  recommendedLabel: {
     position: 'absolute',
     top: -8,
     right: -8,
-    backgroundColor: colors.accent.gold,
-    borderRadius: borderRadius.round,
-    paddingHorizontal: spacing.xs,
+    backgroundColor: colors.accent.lavender,
+    borderRadius: 10,
+    paddingHorizontal: 6,
     paddingVertical: 2,
+    zIndex: 1,
   },
-  recommendedBadgeText: {
+  recommendedText: {
     fontSize: 8,
-    color: colors.background.primary,
     fontWeight: 'bold',
+    color: colors.text.primary,
   },
-  button: {
-    marginTop: spacing.md,
-    borderRadius: borderRadius.round,
+  errorText: {
+    color: colors.feedback.error,
+    marginTop: spacing.xs,
   },
-  buttonContent: {
-    paddingVertical: spacing.sm,
+  timeListItem: {
+    padding: 0,
+    borderRadius: borderRadius.md,
+    marginVertical: spacing.xs,
+    backgroundColor: 'rgba(255, 255, 255, 0.08)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 255, 255, 0.1)',
   },
-  decorativeCircle: {
+  timeListItemActive: {
+    backgroundColor: 'rgba(74, 222, 128, 0.15)',
+    borderColor: 'rgba(74, 222, 128, 0.3)',
+  },
+  checkboxItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  actionsContainer: {
+    alignItems: 'center',
+    marginTop: spacing.xl,
+    marginBottom: spacing.xl,
+    width: '100%',
+  },
+  fixedButtonContainer: {
     position: 'absolute',
-    borderRadius: borderRadius.round,
-    opacity: 0.1,
+    bottom: Platform.OS === 'ios' ? spacing.xl : spacing.lg,
+    left: 0,
+    right: 0,
+    paddingHorizontal: spacing.md,
+    paddingBottom: spacing.md,
+    alignItems: 'center',
+    width: '100%',
+    zIndex: 10,
+    backgroundColor: 'rgba(18, 18, 23, 0.8)',
   },
-  decorativeCircle1: {
-    width: width * 0.5,
-    height: width * 0.5,
-    backgroundColor: colors.accent.green,
-    top: -width * 0.2,
-    right: -width * 0.2,
+  submitButton: {
+    width: '100%',
+    height: 56,
+    borderRadius: 12,
+    backgroundColor: '#ff3bac',
+    justifyContent: 'center',
+    alignItems: 'center',
+    elevation: 8,
+    shadowColor: "#000",
+    shadowOffset: {
+      width: 0,
+      height: 4,
+    },
+    shadowOpacity: 0.3,
+    shadowRadius: 4.65,
   },
-  decorativeCircle2: {
-    width: width * 0.3,
-    height: width * 0.3,
+  customSegmentedContainer: {
+    flexDirection: 'row',
+    borderRadius: borderRadius.lg,
+    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+    padding: spacing.xs,
+    overflow: 'hidden',
+  },
+  customSegmentButton: {
+    flex: 1,
+    paddingVertical: spacing.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+    borderRadius: borderRadius.md,
+  },
+  customSegmentButtonSelected: {
+    backgroundColor: 'transparent',
+  },
+  selectedButtonBackground: {
+    backgroundColor: 'rgba(255, 255, 255, 0.15)',
+    borderRadius: borderRadius.md,
+    paddingVertical: spacing.xs,
+    paddingHorizontal: spacing.sm,
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '100%',
+  },
+  segmentButtonText: {
+    textAlign: 'center',
+    fontWeight: '600',
+  },
+  selectedIndicator: {
+    position: 'absolute',
+    bottom: -spacing.xs / 2,
+    width: 4,
+    height: 4,
+    borderRadius: 2,
     backgroundColor: colors.primary.main,
-    bottom: height * 0.1,
-    left: -width * 0.15,
+    alignSelf: 'center',
+  },
+  blurContainer: {
+    borderRadius: borderRadius.lg,
+    overflow: 'hidden',
+    marginBottom: spacing.sm,
+  },
+  chipLabel: {
+    fontWeight: '600',
+  },
+  chipIconContainer: {
+    marginRight: spacing.xs,
   },
 });

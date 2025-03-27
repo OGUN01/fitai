@@ -8,33 +8,37 @@
     "slug": "fitness",
     "version": "1.0.0",
     "orientation": "portrait",
-    "icon": "./assets/images/logo.svg",
-    "splash": {
-      "image": "./assets/images/logo.svg",
-      "resizeMode": "contain",
-      "backgroundColor": "#171429"
-    },
+    "icon": "./assets/icon/1024.png",
     "assetBundlePatterns": [
       "**/*"
     ],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.fitai.fitness"
+      "bundleIdentifier": "com.fitai.fitness",
+      "icon": "./assets/icon/1024.png"
     },
     "android": {
       "package": "com.fitai.fitness",
+      "versionCode": 1,
       "adaptiveIcon": {
-        "foregroundImage": "./assets/images/logo.svg",
-        "backgroundColor": "#171429"
+        "foregroundImage": "./assets/icon/1024.png",
+        "backgroundImage": "./assets/icon/1024.png",
+        "backgroundColor": "#000000",
+        "monochromeImage": "./assets/icon/1024.png"
       },
-      "versionCode": 1
+      "icon": "./assets/icon/1024.png"
     },
     "web": {
-      "favicon": "./assets/images/logo.svg",
-      "bundler": "metro"
+      "bundler": "metro",
+      "favicon": "./assets/icon/512.png"
     },
     "extra": {
-      "eas": {}
+      "eas": {
+        "projectId": "f40bedb5-ae93-45f9-a596-2f1aecbcf72d"
+      },
+      "router": {
+        "origin": false
+      }
     }
   }
 }

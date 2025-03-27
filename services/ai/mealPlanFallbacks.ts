@@ -5,8 +5,34 @@
  * with multiple levels of fallbacks for handling AI generation failures.
  */
 
-import { UserDietPreferences, MealPlan, FallbackMealPlan, DailyPlan, DailyMeal, ShoppingListCategory, MealIngredient, MealNutrition } from './mealPlanGenerator';
+import { MealPlan, FallbackMealPlan, DailyPlan, DailyMeal, ShoppingListCategory, MealIngredient, MealNutrition } from './mealPlanGenerator';
 import gemini from '../../lib/gemini';
+
+// Extended UserDietPreferences interface with additional properties
+export interface UserDietPreferences {
+  dietType: 'vegetarian' | 'vegan' | 'non-vegetarian' | 'pescatarian' | 'flexitarian';
+  dietPlanPreference: 'balanced' | 'high-protein' | 'low-carb' | 'keto' | 'mediterranean';
+  allergies: string[];
+  mealFrequency: number;
+  countryRegion: string;
+  fitnessGoal?: string;
+  calorieTarget?: number;
+  // Additional preferences
+  restrictions?: string[];
+  excludedFoods?: string[];
+  favoriteFoods?: string[];
+  // Make these optional since we won't pass them to the AI
+  preferredMealTimes?: string[];
+  waterIntakeGoal?: number;
+  // Demographic data
+  age?: number;
+  gender?: string;
+  weight?: number;
+  height?: number;
+  // New flags for full plan requirements
+  requireUniqueMeals?: boolean;
+  requireFullWeek?: boolean;
+}
 
 /**
  * Attempt multiple advanced strategies to generate a meal plan
@@ -113,19 +139,63 @@ USER PREFERENCES:
 - Country/Region: ${preferences.countryRegion}
 - Fitness goal: ${preferences.fitnessGoal || 'balanced nutrition'}
 - Calorie target: ${preferences.calorieTarget || 'appropriate for goals'}
+- Unique meals required: ${preferences.requireUniqueMeals ? 'Yes' : 'No'}
+- Full week required: ${preferences.requireFullWeek ? 'Yes' : 'No'}
 
 IMPORTANT: 
-1. Generate 7 days of meals
+1. Generate EXACTLY 7 days of meals (Monday through Sunday)
 2. Each day should have EXACTLY ${preferences.mealFrequency} meals
-3. Respect all dietary restrictions and allergies
-4. Meals should match the country/region's cuisine when possible
-5. Return ONLY valid JSON, no additional text
+3. Every day MUST have UNIQUE meals - do NOT repeat the exact same meals across different days
+4. All 7 days MUST have different, varied meal plans with unique recipes
+5. Respect all dietary restrictions and allergies
+6. Meals should match the country/region's cuisine when possible
+7. Return ONLY valid JSON, no additional text
 `;
 
   try {
     const result = await gemini.generateContent(prompt);
     const parsedResult = JSON.parse(result);
     validateMealPlanStructure(parsedResult);
+    
+    // Verify we have 7 unique days
+    const days = parsedResult.dailyMealPlan.map(day => day.day);
+    if (days.length < 7) {
+      console.warn(`Meal plan has only ${days.length} days, needs 7 days`);
+      
+      // Add missing days with unique meals by creating variations
+      const daysOfWeek = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+      const missingDays = daysOfWeek.filter(day => !days.includes(day));
+      
+      for (const missingDay of missingDays) {
+        // Find a day to use as template
+        const templateDay = parsedResult.dailyMealPlan[0];
+        
+        // Create a new day with unique meals
+        const newDay = {
+          day: missingDay,
+          meals: templateDay.meals.map(meal => ({
+            meal: meal.meal,
+            time: meal.time,
+            recipe: {
+              name: `${meal.recipe.name} Variation for ${missingDay}`,
+              ingredients: [...meal.recipe.ingredients],
+              instructions: [...meal.recipe.instructions],
+              nutrition: { ...meal.recipe.nutrition },
+              prepTime: meal.recipe.prepTime
+            }
+          })),
+          totalNutrition: { ...templateDay.totalNutrition }
+        };
+        
+        parsedResult.dailyMealPlan.push(newDay);
+      }
+      
+      // Sort days in correct order
+      parsedResult.dailyMealPlan.sort((a, b) => {
+        return daysOfWeek.indexOf(a.day) - daysOfWeek.indexOf(b.day);
+      });
+    }
+    
     return parsedResult;
   } catch (error) {
     throw new Error(`Structured meal generation failed: ${error}`);
@@ -143,6 +213,13 @@ Generate a simplified meal plan for a person with these preferences:
 - Allergies: ${preferences.allergies.length > 0 ? preferences.allergies.join(', ') : 'None'}
 - Meal frequency: ${preferences.mealFrequency} meals per day
 - Country/Region: ${preferences.countryRegion}
+
+IMPORTANT REQUIREMENTS:
+1. Generate EXACTLY 7 days (Monday through Sunday) with UNIQUE meals for each day
+2. Every day MUST have different meals - do NOT repeat the exact same meals across different days
+3. Each day should have exactly ${preferences.mealFrequency} meals
+4. All meals must respect the diet type and allergies
+5. Recipes should be varied across the week
 
 ONLY return a JSON array of days, with each day having a name and a list of meals.
 Each meal should have a type, time, and recipe name.
@@ -221,66 +298,77 @@ Example format:
  * Generate a meal plan day by day for more reliability
  */
 async function generateMealPlanDayByDay(preferences: UserDietPreferences): Promise<MealPlan> {
-  // Initialize the plan structure
-  const mealPlan: MealPlan = {
-    dailyMealPlan: [],
-    shoppingList: [],
-    mealPrepTips: []
-  };
-  
-  // Determine days of the week
   const daysOfWeek = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
+  const dailyPlans: DailyPlan[] = [];
   
-  // Generate each day's meals
+  // Generate each day's meals individually
   for (const day of daysOfWeek) {
     try {
-      const dailyPlan = await generateSingleDayMeals(day, preferences);
-      mealPlan.dailyMealPlan.push(dailyPlan);
+      // Pass information about previously generated days to ensure variety
+      const previousMeals = dailyPlans.flatMap(plan => 
+        plan.meals.map(meal => meal.recipe.name)
+      );
+      
+      console.log(`Generating meals for ${day}...`);
+      const dayPlan = await generateSingleDayMeals(day, preferences, previousMeals);
+      dailyPlans.push(dayPlan);
     } catch (error) {
-      console.error(`Failed to generate meals for ${day}:`, error);
-      // Add fallback meals for this day
-      mealPlan.dailyMealPlan.push(createFallbackDayMeals(day, preferences));
+      console.log(`Error generating ${day} plan, using fallback:`, error);
+      dailyPlans.push(createFallbackDayMeals(day, preferences));
     }
   }
   
-  // Generate shopping list separately
+  // Generate shopping list and meal prep tips
+  let shoppingList: ShoppingListCategory[];
   try {
-    mealPlan.shoppingList = await generateShoppingList(preferences, mealPlan.dailyMealPlan);
+    shoppingList = await generateShoppingList(preferences, dailyPlans);
   } catch (error) {
-    mealPlan.shoppingList = getDefaultShoppingList(preferences);
+    console.log("Error generating shopping list, using fallback:", error);
+    shoppingList = getDefaultShoppingList(preferences);
   }
   
-  // Generate meal prep tips
+  let mealPrepTips: string[];
   try {
-    mealPlan.mealPrepTips = await generateMealPrepTips(preferences);
+    mealPrepTips = await generateMealPrepTips(preferences);
   } catch (error) {
-    mealPlan.mealPrepTips = getDefaultMealPrepTips();
+    console.log("Error generating meal prep tips, using fallback:", error);
+    mealPrepTips = getDefaultMealPrepTips();
   }
   
-  return mealPlan;
+  return {
+    dailyMealPlan: dailyPlans,
+    shoppingList,
+    mealPrepTips
+  };
 }
 
 /**
- * Generate a single day's meals
+ * Generate meals for a single day
  */
-async function generateSingleDayMeals(day: string, preferences: UserDietPreferences): Promise<DailyPlan> {
+async function generateSingleDayMeals(
+  day: string, 
+  preferences: UserDietPreferences, 
+  previousMeals: string[] = []
+): Promise<DailyPlan> {
   const prompt = `
-Generate a single day's meal plan (${day}) for a person with these preferences:
+Generate a single day's meal plan for ${day} with these preferences:
 - Diet type: ${preferences.dietType}
 - Diet plan: ${preferences.dietPlanPreference}
 - Allergies: ${preferences.allergies.length > 0 ? preferences.allergies.join(', ') : 'None'}
-- Number of meals: ${preferences.mealFrequency}
-- Region: ${preferences.countryRegion}
-- Fitness goal: ${preferences.fitnessGoal || 'balanced nutrition'}
+- Meal frequency: ${preferences.mealFrequency} meals per day
 - Calorie target: ${preferences.calorieTarget || 'appropriate for goals'}
 
-Return in this EXACT JSON format:
+IMPORTANT: 
+1. Generate EXACTLY ${preferences.mealFrequency} unique meals
+2. Do NOT use any of these previously used recipe names: ${previousMeals.join(', ')}
+3. Meals MUST be appropriate for ${preferences.dietType} diet
+4. Return ONLY valid JSON in this format:
 {
   "day": "${day}",
   "meals": [
     {
-      "meal": "Meal type (breakfast/lunch/dinner/snack)",
-      "time": "Suggested time",
+      "meal": "Meal name (breakfast/lunch/dinner/snack)",
+      "time": "Time",
       "recipe": {
         "name": "Recipe name",
         "ingredients": [
@@ -297,7 +385,7 @@ Return in this EXACT JSON format:
           "carbs": number,
           "fats": number
         },
-        "prepTime": "Time"
+        "prepTime": "Prep time"
       }
     }
   ],
@@ -308,11 +396,6 @@ Return in this EXACT JSON format:
     "fats": number
   }
 }
-
-IMPORTANT:
-1. Include EXACTLY ${preferences.mealFrequency} meals for the day.
-2. Ensure meals respect all dietary restrictions and allergies.
-3. Return ONLY valid JSON, no additional text.
 `;
 
   try {

@@ -5,19 +5,79 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { useAuth } from '../../../contexts/AuthContext';
 import { router } from 'expo-router';
-import { MaterialCommunityIcons } from '@expo/vector-icons';
+import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import supabase from '../../../lib/supabase';
 import { useProfile } from '../../../contexts/ProfileContext';
 import { format } from 'date-fns';
+import { colors, spacing, borderRadius, shadows, gradients } from '../../../theme/theme';
+import StyledText from '../../../components/ui/StyledText';
+import { FadeIn, ScaleIn, SlideIn } from '../../../components/animations';
+import NotificationService, { ReminderType } from '../../../services/notifications';
 
 export default function ProfileScreen() {
   const theme = useTheme();
   const { user, signOut } = useAuth();
   const { profile } = useProfile();
   const [notificationsEnabled, setNotificationsEnabled] = React.useState(true);
+  const [mealRemindersEnabled, setMealRemindersEnabled] = React.useState(true);
+  const [waterRemindersEnabled, setWaterRemindersEnabled] = React.useState(true);
   const [darkModeEnabled, setDarkModeEnabled] = React.useState(false);
   const [isLoggingOut, setIsLoggingOut] = React.useState(false);
+  const [isInitialized, setIsInitialized] = React.useState(false);
+
+  // Load notification settings and initialize service with profile data
+  React.useEffect(() => {
+    async function loadSettings() {
+      try {
+        if (!profile) return;
+
+        // Initialize notification service
+        await NotificationService.setupNotifications();
+        
+        // Update notification settings from the full profile
+        await NotificationService.updateAllNotificationSettings(profile);
+        
+        // Load current settings
+        const settings = await NotificationService.loadNotificationSettings();
+        
+        // Update local state
+        setNotificationsEnabled(settings.workoutRemindersEnabled);
+        setMealRemindersEnabled(settings.mealRemindersEnabled);
+        setWaterRemindersEnabled(settings.waterRemindersEnabled);
+        
+        setIsInitialized(true);
+      } catch (error) {
+        console.error('Error initializing notification settings:', error);
+      }
+    }
+    
+    if (profile) {
+      loadSettings();
+    }
+  }, [profile]);
+
+  // Handle toggle changes
+  const handleWorkoutToggle = React.useCallback(async (value: boolean) => {
+    if (!profile || !isInitialized) return;
+    
+    setNotificationsEnabled(value);
+    await NotificationService.updateReminderSettings(ReminderType.WORKOUT, value, profile);
+  }, [isInitialized, profile]);
+  
+  const handleMealToggle = React.useCallback(async (value: boolean) => {
+    if (!profile || !isInitialized) return;
+    
+    setMealRemindersEnabled(value);
+    await NotificationService.updateReminderSettings(ReminderType.MEAL, value, profile);
+  }, [isInitialized, profile]);
+  
+  const handleWaterToggle = React.useCallback(async (value: boolean) => {
+    if (!profile || !isInitialized) return;
+    
+    setWaterRemindersEnabled(value);
+    await NotificationService.updateReminderSettings(ReminderType.WATER, value, profile);
+  }, [isInitialized, profile]);
 
   const handleLogout = async () => {
     if (isLoggingOut) return; // Prevent multiple clicks
@@ -66,389 +126,478 @@ export default function ProfileScreen() {
   };
 
   return (
-    <SafeAreaView style={styles.container} edges={['left', 'right']}>
+    <SafeAreaView style={styles.container} edges={['right', 'left']}>
       <StatusBar style="light" />
       
-      {/* Header with Bold Minimalism design */}
-      <View style={styles.headerContainer}>
-        <LinearGradient
-          colors={[theme.colors.primary, theme.colors.secondary]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 0 }}
-          style={styles.headerGradient}
-        >
-          <View style={styles.headerContent}>
-            <Text variant="headlineMedium" style={styles.headerTitle}>Profile</Text>
-          </View>
-        </LinearGradient>
+      {/* Gradient Background */}
+      <LinearGradient
+        colors={[colors.primary.dark, colors.background.primary]}
+        style={StyleSheet.absoluteFill}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 0, y: 0.3 }}
+      />
+      
+      {/* Header */}
+      <View style={styles.header}>
+        <StyledText variant="headingLarge" style={styles.title}>
+          Profile
+        </StyledText>
       </View>
       
-      <ScrollView style={styles.scrollView} contentContainerStyle={styles.scrollContent}>
-        {/* Profile Header with Bold Minimalism design */}
-        <LinearGradient
-          colors={[theme.colors.primaryContainer, theme.colors.secondaryContainer]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 0 }}
-          style={styles.profileHeaderGradient}
-        >
-          <View style={styles.profileHeader}>
-            <Avatar.Text 
-              size={80} 
-              label={getAvatarLabel()} 
-              style={styles.profileAvatar}
-            />
-            <Text variant="headlineSmall" style={styles.userName}>
-              {profile?.full_name || (user?.email ? user.email.split('@')[0] : 'User')}
-            </Text>
-            <Text variant="bodyMedium" style={styles.userDetails}>
-              {user?.email || 'No email available'}
-            </Text>
-            <TouchableOpacity 
-              style={styles.editButtonContainer}
+      {/* Main Content */}
+      <ScrollView 
+        style={styles.scrollView}
+        contentContainerStyle={styles.scrollContent}
+        showsVerticalScrollIndicator={false}
+      >
+        {/* Profile Info */}
+        <FadeIn from={0} duration={800}>
+          <View style={styles.profileSection}>
+            <View style={styles.profileAvatarContainer}>
+              <LinearGradient
+                colors={[colors.primary.main, colors.secondary.main]}
+                style={styles.avatarGradient}
+                start={{ x: 0, y: 0 }}
+                end={{ x: 1, y: 1 }}
+              >
+                <Avatar.Text 
+                  size={90} 
+                  label={getAvatarLabel()} 
+                  style={styles.profileAvatar}
+                  labelStyle={styles.profileAvatarLabel}
+                />
+              </LinearGradient>
+            </View>
+            
+            <StyledText variant="headingMedium" style={styles.userName}>
+              {profile?.full_name || user?.email?.split('@')[0] || 'User'}
+            </StyledText>
+            
+            <StyledText variant="bodyMedium" style={styles.userEmail}>
+              {user?.email || 'No email provided'}
+            </StyledText>
+            
+            <TouchableOpacity
+              style={styles.editProfileButton}
               onPress={() => router.push('/(tabs)/profile/edit-profile')}
             >
-              <LinearGradient 
-                colors={[theme.colors.primary, theme.colors.secondary]}
+              <LinearGradient
+                colors={[colors.secondary.main, colors.secondary.dark]}
+                style={styles.gradientButton}
                 start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-                style={styles.editButtonGradient}
+                end={{ x: 1, y: 1 }}
               >
-                <Text style={styles.editButtonText}>Edit Profile</Text>
+                <StyledText variant="bodyMedium" style={styles.buttonText}>
+                  Edit Profile
+                </StyledText>
               </LinearGradient>
             </TouchableOpacity>
           </View>
-        </LinearGradient>
+        </FadeIn>
         
-        <Card style={styles.card} mode="outlined">
+        {/* Fitness Goals */}
+        <ScaleIn duration={600} delay={200}>
           <LinearGradient
-            colors={['#ffffff', '#f8f8f8']}
+            colors={[colors.surface.light, colors.surface.main]}
+            style={styles.sectionCard}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
-            style={styles.cardGradient}
           >
-            <Card.Content>
-              <View style={styles.cardHeaderRow}>
-                <MaterialCommunityIcons name="target" size={24} color={theme.colors.primary} />
-                <Text variant="titleLarge" style={styles.cardTitle}>Fitness Goals</Text>
+            <View style={styles.sectionHeader}>
+              <MaterialCommunityIcons name="target" size={24} color={colors.primary.main} />
+              <StyledText variant="headingMedium" style={styles.sectionTitle}>
+                Fitness Goals
+              </StyledText>
+            </View>
+            
+            <View style={styles.goalItem}>
+              <View style={styles.goalIconContainer}>
+                <Ionicons name="fitness" size={20} color={colors.primary.main} />
               </View>
-              
-              <List.Item
-                title="Primary Goal"
-                description={formatFitnessGoal(profile?.fitness_goal)}
-                left={props => <List.Icon {...props} icon="target" color={theme.colors.primary} />}
-                style={styles.listItem}
-              />
-              <Divider style={styles.divider} />
-              
-              <List.Item
-                title="Current Weight"
-                description={profile?.weight ? `${profile.weight} kg` : 'Not set'}
-                left={props => <List.Icon {...props} icon="scale" color={theme.colors.primary} />}
-                style={styles.listItem}
-              />
-              <Divider style={styles.divider} />
-              
-              <List.Item
-                title="Target Weight"
-                description={profile?.target_weight ? `${profile.target_weight} kg` : 'Not set'}
-                left={props => <List.Icon {...props} icon="scale-balance" color={theme.colors.primary} />}
-                style={styles.listItem}
-              />
-              <Divider style={styles.divider} />
-              
-              <List.Item
-                title="Height"
-                description={profile?.height ? `${profile.height} cm` : 'Not set'}
-                left={props => <List.Icon {...props} icon="human-male-height" color={theme.colors.primary} />}
-                style={styles.listItem}
-              />
-            </Card.Content>
+              <View style={styles.goalTextContainer}>
+                <StyledText variant="bodyMedium" style={styles.goalLabel}>
+                  Primary Goal
+                </StyledText>
+                <StyledText variant="bodyLarge" style={styles.goalValue}>
+                  {formatFitnessGoal(profile?.weight_goal)}
+                </StyledText>
+              </View>
+            </View>
+            
+            <View style={styles.goalItem}>
+              <View style={styles.goalIconContainer}>
+                <Ionicons name="scale-outline" size={20} color={colors.secondary.main} />
+              </View>
+              <View style={styles.goalTextContainer}>
+                <StyledText variant="bodyMedium" style={styles.goalLabel}>
+                  Current Weight
+                </StyledText>
+                <StyledText variant="bodyLarge" style={styles.goalValue}>
+                  {profile?.weight_kg || profile?.current_weight_kg || profile?.body_analysis?.weight_kg 
+                    ? `${Math.round(profile?.weight_kg || profile?.current_weight_kg || profile?.body_analysis?.weight_kg)} kg`
+                    : 'Not set'}
+                </StyledText>
+              </View>
+            </View>
+            
+            <View style={styles.goalItem}>
+              <View style={styles.goalIconContainer}>
+                <Ionicons name="trending-down" size={20} color={colors.accent.green} />
+              </View>
+              <View style={styles.goalTextContainer}>
+                <StyledText variant="bodyMedium" style={styles.goalLabel}>
+                  Target Weight
+                </StyledText>
+                <StyledText variant="bodyLarge" style={styles.goalValue}>
+                  {profile?.target_weight_kg || profile?.body_analysis?.target_weight_kg 
+                    ? `${Math.round(profile?.target_weight_kg || profile?.body_analysis?.target_weight_kg)} kg`
+                    : 'Not set'}
+                </StyledText>
+              </View>
+            </View>
+            
+            <View style={styles.goalItem}>
+              <View style={styles.goalIconContainer}>
+                <Ionicons name="resize" size={20} color={colors.accent.purple} />
+              </View>
+              <View style={styles.goalTextContainer}>
+                <StyledText variant="bodyMedium" style={styles.goalLabel}>
+                  Height
+                </StyledText>
+                <StyledText variant="bodyLarge" style={styles.goalValue}>
+                  {profile?.height_cm || profile?.body_analysis?.height_cm
+                    ? `${Math.round(profile?.height_cm || profile?.body_analysis?.height_cm)} cm`
+                    : 'Not set'}
+                </StyledText>
+              </View>
+            </View>
           </LinearGradient>
-        </Card>
+        </ScaleIn>
         
-        <Card style={styles.card} mode="outlined">
+        {/* Preferences */}
+        <ScaleIn duration={600} delay={300}>
           <LinearGradient
-            colors={['#ffffff', '#f8f8f8']}
+            colors={[colors.surface.light, colors.surface.main]}
+            style={styles.sectionCard}
             start={{ x: 0, y: 0 }}
             end={{ x: 1, y: 1 }}
-            style={styles.cardGradient}
           >
-            <Card.Content>
-              <View style={styles.cardHeaderRow}>
-                <MaterialCommunityIcons name="cog" size={24} color={theme.colors.primary} />
-                <Text variant="titleLarge" style={styles.cardTitle}>Preferences</Text>
+            <View style={styles.sectionHeader}>
+              <MaterialCommunityIcons name="cog" size={24} color={colors.primary.main} />
+              <StyledText variant="headingMedium" style={styles.sectionTitle}>
+                Preferences
+              </StyledText>
+            </View>
+            
+            {/* Add Water Intake Settings button */}
+            <TouchableOpacity 
+              style={[styles.accountItem, styles.highlightedItem]}
+              onPress={() => router.push('/(tabs)/profile/edit-profile')}
+            >
+              <MaterialCommunityIcons name="water" size={24} color="#36D1DC" />
+              <View style={styles.itemTextContainer}>
+                <StyledText variant="bodyLarge" style={styles.accountItemText}>
+                  Water Goal Settings
+                </StyledText>
+                <StyledText variant="bodySmall" style={styles.itemDescription}>
+                  Set your daily water intake target
+                </StyledText>
               </View>
-              
-              <List.Item
-                title="Workout Notifications"
-                style={styles.listItem}
-                right={() => (
-                  <Switch
-                    value={notificationsEnabled}
-                    onValueChange={setNotificationsEnabled}
-                    color={theme.colors.primary}
-                  />
-                )}
-              />
-              <Divider style={styles.divider} />
-              
-              <List.Item
-                title="Meal Reminders"
-                style={styles.listItem}
-                right={() => (
-                  <Switch
-                    value={notificationsEnabled}
-                    onValueChange={setNotificationsEnabled}
-                    color={theme.colors.primary}
-                  />
-                )}
-              />
-              <Divider style={styles.divider} />
-              
-              <List.Item
-                title="Dark Mode"
-                style={styles.listItem}
-                right={() => (
-                  <Switch
-                    value={darkModeEnabled}
-                    onValueChange={setDarkModeEnabled}
-                    color={theme.colors.primary}
-                  />
-                )}
-              />
-            </Card.Content>
-          </LinearGradient>
-        </Card>
-        
-        <Card style={styles.card} mode="outlined">
-          <LinearGradient
-            colors={['#ffffff', '#f8f8f8']}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.cardGradient}
-          >
-            <Card.Content>
-              <View style={styles.cardHeaderRow}>
-                <MaterialCommunityIcons name="cog-outline" size={24} color={theme.colors.primary} />
-                <Text variant="titleLarge" style={styles.cardTitle}>App Settings</Text>
-              </View>
-              
-              <List.Item
-                title="Account"
-                description="Manage your account details"
-                left={props => <List.Icon {...props} icon="account" color={theme.colors.primary} />}
-                onPress={() => console.log('Navigate to account settings')}
-                style={styles.listItem}
-              />
-              <Divider style={styles.divider} />
-              
-              <List.Item
-                title="Privacy"
-                description="Manage your privacy settings"
-                left={props => <List.Icon {...props} icon="shield-account" color={theme.colors.primary} />}
-                onPress={() => console.log('Navigate to privacy settings')}
-                style={styles.listItem}
-              />
-              <Divider style={styles.divider} />
-              
-              <List.Item
-                title="Help & Support"
-                description="Contact us for assistance"
-                left={props => <List.Icon {...props} icon="help-circle" color={theme.colors.primary} />}
-                onPress={() => console.log('Navigate to help & support')}
-                style={styles.listItem}
-              />
-              <Divider style={styles.divider} />
-              
-              <List.Item
-                title="About"
-                description="App version 1.0.0"
-                left={props => <List.Icon {...props} icon="information" color={theme.colors.primary} />}
-                onPress={() => console.log('Navigate to about page')}
-                style={styles.listItem}
-              />
-            </Card.Content>
-          </LinearGradient>
-        </Card>
-        
-        <Card style={[styles.card, { marginTop: 16 }]} mode="outlined">
-          <LinearGradient
-            colors={['#ffffff', '#f8f8f8']}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={styles.cardGradient}
-          >
-            <Card.Content>
-              <View style={styles.cardHeaderRow}>
-                <MaterialCommunityIcons name="account-outline" size={24} color={theme.colors.primary} />
-                <Text variant="titleLarge" style={styles.cardTitle}>Account</Text>
-              </View>
-              
-              <List.Item
-                title="Email"
-                description={user?.email || 'Not available'}
-                left={props => <List.Icon {...props} icon="email" color={theme.colors.primary} />}
-                style={styles.listItem}
-              />
-              <Divider style={styles.divider} />
-              
-              <List.Item
-                title="Member Since"
-                description={user?.created_at ? format(new Date(user.created_at), 'MMM dd, yyyy') : 'Not available'}
-                left={props => <List.Icon {...props} icon="calendar" color={theme.colors.primary} />}
-                style={styles.listItem}
-              />
-              <Divider style={styles.divider} />
-              
-              <List.Item
-                title="Data & Privacy"
-                description="Manage your data and privacy settings"
-                left={props => <List.Icon {...props} icon="lock" color={theme.colors.primary} />}
-                style={styles.listItem}
-              />
-              <Divider style={styles.divider} />
-              
-              <TouchableOpacity onPress={handleLogout} disabled={isLoggingOut}>
-                <LinearGradient
-                  colors={[theme.colors.primary, theme.colors.secondary]}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 0 }}
-                  style={styles.logoutButtonGradient}
-                >
-                  {isLoggingOut ? (
-                    <ActivityIndicator size="small" color="white" />
-                  ) : (
-                    <View style={styles.logoutButtonContent}>
-                      <MaterialCommunityIcons name="logout" size={18} color="white" />
-                      <Text style={styles.logoutButtonText}>Log Out</Text>
-                    </View>
-                  )}
-                </LinearGradient>
-              </TouchableOpacity>
-            </Card.Content>
-          </LinearGradient>
-        </Card>
+              <MaterialCommunityIcons name="chevron-right" size={24} color={colors.text.muted} />
+            </TouchableOpacity>
 
-        <Button 
-          mode="outlined" 
-          style={styles.logoutButton}
-          textColor="#F44336"
-          onPress={handleLogout}
-          loading={isLoggingOut}
-          disabled={isLoggingOut}
-        >
-          {isLoggingOut ? 'Logging out...' : 'Log Out'}
-        </Button>
+            <TouchableOpacity
+              style={styles.accountItem}
+              onPress={() => handleWorkoutToggle(!notificationsEnabled)}
+            >
+              <MaterialCommunityIcons
+                name={notificationsEnabled ? "bell" : "bell-off"}
+                size={24}
+                color={notificationsEnabled ? colors.primary.light : colors.text.muted}
+              />
+              <StyledText variant="bodyLarge" style={styles.accountItemText}>
+                Workout Notifications
+              </StyledText>
+              <Switch
+                value={notificationsEnabled}
+                onValueChange={handleWorkoutToggle}
+                color={colors.primary.main}
+              />
+            </TouchableOpacity>
+            
+            <View style={styles.preferenceItem}>
+              <View style={styles.preferenceInfo}>
+                <MaterialCommunityIcons name="food-fork-drink" size={24} color={colors.primary.light} />
+                <StyledText variant="bodyLarge" style={styles.preferenceText}>
+                  Meal Reminders
+                </StyledText>
+              </View>
+              <Switch
+                value={mealRemindersEnabled}
+                onValueChange={handleMealToggle}
+                color={colors.primary.main}
+              />
+            </View>
+            
+            <View style={styles.preferenceItem}>
+              <View style={styles.preferenceInfo}>
+                <MaterialCommunityIcons name="water" size={24} color="#36D1DC" />
+                <StyledText variant="bodyLarge" style={styles.preferenceText}>
+                  Water Reminders
+                </StyledText>
+              </View>
+              <Switch
+                value={waterRemindersEnabled}
+                onValueChange={handleWaterToggle}
+                color="#36D1DC"
+              />
+            </View>
+          </LinearGradient>
+        </ScaleIn>
+        
+        {/* Account Section */}
+        <ScaleIn duration={600} delay={400}>
+          <LinearGradient
+            colors={[colors.surface.light, colors.surface.main]}
+            style={styles.sectionCard}
+            start={{ x: 0, y: 0 }}
+            end={{ x: 1, y: 1 }}
+          >
+            <View style={styles.sectionHeader}>
+              <MaterialCommunityIcons name="account" size={24} color={colors.primary.main} />
+              <StyledText variant="headingMedium" style={styles.sectionTitle}>
+                Account
+              </StyledText>
+            </View>
+            
+            <TouchableOpacity
+              style={styles.accountItem}
+              onPress={() => router.push('/(tabs)/settings')}
+            >
+              <MaterialCommunityIcons name="cog-outline" size={24} color={colors.primary.light} />
+              <StyledText variant="bodyLarge" style={styles.accountItemText}>
+                Settings
+              </StyledText>
+              <MaterialCommunityIcons name="chevron-right" size={24} color={colors.text.muted} />
+            </TouchableOpacity>
+            
+            <TouchableOpacity
+              style={styles.accountItem}
+              onPress={() => Alert.alert('Help & Support', 'This feature is coming soon!')}
+            >
+              <MaterialCommunityIcons name="help-circle-outline" size={24} color={colors.primary.light} />
+              <StyledText variant="bodyLarge" style={styles.accountItemText}>
+                Help & Support
+              </StyledText>
+              <MaterialCommunityIcons name="chevron-right" size={24} color={colors.text.muted} />
+            </TouchableOpacity>
+            
+            <TouchableOpacity
+              style={styles.accountItem}
+              onPress={() => Alert.alert('Privacy Policy', 'This feature is coming soon!')}
+            >
+              <MaterialCommunityIcons name="shield-account-outline" size={24} color={colors.primary.light} />
+              <StyledText variant="bodyLarge" style={styles.accountItemText}>
+                Privacy Policy
+              </StyledText>
+              <MaterialCommunityIcons name="chevron-right" size={24} color={colors.text.muted} />
+            </TouchableOpacity>
+            
+            <TouchableOpacity 
+              style={[styles.accountItem, styles.logoutButton]}
+              onPress={handleLogout}
+              disabled={isLoggingOut}
+            >
+              <MaterialCommunityIcons name="logout" size={24} color={colors.feedback.error} />
+              <StyledText variant="bodyLarge" style={styles.logoutText}>
+                {isLoggingOut ? 'Logging out...' : 'Logout'}
+              </StyledText>
+              {isLoggingOut && (
+                <ActivityIndicator size="small" color={colors.feedback.error} style={styles.logoutLoader} />
+              )}
+            </TouchableOpacity>
+          </LinearGradient>
+        </ScaleIn>
+        
+        <View style={styles.versionInfo}>
+          <StyledText variant="bodySmall" style={styles.versionText}>
+            Version 1.0.0
+          </StyledText>
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
 }
 
+const { width } = Dimensions.get('window');
+
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#f5f5f5',
+    backgroundColor: colors.background.primary,
   },
-  headerContainer: {
-    height: 60,
-    justifyContent: 'center',
-    paddingHorizontal: 16,
+  header: {
+    paddingHorizontal: spacing.xl,
+    paddingTop: spacing.lg,
+    paddingBottom: spacing.md,
+    zIndex: 10,
   },
-  headerGradient: {
-    flex: 1,
-    borderRadius: 10,
-  },
-  headerContent: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  headerTitle: {
-    color: 'white',
+  title: {
+    color: colors.text.primary,
     fontWeight: 'bold',
   },
   scrollView: {
     flex: 1,
   },
   scrollContent: {
-    paddingHorizontal: 16,
-    paddingTop: 16,
-    paddingBottom: 24,
+    paddingHorizontal: spacing.lg,
+    paddingBottom: spacing.xxl,
   },
-  profileHeaderGradient: {
-    borderRadius: 10,
-    paddingVertical: 16,
-    paddingHorizontal: 16,
+  profileSection: {
+    alignItems: 'center',
+    marginBottom: spacing.xl,
   },
-  profileHeader: {
-    flex: 1,
+  profileAvatarContainer: {
+    marginBottom: spacing.md,
+  },
+  avatarGradient: {
+    width: 100,
+    height: 100,
+    borderRadius: 50,
     justifyContent: 'center',
     alignItems: 'center',
+    ...shadows.medium,
   },
   profileAvatar: {
-    marginBottom: 8,
+    backgroundColor: 'transparent',
+  },
+  profileAvatarLabel: {
+    fontSize: 36,
+    fontWeight: 'bold',
   },
   userName: {
-    marginTop: 12,
+    color: colors.text.primary,
     fontWeight: 'bold',
+    marginBottom: spacing.xs,
   },
-  userDetails: {
-    opacity: 0.7,
-    marginTop: 4,
+  userEmail: {
+    color: colors.text.secondary,
+    marginBottom: spacing.md,
   },
-  editButtonContainer: {
-    marginTop: 12,
-    borderRadius: 10,
+  editProfileButton: {
+    borderRadius: borderRadius.round,
     overflow: 'hidden',
+    marginTop: spacing.sm,
   },
-  editButtonGradient: {
-    paddingVertical: 8,
-    paddingHorizontal: 16,
+  gradientButton: {
+    paddingVertical: spacing.sm,
+    paddingHorizontal: spacing.xl,
+    borderRadius: borderRadius.round,
   },
-  editButtonText: {
-    color: 'white',
+  buttonText: {
+    color: colors.text.primary,
     fontWeight: 'bold',
   },
-  card: {
-    marginBottom: 16,
-    borderRadius: 10,
+  sectionCard: {
+    borderRadius: borderRadius.lg,
+    marginBottom: spacing.lg,
+    padding: spacing.lg,
+    ...shadows.medium,
   },
-  cardTitle: {
-    fontWeight: 'bold',
-    marginBottom: 12,
-  },
-  cardGradient: {
-    flex: 1,
-    borderRadius: 10,
-  },
-  cardHeaderRow: {
+  sectionHeader: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: 12,
+    marginBottom: spacing.md,
   },
-  listItem: {
-    paddingVertical: 8,
+  sectionTitle: {
+    color: colors.text.primary,
+    marginLeft: spacing.sm,
   },
-  divider: {
-    marginVertical: 4,
+  goalItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border.light,
+  },
+  goalIconContainer: {
+    width: 40,
+    height: 40,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'rgba(255,255,255,0.1)',
+    borderRadius: borderRadius.round,
+    marginRight: spacing.sm,
+  },
+  goalTextContainer: {
+    flex: 1,
+  },
+  goalLabel: {
+    color: colors.text.muted,
+  },
+  goalValue: {
+    color: colors.text.primary,
+  },
+  preferenceItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border.light,
+  },
+  preferenceInfo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  preferenceText: {
+    color: colors.text.primary,
+    marginLeft: spacing.md,
+  },
+  accountItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingVertical: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: colors.border.light,
+  },
+  accountItemText: {
+    color: colors.text.primary,
+    flex: 1,
+    marginLeft: spacing.md,
   },
   logoutButton: {
-    marginTop: 8,
-    marginBottom: 24,
-    borderColor: '#F44336',
+    borderBottomWidth: 0,
+    marginTop: spacing.sm,
   },
-  logoutButtonGradient: {
-    paddingVertical: 8,
-    paddingHorizontal: 16,
-    borderRadius: 10,
+  logoutText: {
+    color: colors.feedback.error,
+    flex: 1,
+    marginLeft: spacing.md,
   },
-  logoutButtonContent: {
-    flexDirection: 'row',
+  logoutLoader: {
+    marginLeft: spacing.sm,
+  },
+  versionInfo: {
     alignItems: 'center',
+    marginTop: spacing.lg,
+    marginBottom: spacing.xl,
   },
-  logoutButtonText: {
-    color: 'white',
-    fontWeight: 'bold',
-    marginLeft: 8,
+  versionText: {
+    color: colors.text.muted,
+  },
+  highlightedItem: {
+    backgroundColor: 'rgba(54, 209, 220, 0.08)',
+    borderRadius: borderRadius.md,
+    marginVertical: spacing.xs,
+  },
+  itemTextContainer: {
+    flex: 1,
+    marginLeft: spacing.sm,
+  },
+  itemDescription: {
+    color: colors.text.muted,
+    fontSize: 12,
+    marginTop: 2,
   },
 });

@@ -1,26 +1,77 @@
-import { View, Text, StyleSheet, TouchableOpacity } from "react-native";
-import { useRouter } from "expo-router";
+import React from 'react';
+import { View, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
+import { Text, Card, Title, Paragraph, useTheme } from 'react-native-paper';
+import { router } from 'expo-router';
+import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 
-export default function DevTools() {
-  const router = useRouter();
-
+// Dev menu item component
+const DevMenuItem = ({ title, description, icon, route }) => {
+  const theme = useTheme();
+  
+  const handlePress = () => {
+    router.push(route);
+  };
+  
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Developer Tools</Text>
-      <Text style={styles.subtitle}>Use these tools for development and testing</Text>
+    <TouchableOpacity onPress={handlePress}>
+      <Card style={styles.card}>
+        <Card.Content style={styles.cardContent}>
+          <MaterialCommunityIcons
+            name={icon}
+            size={32}
+            color={theme.colors.primary}
+            style={styles.icon}
+          />
+          <View style={styles.textContainer}>
+            <Title>{title}</Title>
+            <Paragraph>{description}</Paragraph>
+          </View>
+        </Card.Content>
+      </Card>
+    </TouchableOpacity>
+  );
+};
 
-      <View style={styles.buttonContainer}>
-        <TouchableOpacity 
-          style={styles.button} 
-          onPress={() => router.push("/(dev)/ai-test-harness")}
-        >
-          <Text style={styles.buttonText}>AI Services Test Harness</Text>
-          <Text style={styles.buttonDescription}>
-            Test AI services with different parameters and view results
-          </Text>
-        </TouchableOpacity>
-      </View>
-    </View>
+export default function DevMenu() {
+  return (
+    <ScrollView style={styles.container}>
+      <Text style={styles.header}>Developer Tools</Text>
+      
+      <DevMenuItem
+        title="Data Debug"
+        description="View and fix profile data inconsistencies"
+        icon="database-edit"
+        route="/(dev)/debug-panel"
+      />
+      
+      <DevMenuItem
+        title="API Test"
+        description="Test API connections and responses"
+        icon="api"
+        route="/(dev)/api-test"
+      />
+      
+      <DevMenuItem
+        title="Theme Preview"
+        description="View all design system components"
+        icon="palette"
+        route="/(dev)/theme-preview"
+      />
+      
+      <DevMenuItem
+        title="Form Tests"
+        description="Test form validations and submissions"
+        icon="form-select"
+        route="/(dev)/form-test"
+      />
+      
+      <DevMenuItem
+        title="Onboarding Test"
+        description="Test the onboarding flow"
+        icon="account-box-outline"
+        route="/(dev)/onboarding-test"
+      />
+    </ScrollView>
   );
 }
 
@@ -28,40 +79,26 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     padding: 16,
-    backgroundColor: "#fff",
+    backgroundColor: '#f5f5f5',
   },
-  title: {
+  header: {
     fontSize: 24,
-    fontWeight: "bold",
-    marginBottom: 8,
+    fontWeight: 'bold',
+    marginBottom: 16,
+    marginTop: 8,
   },
-  subtitle: {
-    fontSize: 16,
-    color: "#666",
-    marginBottom: 24,
-  },
-  buttonContainer: {
-    gap: 16,
-  },
-  button: {
-    backgroundColor: "#f59e0b",
+  card: {
+    marginBottom: 12,
     borderRadius: 8,
-    padding: 16,
-    shadowColor: "#000",
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 2,
   },
-  buttonText: {
-    fontSize: 18,
-    fontWeight: "bold",
-    color: "#fff",
-    marginBottom: 4,
+  cardContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
   },
-  buttonDescription: {
-    fontSize: 14,
-    color: "#fff",
-    opacity: 0.8,
+  icon: {
+    marginRight: 16,
+  },
+  textContainer: {
+    flex: 1,
   },
 });

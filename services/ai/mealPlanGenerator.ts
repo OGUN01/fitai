@@ -5,10 +5,10 @@
  * with advanced error handling and fallback mechanisms.
  */
 
-import { gemini } from '../../lib/gemini';
+import gemini from '../../lib/gemini';
 import { promptManager } from './promptManager';
 import { API_TIMEOUTS } from '../../constants/api';
-import { parseJsonFromLLM } from './advancedFallbacks';
+import { parseJsonFromLLM } from './jsonUtils';
 
 // Type definitions
 export interface UserDietPreferences {
@@ -16,11 +16,16 @@ export interface UserDietPreferences {
   dietPlanPreference: 'balanced' | 'high-protein' | 'low-carb' | 'keto' | 'mediterranean';
   allergies: string[];
   mealFrequency: number;
-  preferredMealTimes: string[];
   countryRegion: string;
-  waterIntakeGoal: number;
   fitnessGoal?: 'weight loss' | 'muscle gain' | 'improved fitness' | 'maintenance';
   calorieTarget?: number;
+  // Additional preferences
+  restrictions?: string[];
+  excludedFoods?: string[];
+  // Make these optional since we won't pass them to the AI
+  preferredMealTimes?: string[];
+  waterIntakeGoal?: number;
+  // Demographic data
   age?: number;
   gender?: string;
   weight?: number;
@@ -98,7 +103,12 @@ export class MealPlanGenerator {
       mealFrequency: preferences.mealFrequency,
       region: preferences.countryRegion,
       fitnessGoal: preferences.fitnessGoal || 'balanced nutrition',
-      calorieTarget: preferences.calorieTarget || 'appropriate for goals'
+      calorieTarget: preferences.calorieTarget || 'appropriate for goals',
+      // Add demographic information for more personalized meal plans
+      age: preferences.age || 'Not specified',
+      gender: preferences.gender || 'Not specified',
+      weight: preferences.weight || 'Not specified',
+      height: preferences.height || 'Not specified'
     };
     
     // Get the formatted prompt with parameters

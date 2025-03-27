@@ -2,7 +2,7 @@
 export const ROUTES = {
   // Auth routes
   AUTH: {
-    LOGIN: '/(auth)/login',
+    LOGIN: '/login',
     SIGNUP: '/(auth)/signup',
     FORGOT_PASSWORD: '/(auth)/forgot-password',
   },

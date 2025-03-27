@@ -5,10 +5,10 @@
  * with advanced error handling and fallback mechanisms.
  */
 
-import { gemini } from '../../lib/gemini';
+import gemini from '../../lib/gemini';
 import { promptManager } from './promptManager';
 import { API_TIMEOUTS } from '../../constants/api';
-import { parseJsonFromLLM } from './advancedFallbacks';
+import { parseJsonFromLLM } from './jsonUtils';
 
 // Type definitions
 export interface UserFitnessPreferences {
@@ -18,11 +18,12 @@ export interface UserFitnessPreferences {
   exerciseFrequency: number;
   timePerSession: number;
   focusAreas: string[];
-  injuries?: string;
+  exercisesToAvoid?: string;
   age?: number;
   gender?: string;
   weight?: number;
   height?: number;
+  country_region?: string;
 }
 
 export interface WorkoutExercise {
@@ -73,11 +74,19 @@ export class WorkoutGenerator {
     const promptParams = {
       fitnessLevel: preferences.fitnessLevel,
       workoutLocation: preferences.workoutLocation,
-      equipment: preferences.availableEquipment.join(', '),
-      frequency: preferences.exerciseFrequency,
+      // Conditionally set equipment based on workout location
+      equipment: preferences.workoutLocation === 'gym' 
+        ? 'Standard gym equipment' 
+        : preferences.availableEquipment.join(', '),
+      exerciseFrequency: preferences.exerciseFrequency,
       timePerSession: preferences.timePerSession,
       focusAreas: preferences.focusAreas.join(', '),
-      injuries: preferences.injuries || 'None'
+      exercisesToAvoid: preferences.exercisesToAvoid || 'None',
+      // Add demographic data for more personalized workouts
+      age: preferences.age || 'Not specified',
+      gender: preferences.gender || 'Not specified',
+      weight: preferences.weight || 'Not specified',
+      height: preferences.height || 'Not specified'
     };
 
     // Get the prompt for workout generation
