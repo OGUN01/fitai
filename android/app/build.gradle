@@ -86,9 +86,9 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
-    namespace 'com.yourcompany.fitnessapp'
+    namespace 'com.fitai.fitness'
     defaultConfig {
-        applicationId 'com.yourcompany.fitnessapp'
+        applicationId 'com.fitai.fitness'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1
@@ -147,6 +147,15 @@ android {
 }
 
 dependencies {
+    // Resolution strategy for dependency conflicts
+    configurations.all {
+        resolutionStrategy {
+            force "com.facebook.react:react-android:${reactAndroidLibs.versions.react.get()}"
+            force "com.facebook.react:react-native:${reactAndroidLibs.versions.react.get()}"
+            force "androidx.swiperefreshlayout:swiperefreshlayout:1.1.0"
+            force "androidx.appcompat:appcompat:1.6.1"
+        }
+    }
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
 
@@ -175,17 +184,10 @@ dependencies {
     }
     
     // Fix for Flipper integration issue
-    def enableFlipperIntegration = (System.getenv("FLIPPER_DISABLE") ?: "0") == "0"
-    if (enableFlipperIntegration) {
-        try {
-            configurations.all {
-                resolutionStrategy.dependencySubstitution {
-                    substitute(module("com.facebook.react:flipper-integration"))
-                        .using(module("com.facebook.react:flipper-integration:${reactAndroidLibs.versions.react.get()}"))
-                }
-            }
-        } catch (Exception e) {
-            logger.error("Error configuring Flipper integration: " + e.getMessage())
+    configurations.all {
+        resolutionStrategy.dependencySubstitution {
+            substitute(module("com.facebook.react:flipper-integration"))
+                .using(module("com.facebook.react:flipper-integration:${reactAndroidLibs.versions.react.get()}"))
         }
     }
 }
