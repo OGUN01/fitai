@@ -1,37 +1,31 @@
 {
   "cli": {
-    "version": ">= 5.9.1"
+    "version": ">= 3.13.3"
   },
   "build": {
     "development": {
       "developmentClient": true,
       "distribution": "internal",
       "android": {
-        "buildType": "apk"
+        "gradleCommand": ":app:assembleDebug"
+      },
+      "ios": {
+        "buildConfiguration": "Debug"
       }
     },
     "preview": {
       "distribution": "internal",
       "android": {
         "buildType": "apk"
-      },
-      "env": {
-        "FLIPPER_DISABLE": "1"
       }
     },
     "production": {
       "android": {
         "buildType": "app-bundle"
-      },
-      "env": {
-        "FLIPPER_DISABLE": "1"
       }
     }
   },
-  "hooks": {
-    "prebuild": "node ./eas-hooks/prebuild.js"
-  },
-  "scriptsBefore": {
-    "build": "chmod +x eas-hooks/prebuild.js && chmod +x fix-android-build.js"
+  "submit": {
+    "production": {}
   }
 }
