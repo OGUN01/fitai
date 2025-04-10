@@ -14,11 +14,17 @@
       "distribution": "internal",
       "android": {
         "buildType": "apk"
+      },
+      "env": {
+        "FLIPPER_DISABLE": "1"
       }
     },
     "production": {
       "android": {
         "buildType": "app-bundle"
+      },
+      "env": {
+        "FLIPPER_DISABLE": "1"
       }
     }
   }
