@@ -31,10 +31,6 @@
       },
       "env": {
         "APP_ENV": "preview"
-      },
-      "hooks": {
-        "postClone": "./eas-build-post-clone.sh",
-        "preInstall": "./eas-build-pre-install.sh"
       }
     },
     "preview-apk": {
@@ -50,10 +46,6 @@
       },
       "env": {
         "FLIPPER_DISABLE": "1"
-      },
-      "hooks": {
-        "postClone": "./eas-build-post-clone.sh",
-        "preInstall": "./eas-build-pre-install.sh"
       }
     },
     "production": {
@@ -69,10 +61,6 @@
         "env": {
           "APP_ENV": "production"
         }
-      },
-      "hooks": {
-        "postClone": "./eas-build-post-clone.sh",
-        "preInstall": "./eas-build-pre-install.sh"
       }
     }
   },
@@ -83,5 +71,9 @@
         "releaseStatus": "completed"
       }
     }
+  },
+  "hooks": {
+    "postClone": "./eas-build-post-clone.sh",
+    "preInstall": "./eas-build-pre-install.sh"
   }
 }
