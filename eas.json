@@ -12,10 +12,10 @@
       },
       "ios": {
         "buildConfiguration": "Debug",
-        "resourceClass": "m-medium",
-        "env": {
-          "APP_ENV": "development"
-        }
+        "resourceClass": "m-medium"
+      },
+      "env": {
+        "APP_ENV": "development"
       }
     },
     "preview": {
@@ -24,10 +24,7 @@
         "buildType": "apk"
       },
       "ios": {
-        "resourceClass": "m-medium",
-        "env": {
-          "APP_ENV": "preview"
-        }
+        "resourceClass": "m-medium"
       },
       "env": {
         "APP_ENV": "preview"
@@ -39,12 +36,10 @@
         "buildType": "apk",
         "gradleCommand": ":app:assembleRelease",
         "withoutCredentials": true,
-        "node": "18.18.0",
-        "env": {
-          "APP_ENV": "preview"
-        }
+        "node": "18.18.0"
       },
       "env": {
+        "APP_ENV": "preview",
         "FLIPPER_DISABLE": "1"
       }
     },
@@ -57,10 +52,10 @@
       },
       "ios": {
         "resourceClass": "m-medium",
-        "credentialsSource": "remote",
-        "env": {
-          "APP_ENV": "production"
-        }
+        "credentialsSource": "remote"
+      },
+      "env": {
+        "APP_ENV": "production"
       }
     }
   },
@@ -71,9 +66,5 @@
         "releaseStatus": "completed"
       }
     }
-  },
-  "hooks": {
-    "postClone": "./eas-build-post-clone.sh",
-    "preInstall": "./eas-build-pre-install.sh"
   }
 }
