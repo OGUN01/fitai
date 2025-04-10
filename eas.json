@@ -1,6 +1,7 @@
 {
   "cli": {
-    "version": ">= 3.13.3"
+    "version": ">= 5.9.1",
+    "appVersionSource": "remote"
   },
   "build": {
     "development": {
@@ -10,22 +11,74 @@
         "gradleCommand": ":app:assembleDebug"
       },
       "ios": {
-        "buildConfiguration": "Debug"
+        "buildConfiguration": "Debug",
+        "resourceClass": "m-medium",
+        "env": {
+          "APP_ENV": "development"
+        }
       }
     },
     "preview": {
       "distribution": "internal",
       "android": {
         "buildType": "apk"
+      },
+      "ios": {
+        "resourceClass": "m-medium",
+        "env": {
+          "APP_ENV": "preview"
+        }
+      },
+      "env": {
+        "APP_ENV": "preview"
+      },
+      "hooks": {
+        "preInstall": "./eas-build-pre-install.sh"
+      }
+    },
+    "preview-apk": {
+      "distribution": "internal",
+      "android": {
+        "buildType": "apk",
+        "gradleCommand": ":app:assembleRelease",
+        "withoutCredentials": true,
+        "node": "18.18.0",
+        "env": {
+          "APP_ENV": "preview"
+        }
+      },
+      "env": {
+        "FLIPPER_DISABLE": "1"
+      },
+      "hooks": {
+        "preInstall": "./eas-build-pre-install.sh"
       }
     },
     "production": {
+      "autoIncrement": true,
       "android": {
-        "buildType": "app-bundle"
+        "buildType": "app-bundle",
+        "image": "latest",
+        "credentialsSource": "remote"
+      },
+      "ios": {
+        "resourceClass": "m-medium",
+        "credentialsSource": "remote",
+        "env": {
+          "APP_ENV": "production"
+        }
+      },
+      "hooks": {
+        "preInstall": "./eas-build-pre-install.sh"
       }
     }
   },
   "submit": {
-    "production": {}
+    "production": {
+      "android": {
+        "track": "production",
+        "releaseStatus": "completed"
+      }
+    }
   }
-} 
+}
