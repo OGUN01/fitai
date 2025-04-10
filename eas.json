@@ -29,6 +29,9 @@
     }
   },
   "hooks": {
-    "prebuild": "./eas-hooks/prebuild.js"
+    "prebuild": "node ./eas-hooks/prebuild.js"
+  },
+  "scriptsBefore": {
+    "build": "chmod +x eas-hooks/prebuild.js && chmod +x fix-android-build.js"
   }
 }
