@@ -33,6 +33,7 @@
         "APP_ENV": "preview"
       },
       "hooks": {
+        "postClone": "./eas-build-post-clone.sh",
         "preInstall": "./eas-build-pre-install.sh"
       }
     },
@@ -51,6 +52,7 @@
         "FLIPPER_DISABLE": "1"
       },
       "hooks": {
+        "postClone": "./eas-build-post-clone.sh",
         "preInstall": "./eas-build-pre-install.sh"
       }
     },
@@ -69,6 +71,7 @@
         }
       },
       "hooks": {
+        "postClone": "./eas-build-post-clone.sh",
         "preInstall": "./eas-build-pre-install.sh"
       }
     }
