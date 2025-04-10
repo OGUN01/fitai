@@ -7,22 +7,28 @@
       "developmentClient": true,
       "distribution": "internal",
       "android": {
-        "gradleCommand": ":app:assembleDebug"
+        "gradleCommand": ":app:assembleDebug",
+        "buildType": "apk"
       },
       "ios": {
         "buildConfiguration": "Debug"
-      }
+      },
+      "prebuildCommand": "chmod +x fix-gradlew.sh && ./fix-gradlew.sh"
     },
     "preview": {
       "distribution": "internal",
       "android": {
-        "buildType": "apk"
-      }
+        "buildType": "apk",
+        "gradleCommand": ":app:assembleRelease",
+        "withoutCredentials": true
+      },
+      "prebuildCommand": "chmod +x fix-gradlew.sh && ./fix-gradlew.sh"
     },
     "production": {
       "android": {
         "buildType": "app-bundle"
-      }
+      },
+      "prebuildCommand": "chmod +x fix-gradlew.sh && ./fix-gradlew.sh"
     }
   },
   "submit": {
