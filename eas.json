@@ -27,5 +27,8 @@
         "FLIPPER_DISABLE": "1"
       }
     }
+  },
+  "hooks": {
+    "prebuild": "./eas-hooks/prebuild.js"
   }
 }
