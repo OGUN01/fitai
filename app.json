@@ -6,7 +6,7 @@
     ],
     "name": "FitAI",
     "slug": "fitness",
-    "version": "1.0.0",
+    "version": "8",
     "orientation": "portrait",
     "icon": "./assets/icon/1024.png",
     "assetBundlePatterns": [
@@ -19,12 +19,12 @@
     },
     "android": {
       "package": "com.fitai.fitness",
-      "versionCode": 1,
+      "versionCode": 8,
       "adaptiveIcon": {
-        "foregroundImage": "./assets/icon/1024.png",
-        "backgroundImage": "./assets/icon/1024.png",
-        "backgroundColor": "#000000",
-        "monochromeImage": "./assets/icon/1024.png"
+        "foregroundImage": "./assets/icon/adaptive-icon.png",
+        "backgroundImage": "./assets/icon/adaptive-icon.png",
+        "backgroundColor": "#FFFFFF",
+        "monochromeImage": "./assets/icon/adaptive-icon.png"
       },
       "icon": "./assets/icon/1024.png"
     },
