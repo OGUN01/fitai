@@ -1,4 +1,5 @@
 import { User } from '@supabase/supabase-js';
+import { WorkoutCompletion, MealCompletion } from '../types/tracking';
 
 export interface UserProfile {
   id: string; // Maps to auth.users.id
@@ -69,6 +70,20 @@ export interface UserProfile {
   // JSONB tracking columns (should be arrays)
   workout_tracking?: any;
   meal_tracking?: any[];
+  
+  // New field for local mode
+  has_completed_local_onboarding?: boolean;
+
+  // Add notification preferences
+  notification_preferences?: {
+    workout_notifications: boolean;
+    meal_reminders: boolean;
+    water_reminders: boolean;
+  };
+
+  // **** ADDED FIELDS FOR LOCAL COMPLETION TRACKING ****
+  completedWorkouts?: WorkoutCompletion[];
+  completedMeals?: MealCompletion[];
 }
 
 export interface WorkoutPreferences {

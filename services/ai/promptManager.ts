@@ -155,26 +155,28 @@ Context about the person:
 - Weight: {{weight}}
 - Fitness goal: {{fitnessGoal}}
 
+IMPORTANT: Use simple, everyday language that is easy for non-fitness experts to understand. Avoid technical terminology and jargon. Write as if you're explaining to someone without fitness or medical background. Use short, clear sentences.
+
 Format the response as JSON with the following structure:
 {
   "bodyFatEstimate": 18,
-  "bodyType": "Mesomorph with ectomorph tendencies",
-  "analysisText": "Detailed analysis of the person's physique...",
+  "bodyType": "Natural build with moderate muscle",
+  "analysisText": "Your body has a balanced look with some natural muscle. You have good potential for both gaining strength and improving overall fitness. Your build is suited for various types of workouts.",
   "bodyProportions": {
-    "shoulders": "Description",
-    "torso": "Description",
-    "arms": "Description",
-    "legs": "Description"
+    "shoulders": "Your shoulders appear average width compared to your hips",
+    "torso": "Your upper and lower body are well-proportioned",
+    "arms": "Your arms show some natural muscle tone",
+    "legs": "Your legs are in good proportion to your upper body"
   },
   "posture": {
-    "alignment": "Description",
-    "issues": ["Issue 1", "Issue 2"],
-    "recommendations": ["Recommendation 1", "Recommendation 2"]
+    "alignment": "Your posture is generally good with some minor adjustments needed",
+    "issues": ["Slight forward lean in shoulders", "Minor imbalance between left and right sides"],
+    "recommendations": ["Try standing taller when walking", "Simple stretches for shoulders and chest"]
   },
-  "recommendedFocusAreas": ["Focus area 1", "Focus area 2"],
+  "recommendedFocusAreas": ["Focus on compound exercises like squats and pushups", "Add some cardio for overall fitness", "Include regular stretching"],
   "recommendations": [
-    "Recommendation 1",
-    "Recommendation 2"
+    "Try full-body workouts 3 times weekly",
+    "Include plenty of protein in your diet"
   ]
 }
 

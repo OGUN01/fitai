@@ -13,6 +13,31 @@ import { generateWorkoutPlanWithFallbacks, generateMealPlanWithFallbacks } from 
 import { pydanticWorkoutGenerator } from './pydanticWorkoutGenerator';
 import { StructuredWorkoutGenerator } from './structuredWorkoutGenerator';
 import { PydanticMealPlanGenerator } from './pydanticMealPlanGenerator';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+
+// Check if API is rate limited
+const isApiRateLimited = async (): Promise<boolean> => {
+  try {
+    const skipApiCalls = await AsyncStorage.getItem('skipApiCalls');
+    return skipApiCalls === 'true';
+  } catch (error) {
+    console.error("Error checking API rate limit status:", error);
+    return false;
+  }
+};
+
+// Mark API as rate limited
+const markApiAsRateLimited = async (): Promise<void> => {
+  try {
+    await AsyncStorage.setItem('skipApiCalls', 'true');
+    await AsyncStorage.setItem('skipApiCallsTimestamp', Date.now().toString());
+    await AsyncStorage.setItem('meal_plan_rate_limited', 'true');
+    await AsyncStorage.setItem('meal_plan_rate_limit_timestamp', Date.now().toString());
+    console.log("⚠️ [AI] API rate limits detected, enabling skip mode for future requests");
+  } catch (error) {
+    console.error("Error marking API as rate limited:", error);
+  }
+};
 
 // Create singleton instances
 const workoutGenerator = new WorkoutGenerator();
@@ -44,7 +69,7 @@ const enhancedMealPlanGenerator = {
 const reliableWorkoutGenerator = {
   generateWorkoutPlan: async (preferences: any) => {
     // Check if we should skip API calls entirely (useful when we know API quota is exceeded)
-    const skipApiCalls = localStorage.getItem('skipApiCalls') === 'true';
+    const skipApiCalls = await isApiRateLimited();
     
     if (skipApiCalls) {
       console.log("⚠️ [AI] Skipping API calls due to known quota limits, using fallback directly");
@@ -55,7 +80,7 @@ const reliableWorkoutGenerator = {
       // First try the Pydantic approach (strongest schema validation)
       console.log("🔍 [AI] Trying Pydantic workout generator");
       return await pydanticWorkoutGenerator.generateWorkoutPlan(preferences);
-    } catch (pydanticError) {
+    } catch (pydanticError: any) {
       console.error("❌ [AI] Pydantic workout generator failed:", pydanticError);
       
       // Check if this was a rate limit error
@@ -65,9 +90,7 @@ const reliableWorkoutGenerator = {
                           errorMessage.includes('Too Many Requests');
       
       if (isRateLimit) {
-        console.log("⚠️ [AI] API rate limits detected, enabling skip mode for future requests");
-        // Set a flag to skip API calls for the session (to avoid more rate limit errors)
-        localStorage.setItem('skipApiCalls', 'true');
+        await markApiAsRateLimited();
       }
       
       try {
@@ -94,7 +117,7 @@ const reliableWorkoutGenerator = {
 const reliableMealPlanGenerator = {
   generateMealPlan: async (preferences: any) => {
     // Check if we should skip API calls entirely (useful when we know API quota is exceeded)
-    const skipApiCalls = localStorage.getItem('skipApiCalls') === 'true';
+    const skipApiCalls = await isApiRateLimited();
     
     // Ensure we're requesting complete 7-day plans with unique meals
     const enhancedPreferences = {
@@ -112,7 +135,7 @@ const reliableMealPlanGenerator = {
       // First try the Pydantic approach (strongest schema validation)
       console.log("🔍 [AI] Trying Pydantic meal plan generator");
       return await pydanticMealPlanGenerator.generateMealPlan(enhancedPreferences);
-    } catch (pydanticError) {
+    } catch (pydanticError: any) {
       console.error("❌ [AI] Pydantic meal plan generator failed:", pydanticError);
       
       // Check if this was a rate limit error
@@ -122,9 +145,7 @@ const reliableMealPlanGenerator = {
                           errorMessage.includes('Too Many Requests');
       
       if (isRateLimit) {
-        console.log("⚠️ [AI] API rate limits detected, enabling skip mode for future requests");
-        // Set a flag to skip API calls for the session (to avoid more rate limit errors)
-        localStorage.setItem('skipApiCalls', 'true');
+        await markApiAsRateLimited();
       }
       
       // Last resort: classic generator with fallbacks

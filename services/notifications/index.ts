@@ -10,6 +10,10 @@ const { SchedulableTriggerInputTypes } = Notifications;
 // AsyncStorage keys
 const NOTIFICATION_SETTINGS_KEY = 'fitnessapp:notifications:settings';
 const LAST_WATER_LOG_KEY = 'fitnessapp:water:lastlog';
+const DEVICE_STATE_CHECK_KEY = 'fitnessapp:notifications:devicestate';
+
+// Device state check interval (how often to warn about silent mode)
+const DEVICE_STATE_CHECK_INTERVAL = 7 * 24 * 60 * 60 * 1000; // 1 week
 
 // Reminder Types
 export enum ReminderType {
@@ -96,6 +100,11 @@ export async function setupNotifications() {
     }),
   });
 
+  // Create notification channels for Android
+  if (Platform.OS === 'android') {
+    await createNotificationChannels();
+  }
+
   // Request permissions for notifications
   if (Device.isDevice) {
     const { status: existingStatus } = await Notifications.getPermissionsAsync();
@@ -115,6 +124,53 @@ export async function setupNotifications() {
   }
   
   return false;
+}
+
+/**
+ * Create notification channels for Android
+ */
+async function createNotificationChannels() {
+  // Only create channels on Android
+  if (Platform.OS !== 'android') return;
+
+  try {
+    // Workout reminder channel - High importance with sound
+    await Notifications.setNotificationChannelAsync('workout-reminders', {
+      name: 'Workout Reminders',
+      description: 'Notifications for your scheduled workouts',
+      importance: Notifications.AndroidImportance.HIGH,
+      sound: 'default', // Use default device sound
+      vibrationPattern: [0, 250, 250, 250],
+      lightColor: '#2196F3',
+      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+    });
+
+    // Meal reminder channel - Default importance with sound
+    await Notifications.setNotificationChannelAsync('meal-reminders', {
+      name: 'Meal Reminders',
+      description: 'Notifications for meal tracking and reminders',
+      importance: Notifications.AndroidImportance.DEFAULT,
+      sound: 'default', // Use default device sound
+      vibrationPattern: [0, 250, 250, 250],
+      lightColor: '#4CAF50',
+      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+    });
+
+    // Water reminder channel - Default importance with sound
+    await Notifications.setNotificationChannelAsync('water-reminders', {
+      name: 'Water Reminders',
+      description: 'Reminders to track your water intake',
+      importance: Notifications.AndroidImportance.DEFAULT,
+      sound: 'default', // Use default device sound
+      vibrationPattern: [0, 250, 250, 250],
+      lightColor: '#03A9F4',
+      lockscreenVisibility: Notifications.AndroidNotificationVisibility.PUBLIC,
+    });
+
+    console.log('Notification channels created successfully');
+  } catch (error) {
+    console.error('Error creating notification channels:', error);
+  }
 }
 
 /**
@@ -261,12 +317,51 @@ export async function updateLastWaterLogTime() {
 async function scheduleWaterReminders(settings: NotificationSettings) {
   if (!settings.waterRemindersEnabled) return;
 
-  // Cancel existing water reminders
-  await Notifications.cancelAllScheduledNotificationsAsync();
+  try {
+    // Cancel existing water reminders only (not all notifications)
+    const scheduledNotifications = await Notifications.getAllScheduledNotificationsAsync();
+    const waterReminderIds = scheduledNotifications
+      .filter(notification => 
+        notification.content?.data?.type === ReminderType.WATER ||
+        notification.identifier?.startsWith('water_reminder'))
+      .map(notification => notification.identifier);
+    
+    // Cancel only water reminders
+    for (const id of waterReminderIds) {
+      if (id) await Notifications.cancelScheduledNotificationAsync(id);
+    }
+    
+    // Get current time
+    const now = new Date();
+    const currentHour = now.getHours();
+    
+    // Check if current time is within allowed hours (respect cutoff hour)
+    if (currentHour >= settings.waterCutoffHour || currentHour < 8) {
+      console.log('Outside of water reminder hours, skipping scheduling');
+      return;
+    }
 
-  // Schedule next reminder based on last log time
-  if (await shouldSendWaterReminder()) {
-    await scheduleDailyReminder(ReminderType.WATER, new Date().getHours() + 1, 0);
+    // Schedule next reminder based on last log time and cutoff hour
+    if (await shouldSendWaterReminder()) {
+      // Calculate next reminder time (next hour, but respecting cutoff)
+      const nextHour = currentHour + 1;
+      
+      // Only schedule if next hour is before cutoff
+      if (nextHour < settings.waterCutoffHour) {
+        await scheduleDailyReminder(
+          ReminderType.WATER, 
+          nextHour, 
+          0,
+          undefined,
+          'water-reminders' // Use water channel for Android
+        );
+        console.log(`Water reminder scheduled for ${nextHour}:00`);
+      } else {
+        console.log('Next water reminder would be after cutoff time, skipping');
+      }
+    }
+  } catch (error) {
+    console.error('Error scheduling water reminders:', error);
   }
 }
 
@@ -291,7 +386,13 @@ export async function scheduleAllReminders(profile?: ProfileData) {
     // Schedule workout reminders if enabled
     if (settings.workoutRemindersEnabled) {
       for (const time of settings.workoutReminderTimes) {
-        await scheduleDailyReminder(ReminderType.WORKOUT, time.hour, time.minute);
+        await scheduleDailyReminder(
+          ReminderType.WORKOUT, 
+          time.hour, 
+          time.minute, 
+          undefined,
+          Platform.OS === 'android' ? 'workout-reminders' : undefined
+        );
       }
     }
     
@@ -313,7 +414,13 @@ export async function scheduleAllReminders(profile?: ProfileData) {
       for (let i = 0; i < settings.mealReminderTimes.length; i++) {
         const time = settings.mealReminderTimes[i];
         const mealName = mealNames[i] || undefined;
-        await scheduleDailyReminder(ReminderType.MEAL, time.hour, time.minute, mealName);
+        await scheduleDailyReminder(
+          ReminderType.MEAL, 
+          time.hour, 
+          time.minute, 
+          mealName,
+          Platform.OS === 'android' ? 'meal-reminders' : undefined
+        );
       }
     }
     
@@ -433,7 +540,8 @@ async function scheduleDailyReminder(
   type: ReminderType, 
   hour: number, 
   minute: number, 
-  mealName?: string
+  mealName?: string,
+  channelId?: string
 ) {
   const identifier = getNotificationIdentifier(type, hour, minute);
   
@@ -442,6 +550,7 @@ async function scheduleDailyReminder(
     title: getNotificationTitle(type),
     body: getNotificationBody(type, mealName),
     data: { type },
+    ...(Platform.OS === 'android' && channelId ? { channelId } : {})
   };
 
   // Get seconds until the specified time
@@ -532,6 +641,72 @@ export async function hasLoggedWaterRecently(): Promise<boolean> {
   return hoursSinceLastLog < 1;
 }
 
+/**
+ * Check device notification state (silent mode, DND)
+ * Returns information about potential notification delivery issues
+ */
+export async function checkDeviceNotificationState(): Promise<{
+  hasIssues: boolean;
+  silentMode?: boolean;
+  doNotDisturb?: boolean;
+  message?: string;
+}> {
+  const result = {
+    hasIssues: false,
+    silentMode: undefined as boolean | undefined,
+    doNotDisturb: undefined as boolean | undefined,
+    message: undefined as string | undefined
+  };
+
+  try {
+    // Last time we checked device state
+    const lastCheck = await AsyncStorage.getItem(DEVICE_STATE_CHECK_KEY);
+    const now = Date.now();
+    
+    // Only check once per interval to avoid excessive warnings
+    if (lastCheck && (now - parseInt(lastCheck)) < DEVICE_STATE_CHECK_INTERVAL) {
+      return result;
+    }
+    
+    // Check if we can detect silent mode (iOS only)
+    if (Platform.OS === 'ios') {
+      try {
+        // Note: This requires the expo-av package
+        // We'll check if it's available and only use it if it is
+        // This is a simplified version - in a real app, you'd properly import the package
+        const { Audio } = require('expo-av');
+        const { sound } = await Audio.Sound.createAsync(
+          require('../../assets/sounds/silent-check.mp3'),
+          { shouldPlay: false }
+        );
+        
+        if (sound) {
+          const volume = await sound.getVolumeAsync();
+          sound.unloadAsync();
+          
+          // If volume is 0, device might be in silent mode
+          if (volume === 0) {
+            result.silentMode = true;
+            result.hasIssues = true;
+            result.message = 'Your device appears to be in silent mode. Notification sounds may not play.';
+          }
+        }
+      } catch (error) {
+        // Silent failure - this is an optional feature
+        console.log('Could not check for silent mode:', error);
+      }
+    }
+    
+    // Store that we checked
+    await AsyncStorage.setItem(DEVICE_STATE_CHECK_KEY, now.toString());
+    
+    return result;
+  } catch (error) {
+    console.error('Error checking device notification state:', error);
+    return result;
+  }
+}
+
 // Export a default object with all notification functions
 export default {
   setupNotifications,
@@ -544,5 +719,6 @@ export default {
   getReminderEnabledStatus,
   hasLoggedWaterRecently,
   updateLastWaterLogTime,
+  checkDeviceNotificationState,
   ReminderType,
 }; 

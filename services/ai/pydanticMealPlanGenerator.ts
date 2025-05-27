@@ -152,6 +152,10 @@ export class PydanticMealPlanGenerator {
     let attempt = 0;
     let lastError: Error | null = null;
     
+    // Track generation start time for detailed logging
+    const generationStartTime = Date.now();
+    console.log(`[PydanticMealPlanGenerator] Generation started at ${new Date(generationStartTime).toISOString()}`);
+    
     while (attempt < maxAttempts) {
       attempt++;
       console.log(`[PydanticMealPlanGenerator] Generation attempt ${attempt}/${maxAttempts}`);
@@ -223,7 +227,20 @@ export class PydanticMealPlanGenerator {
         
         For each day, create a completely different set of recipes.`;
         
-        // Generate content with Gemini
+        // Create AbortController for timeout handling
+        const controller = new AbortController();
+        const timeoutMs = 60000; // 60-second timeout
+        const timeoutId = setTimeout(() => {
+          controller.abort();
+          console.log(`[PydanticMealPlanGenerator] Request timed out after ${timeoutMs/1000} seconds`);
+        }, timeoutMs);
+        
+        console.log(`[PydanticMealPlanGenerator] Setting API request timeout to ${timeoutMs/1000} seconds`);
+        
+        // Generate content with Gemini using AbortController
+        const requestStartTime = Date.now();
+        console.log(`[PydanticMealPlanGenerator] API request started at ${new Date(requestStartTime).toISOString()}`);
+        
         const result = await this.generativeModel.generateContent({
           contents: [{ role: "user", parts: [{ text: prompt }] }],
           generationConfig: {
@@ -232,7 +249,13 @@ export class PydanticMealPlanGenerator {
             topK: 40,
             maxOutputTokens: 8192,
           }
-        });
+        }, { signal: controller.signal });
+        
+        // Clear timeout since request completed successfully
+        clearTimeout(timeoutId);
+        
+        const requestDuration = Date.now() - requestStartTime;
+        console.log(`[PydanticMealPlanGenerator] API request completed in ${requestDuration/1000} seconds`);
         
         // Get the text response
         let text = '';
@@ -247,86 +270,51 @@ export class PydanticMealPlanGenerator {
         console.log(`[PydanticMealPlanGenerator] Raw response length: ${text.length} characters`);
         console.log(`[PydanticMealPlanGenerator] Response preview: ${text.substring(0, 200)}...`);
         
-        // Parse JSON from text
-        let jsonData;
+        // Extract the JSON content using advanced techniques
         try {
-          // First attempt with direct parsing
-          jsonData = JSON.parse(text);
-        } catch (parseError) {
-          console.warn("[PydanticMealPlanGenerator] Direct JSON parsing failed, attempting extraction");
-          
-          // Try to extract JSON using regex
-          const jsonMatch = text.match(/\{[\s\S]*\}/);
-          if (jsonMatch) {
-            try {
-              jsonData = JSON.parse(jsonMatch[0]);
-            } catch (extractError) {
-              console.error("[PydanticMealPlanGenerator] JSON extraction failed:", extractError);
-              throw new Error("Failed to parse valid JSON from response");
-            }
-          } else {
-            throw new Error("No valid JSON found in response");
-          }
-        }
-        
-        // Apply minimum requirements pre-validation
-        const processedData = this.ensureMinimumRequirements(jsonData);
-        
-        // Validate with Zod schema
-        try {
-          const validatedPlan = MealPlanSchema.parse(processedData);
-          console.log("[PydanticMealPlanGenerator] Successfully validated meal plan schema");
-          
-          // Calculate true calories from recipes
-          const adjustedPlan = this.standardizeMealPlan(validatedPlan);
-          
-          // Validate calorie compliance
-          const calorieTarget = preferences.calorieTarget || 2000;
-          const isCalorieCompliant = this.validateCalorieCompliance(adjustedPlan, calorieTarget);
-          
-          // Check for full week coverage if required
-          if (preferences.requireFullWeek && adjustedPlan.weeklyPlan.length < 7) {
-            console.warn(`[PydanticMealPlanGenerator] Plan only has ${adjustedPlan.weeklyPlan.length} days but needs 7 days`);
+          // First try simple JSON parsing
+          try {
+            const jsonData = JSON.parse(text);
+            console.log("[PydanticMealPlanGenerator] Successfully parsed JSON");
+            return this.validateAndStandardizeMealPlan(jsonData, preferences);
+          } catch (parseError) {
+            console.log("[PydanticMealPlanGenerator] Direct JSON parsing failed, attempting extraction");
             
-            // Add missing days with unique recipes
-            const updatedPlan = this.ensureFullWeekCoverage(adjustedPlan, preferences);
-            console.log("[PydanticMealPlanGenerator] Added missing days for full week coverage");
-            
-            // Adjust portions for calorie target if needed
-            if (!isCalorieCompliant) {
-              const calorieAdjustedPlan = this.adjustPortionsToTarget(updatedPlan, calorieTarget);
-              return this.finalizeMealPlan(calorieAdjustedPlan);
+            // Try to extract JSON from text (in case there's markdown or other content)
+            const jsonMatch = text.match(/```(?:json)?([\s\S]*?)```/);
+            if (jsonMatch && jsonMatch[1]) {
+              try {
+                const jsonText = jsonMatch[1].trim();
+                const jsonData = JSON.parse(jsonText);
+                console.log("[PydanticMealPlanGenerator] Successfully extracted and parsed JSON from markdown");
+                return this.validateAndStandardizeMealPlan(jsonData, preferences);
+              } catch (extractError) {
+                console.error("[PydanticMealPlanGenerator] JSON extraction failed:", extractError);
+                throw new Error("Failed to extract valid JSON from response");
+              }
             }
             
-            return this.finalizeMealPlan(updatedPlan);
+            // If we're here, throw the original parse error
+            console.error("[PydanticMealPlanGenerator] JSON parsing failed:", parseError);
+            throw new Error("Failed to parse response as JSON");
           }
-          
-          // Check for unique meals across days if required
-          if (preferences.requireUniqueMeals && !this.validateUniqueMeals(adjustedPlan)) {
-            console.warn("[PydanticMealPlanGenerator] Duplicate meals detected across days, making them unique");
-            const uniqueMealsPlan = this.ensureUniqueMeals(adjustedPlan);
+        } catch (error) {
+          // Handle API errors specifically for rate limits
+          const errorMessage = error.toString();
+          if (errorMessage.includes('429') || 
+              errorMessage.includes('quotaExceeded') || 
+              errorMessage.includes('Resource has been exhausted') ||
+              errorMessage.includes('Too Many Requests') ||
+              errorMessage.includes('rate limit')) {
             
-            // Adjust portions for calorie target if needed
-            if (!isCalorieCompliant) {
-              const calorieAdjustedPlan = this.adjustPortionsToTarget(uniqueMealsPlan, calorieTarget);
-              return this.finalizeMealPlan(calorieAdjustedPlan);
-            }
+            console.error("[PydanticMealPlanGenerator] API rate limit detected:", errorMessage);
             
-            return this.finalizeMealPlan(uniqueMealsPlan);
+            // Create better error message for rate limit to be caught by parent
+            throw new Error("API_RATE_LIMITED: Gemini API quota exceeded - 429 Too Many Requests");
           }
           
-          if (!isCalorieCompliant) {
-            console.warn("[PydanticMealPlanGenerator] Calorie target not met, adjusting portions");
-            const calorieAdjustedPlan = this.adjustPortionsToTarget(adjustedPlan, calorieTarget);
-            return this.finalizeMealPlan(calorieAdjustedPlan);
-          }
-          
-          // Return the validated plan
-          return this.finalizeMealPlan(adjustedPlan);
-        } catch (validationError) {
-          console.error("[PydanticMealPlanGenerator] Validation error:", validationError);
-          lastError = validationError as Error;
-          // Continue to next attempt if validation fails
+          // Re-throw other errors
+          throw error;
         }
       } catch (error) {
         console.error(`[PydanticMealPlanGenerator] API error on attempt ${attempt}:`, error);
@@ -335,17 +323,39 @@ export class PydanticMealPlanGenerator {
         // Check if we should retry based on error type
         const errorMessage = (error as Error).message?.toLowerCase() || '';
         const isRateLimit = errorMessage.includes('rate') && errorMessage.includes('limit');
+        const isTimeout = errorMessage.includes('abort') || errorMessage.includes('timeout');
         
-        if (isRateLimit && attempt < maxAttempts) {
-          const backoffSeconds = Math.pow(2, attempt) * 1;
-          console.log(`[PydanticMealPlanGenerator] Rate limit hit, backing off for ${backoffSeconds} seconds...`);
+        // Clear timeout if it was an abort error (we triggered it)
+        if (isTimeout) {
+          clearTimeout(timeoutId);
+          console.log(`[PydanticMealPlanGenerator] Request aborted due to timeout`);
+          
+          // For timeouts, we'll use a longer backoff period
+          if (attempt < maxAttempts) {
+            const timeoutBackoffSeconds = Math.pow(2, attempt) * 5 + Math.random() * 3;
+            console.log(`[PydanticMealPlanGenerator] Timeout occurred, backing off for ${timeoutBackoffSeconds.toFixed(1)} seconds...`);
+            await new Promise(resolve => setTimeout(resolve, timeoutBackoffSeconds * 1000));
+          }
+        } else if (isRateLimit && attempt < maxAttempts) {
+          // Use improved exponential backoff with randomization for rate limits
+          const backoffSeconds = Math.pow(2, attempt) * 3 + Math.random() * 2;
+          console.log(`[PydanticMealPlanGenerator] Rate limit hit, backing off for ${backoffSeconds.toFixed(1)} seconds...`);
           await new Promise(resolve => setTimeout(resolve, backoffSeconds * 1000));
         }
       }
     }
     
-    console.error("[PydanticMealPlanGenerator] All primary generation attempts failed");
-    throw lastError || new Error("Failed to generate meal plan after multiple attempts");
+    const totalDuration = (Date.now() - generationStartTime) / 1000;
+    console.error(`[PydanticMealPlanGenerator] All primary generation attempts failed after ${totalDuration.toFixed(1)} seconds`);
+    
+    // Create a more descriptive error for the UI layer
+    if (lastError && lastError.message.includes('timeout')) {
+      throw new Error("API_TIMEOUT: The meal plan generation timed out. Please try again later.");
+    } else if (lastError && lastError.message.includes('rate limit')) {
+      throw new Error("API_RATE_LIMITED: You've reached the usage limit. Please try again in a few minutes.");
+    } else {
+      throw lastError || new Error("Failed to generate meal plan after multiple attempts");
+    }
   }
   
   private finalizeMealPlan(plan: MealPlan): MealPlan {
@@ -707,5 +717,58 @@ export class PydanticMealPlanGenerator {
     }
     
     return result;
+  }
+
+  private validateAndStandardizeMealPlan(json: any, preferences: UserDietPreferences): MealPlan {
+    // Validate the meal plan
+    const validatedPlan = MealPlanSchema.parse(json);
+    console.log("[PydanticMealPlanGenerator] Successfully validated meal plan schema");
+    
+    // Calculate true calories from recipes
+    const adjustedPlan = this.standardizeMealPlan(validatedPlan);
+    
+    // Validate calorie compliance
+    const calorieTarget = preferences.calorieTarget || 2000;
+    const isCalorieCompliant = this.validateCalorieCompliance(adjustedPlan, calorieTarget);
+    
+    // Check for full week coverage if required
+    if (preferences.requireFullWeek && adjustedPlan.weeklyPlan.length < 7) {
+      console.warn(`[PydanticMealPlanGenerator] Plan only has ${adjustedPlan.weeklyPlan.length} days but needs 7 days`);
+      
+      // Add missing days with unique recipes
+      const updatedPlan = this.ensureFullWeekCoverage(adjustedPlan, preferences);
+      console.log("[PydanticMealPlanGenerator] Added missing days for full week coverage");
+      
+      // Adjust portions for calorie target if needed
+      if (!isCalorieCompliant) {
+        const calorieAdjustedPlan = this.adjustPortionsToTarget(updatedPlan, calorieTarget);
+        return this.finalizeMealPlan(calorieAdjustedPlan);
+      }
+      
+      return this.finalizeMealPlan(updatedPlan);
+    }
+    
+    // Check for unique meals across days if required
+    if (preferences.requireUniqueMeals && !this.validateUniqueMeals(adjustedPlan)) {
+      console.warn("[PydanticMealPlanGenerator] Duplicate meals detected across days, making them unique");
+      const uniqueMealsPlan = this.ensureUniqueMeals(adjustedPlan);
+      
+      // Adjust portions for calorie target if needed
+      if (!isCalorieCompliant) {
+        const calorieAdjustedPlan = this.adjustPortionsToTarget(uniqueMealsPlan, calorieTarget);
+        return this.finalizeMealPlan(calorieAdjustedPlan);
+      }
+      
+      return this.finalizeMealPlan(uniqueMealsPlan);
+    }
+    
+    if (!isCalorieCompliant) {
+      console.warn("[PydanticMealPlanGenerator] Calorie target not met, adjusting portions");
+      const calorieAdjustedPlan = this.adjustPortionsToTarget(adjustedPlan, calorieTarget);
+      return this.finalizeMealPlan(calorieAdjustedPlan);
+    }
+    
+    // Return the validated plan
+    return this.finalizeMealPlan(adjustedPlan);
   }
 } 

@@ -21,7 +21,7 @@ import {
   useTheme,
   Divider 
 } from 'react-native-paper';
-import { router, useLocalSearchParams } from 'expo-router';
+import { router, useLocalSearchParams, useRouter } from 'expo-router';
 import * as ImagePicker from 'expo-image-picker';
 import { bodyAnalysisService, BodyPhoto, UserPhysicalDetails, BodyAnalysisResult, FallbackBodyAnalysis } from '../../services/ai';
 import { useProfile } from '../../contexts/ProfileContext';
@@ -45,12 +45,13 @@ const { width, height } = Dimensions.get('window');
  * Redesigned with premium UI elements and animations
  */
 export default function BodyAnalysisScreen() {
+  const router = useRouter();
   const params = useLocalSearchParams<{
-    age: string;
-    gender: string;
-    height: string;
-    weight: string;
-    fitnessGoal: string;
+    age?: string;
+    gender?: string;
+    height?: string;
+    weight?: string;
+    fitnessGoal?: string;
     returnToReview?: string;
     returnToProgress?: string;
   }>();
@@ -66,6 +67,7 @@ export default function BodyAnalysisScreen() {
   const [error, setError] = useState<string | null>(null);
   const [analyzeProgress, setAnalyzeProgress] = useState(0);
   const [showResults, setShowResults] = useState(false);
+  const [loading, setLoading] = useState(false);
   
   // Animation values
   const fadeAnim = useRef(new Animated.Value(0)).current;
@@ -348,13 +350,35 @@ export default function BodyAnalysisScreen() {
   
   // Function to skip analysis and continue
   const skipAnalysis = async () => {
-    // Proceed to next step in onboarding
-    if (params?.returnToReview === 'true') {
-      router.push('/(onboarding)/review');
-    } else if (params?.returnToProgress === 'true') {
-      router.push('/(tabs)/progress');
-    } else {
-      router.push('/(onboarding)/review');
+    setLoading(true);
+    console.log("User chose to skip body analysis");
+    
+    try {
+      // Update the profile to set current_onboarding_step to workout-preferences
+      await updateProfile({
+        current_onboarding_step: 'workout-preferences'
+      });
+      
+      console.log("Profile updated successfully after skipping body analysis");
+      
+      // Then navigate
+      if (params?.returnToReview === 'true') {
+        console.log("Returning to review page after skipping");
+        router.push('/(onboarding)/review');
+      } else if (params?.returnToProgress === 'true') {
+        console.log("Returning to progress page after skipping");
+        router.push('/(tabs)/progress');
+      } else {
+        console.log("Navigating to workout preferences after skipping");
+        router.push('/(onboarding)/workout-preferences');
+      }
+    } catch (error) {
+      console.error('Error updating onboarding step:', error);
+      Alert.alert('Error', 'There was a problem skipping this step. Please try again.');
+      // Still try to navigate even if update fails
+      router.push('/(onboarding)/workout-preferences');
+    } finally {
+      setLoading(false);
     }
   };
   
@@ -693,11 +717,15 @@ export default function BodyAnalysisScreen() {
                     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
                     skipAnalysis();
                   }}
-                  disabled={isAnalyzing}
+                  disabled={isAnalyzing || loading}
                 >
-                  <StyledText variant="bodyMedium" color={colors.text.secondary} style={styles.skipText}>
-                    Skip for now
-                  </StyledText>
+                  {loading ? (
+                    <ActivityIndicator color={colors.text.secondary} size="small" />
+                  ) : (
+                    <StyledText variant="bodyMedium" color={colors.text.secondary} style={styles.skipText}>
+                      Skip for now
+                    </StyledText>
+                  )}
                 </TouchableOpacity>
               </View>
 

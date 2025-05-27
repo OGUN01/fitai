@@ -8,6 +8,14 @@ import { getUserWeight, getTargetWeight, synchronizeWeightFields } from '../util
 import { filterToDatabaseColumns, feetToCm, lbsToKg, DATABASE_COLUMNS } from '../utils/profileUtils';
 import { synchronizeDietPreferences } from '../utils/profileSynchronizer';
 import { updateOnboardingStep } from '../utils/onboardingTracker';
+import { isSyncInProgress, getSyncStatus } from '../utils/syncLocalData';
+import { isOnboardingComplete, markOnboardingComplete, repairOnboardingStatus } from '../utils/onboardingPersistence';
+import persistenceAdapter from '../utils/persistenceAdapter';
+import StorageKeys from '../utils/storageKeys';
+import { WorkoutCompletion, MealCompletion } from '../types/tracking';
+
+// Constants for local storage keys
+const LOCAL_PROFILE_KEY = 'local_profile';
 
 /**
  * Deep merge utility function since we're still having issues with the import
@@ -20,17 +28,19 @@ function deepMerge<T extends Record<string, any>>(
   
   if (isObject(target) && isObject(source)) {
     Object.keys(source).forEach(key => {
-      if (isObject(source[key])) {
-        // If property doesn't exist in target, create it
-        if (!(key in target)) {
-          Object.assign(output, { [key]: source[key] });
+      const sourceValue = source[key]; // Store source[key] to avoid repeated lookups
+      if (isObject(sourceValue)) {
+        // If property doesn't exist in target or target property is not an object, assign source directly
+        if (!(key in target) || !isObject(target[key])) {
+          Object.assign(output, { [key]: sourceValue });
         } else {
-          // If property exists in target and is an object, merge it
-          output[key] = deepMerge(target[key], source[key]);
+          // If property exists in target and both are objects, merge them recursively
+          // We know sourceValue is an object here, and target[key] is checked above
+          output[key] = deepMerge(target[key], sourceValue as Partial<T[Extract<keyof T, string>]>);
         }
       } else {
-        // For non-object properties, simply overwrite with source value
-        Object.assign(output, { [key]: source[key] });
+        // For non-object properties (including null, undefined, primitives, arrays), simply overwrite with source value
+        Object.assign(output, { [key]: sourceValue });
       }
     });
   }
@@ -72,17 +82,17 @@ function sanitizeForDatabase(data: Record<string, any>): Record<string, any> {
   return filteredData;
 }
 
-// Define the context type
-export type ProfileContextType = {
+// Define the shape of our ProfileContext
+interface ProfileContextType {
   profile: UserProfile | null;
   loading: boolean;
   error: string | null;
-  updateProfile: (updates: Partial<UserProfile>) => Promise<void>;
+  updateProfile: (updatedFields: Partial<UserProfile>) => Promise<void>;
   refreshProfile: (forceRefresh?: boolean) => Promise<UserProfile | null>;
-  getCurrentOnboardingStep: () => string;
+  getCurrentOnboardingStep: () => Promise<string>;
   completeOnboarding: () => Promise<void>;
   checkAndRouteUser: () => Promise<void>;
-};
+}
 
 // Create the context with default values
 const ProfileContext = createContext<ProfileContextType>({
@@ -91,7 +101,7 @@ const ProfileContext = createContext<ProfileContextType>({
   error: null,
   updateProfile: async () => {},
   refreshProfile: async () => null,
-  getCurrentOnboardingStep: () => '',
+  getCurrentOnboardingStep: async () => '',
   completeOnboarding: async () => {},
   checkAndRouteUser: async () => {},
 });
@@ -106,7 +116,7 @@ export const ProfileProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const [error, setError] = useState<string | null>(null);
   const { user } = useAuth();
 
-  // Helper function to get the profile from storage
+  // Helper function to get the profile from storage for authenticated users
   const getProfileFromStorage = async () => {
     try {
       if (!user) return null;
@@ -114,6 +124,17 @@ export const ProfileProvider: React.FC<{ children: React.ReactNode }> = ({ child
       return cachedProfile ? JSON.parse(cachedProfile) : null;
     } catch (error) {
       console.error("Error getting profile from storage:", error);
+      return null;
+    }
+  };
+
+  // New helper function to get local profile for non-authenticated users
+  const getLocalProfileFromStorage = async () => {
+    try {
+      const localProfileData = await AsyncStorage.getItem(LOCAL_PROFILE_KEY);
+      return localProfileData ? JSON.parse(localProfileData) : null;
+    } catch (error) {
+      console.error("Error getting local profile from storage:", error);
       return null;
     }
   };
@@ -152,7 +173,7 @@ export const ProfileProvider: React.FC<{ children: React.ReactNode }> = ({ child
     return processedData as UserProfile;
   };
 
-  // Function to create a new profile
+  // Function to create a new profile for authenticated users
   const createProfile = async (): Promise<UserProfile | null> => {
     if (!user) {
       console.error("Cannot create profile: No authenticated user");
@@ -221,20 +242,122 @@ export const ProfileProvider: React.FC<{ children: React.ReactNode }> = ({ child
     }
   };
 
-  // Function to fetch profile from Supabase
+  // New function to create a local profile for non-authenticated users
+  const createLocalProfile = async (): Promise<UserProfile | null> => {
+    try {
+      console.log("Creating new local profile");
+      
+      // Create a default local profile
+      const localProfile: UserProfile = {
+        id: 'local_user', // Use a fixed ID for local user
+        diet_preferences: {
+          meal_frequency: 3,
+          diet_type: 'balanced',
+          allergies: [],
+          excluded_foods: [],
+          favorite_foods: [],
+          country_region: "us"
+        },
+        workout_preferences: {
+          preferred_days: ['monday', 'wednesday', 'friday'],
+          workout_duration: 30
+        },
+        country_region: "us",
+        has_completed_onboarding: false,
+        has_completed_local_onboarding: false, // New field for local mode
+        current_onboarding_step: 'welcome'
+      } as UserProfile;
+      
+      // Ensure data is synchronized between nested objects and root properties
+      const synchronizedProfile = synchronizeProfileData(localProfile);
+      
+      // Save to AsyncStorage
+      try {
+        await AsyncStorage.setItem(LOCAL_PROFILE_KEY, JSON.stringify(synchronizedProfile));
+        console.log("Local profile created and saved to AsyncStorage");
+      } catch (storageError) {
+        console.error("Error saving local profile:", storageError);
+        throw storageError;
+      }
+      
+      setProfile(synchronizedProfile);
+      return synchronizedProfile;
+    } catch (error) {
+      console.error("Unexpected error creating local profile:", error);
+      setError("An unexpected error occurred creating your profile");
+      return null;
+    }
+  };
+
+  // Function to fetch profile from Supabase for authenticated users
   const fetchProfile = async (forceRefresh = false): Promise<UserProfile | null> => {
     setLoading(true);
     
     try {
-      // If no user is logged in, return null
+      // If no user is logged in, try to get local profile
       if (!user) {
-        console.error("Cannot fetch profile: No authenticated user");
-        setLoading(false);
-        return null;
+        console.log("No authenticated user, switching to local profile");
+        const localProfile = await getLocalProfileFromStorage();
+        
+        if (localProfile) {
+          console.log("Local profile found:", {
+            has_completed_local_onboarding: localProfile.has_completed_local_onboarding,
+            current_step: localProfile.current_onboarding_step
+          });
+          
+          // Ensure the has_completed_local_onboarding flag is set correctly
+          // This is critical to prevent showing onboarding again on app restart
+          if (localProfile.current_onboarding_step === 'completed' && !localProfile.has_completed_local_onboarding) {
+            console.log("Fixing local profile: Setting has_completed_local_onboarding to true");
+            localProfile.has_completed_local_onboarding = true;
+            await AsyncStorage.setItem(LOCAL_PROFILE_KEY, JSON.stringify(localProfile));
+          }
+          
+          // Fetch completion data for local user
+          try {
+            const completedWorkouts = await persistenceAdapter.getItem<WorkoutCompletion[]>(StorageKeys.COMPLETED_WORKOUTS, []);
+            const completedMeals = await persistenceAdapter.getItem<MealCompletion[]>(StorageKeys.MEALS, []);
+
+            console.log(`Fetched local completions: ${completedWorkouts?.length || 0} workouts, ${completedMeals?.length || 0} meals`);
+
+            // Add completion data to the profile object
+            localProfile.completedWorkouts = completedWorkouts || [];
+            localProfile.completedMeals = completedMeals || [];
+
+          } catch (completionError) {
+            console.error("Error fetching local completion data:", completionError);
+            // Assign empty arrays if fetching fails to avoid breaking the profile structure
+            localProfile.completedWorkouts = [];
+            localProfile.completedMeals = [];
+          }
+          
+          // Ensure localProfileData is a full UserProfile before processing
+          const processedData = processProfileData(localProfile);
+          const profileData = synchronizeProfileData(processedData); // Ensure synchronization
+          console.log('[ProfileContext] Setting local profile state:', JSON.stringify(profileData, null, 2));
+          setProfile(profileData);
+          setLoading(false);
+          return profileData;
+        } else {
+          console.log("No local profile found, creating new one");
+          const newLocalProfile = await createLocalProfile();
+          setLoading(false);
+          return newLocalProfile;
+        }
       }
       
       console.log("🔍 FETCH PROFILE - Fetching profile for user:", user.id);
       console.log("🔍 FETCH PROFILE - Force refresh:", forceRefresh);
+      
+      // Check if data synchronization is in progress - if so, delay profile fetch
+      const syncInProgress = await isSyncInProgress();
+      if (syncInProgress && !forceRefresh) {
+        console.log("🔍 FETCH PROFILE - Sync in progress, waiting for completion");
+        // Wait and then try again
+        setLoading(false);
+        setTimeout(() => refreshProfile(forceRefresh), 1000);
+        return null;
+      }
       
       // Try getting from AsyncStorage first (only if not forcing refresh)
       let cachedProfile: UserProfile | null = null;
@@ -247,10 +370,44 @@ export const ProfileProvider: React.FC<{ children: React.ReactNode }> = ({ child
             cachedProfile = JSON.parse(cachedData) as UserProfile;
             console.log("🔍 FETCH PROFILE - Found cached profile with country_region:", cachedProfile.country_region);
             console.log("🔍 FETCH PROFILE - Diet preferences country_region:", cachedProfile.diet_preferences?.country_region);
+            console.log("🔍 FETCH PROFILE - Has meal plans:", !!cachedProfile.meal_plans);
+            
+            // When login just happened, we've already synced data to server
+            // Check for 'recently_synced' flag that might be set by AuthContext
+            const recentlySynced = await AsyncStorage.getItem(`recently_synced:${user.id}`);
+            if (recentlySynced) {
+              console.log("🔍 FETCH PROFILE - Using cached profile due to recent sync");
+              
+              // Clear the sync flag after using it
+              await AsyncStorage.removeItem(`recently_synced:${user.id}`);
+              
+              // Check if there were any sync errors
+              const lastSyncErrorJson = await AsyncStorage.getItem('last_sync_error');
+              if (lastSyncErrorJson) {
+                const syncError = JSON.parse(lastSyncErrorJson);
+                console.warn("🔍 FETCH PROFILE - Note: Last sync had errors:", syncError.message);
+                // We still use the cached profile even with sync errors
+              }
+              
+              setProfile(cachedProfile);
+              setLoading(false);
+              return cachedProfile;
+            }
           }
         } catch (error) {
           console.error("Error retrieving cached profile:", error);
         }
+      }
+      
+      // Get last sync status to check for issues
+      try {
+        const syncStatus = await getSyncStatus(user.id);
+        if (syncStatus && !syncStatus.success) {
+          console.warn("🔍 FETCH PROFILE - Last sync failed:", syncStatus.error);
+          // Continue with profile fetch despite sync issues
+        }
+      } catch (error) {
+        console.error("Error checking sync status:", error);
       }
       
       // Return cached profile if available and not forcing refresh
@@ -352,10 +509,38 @@ export const ProfileProvider: React.FC<{ children: React.ReactNode }> = ({ child
     try {
       console.log("updateProfile called with:", JSON.stringify(updatedFields, null, 2));
       
+      // LOCAL MODE: Handle updates for non-authenticated users
       if (!user) {
-        console.error("Cannot update profile: No authenticated user");
+        setLoading(true);
+        console.log("Updating local profile (non-authenticated mode)");
+        
+        // Get the current local profile or create a new one
+        const currentLocalProfile = await getLocalProfileFromStorage() || await createLocalProfile();
+        if (!currentLocalProfile) {
+          throw new Error("Failed to get or create local profile");
+        }
+        
+        // Merge the current profile with updates
+        const mergedProfile = deepMerge(currentLocalProfile, updatedFields);
+        
+        // Process unit conversions and ensure all fields
+        const processedProfile = processProfileData(mergedProfile);
+        
+        // Synchronize data between nested objects and root properties
+        const synchronizedProfile = synchronizeProfileData(processedProfile);
+        
+        // Save to AsyncStorage
+        await AsyncStorage.setItem(LOCAL_PROFILE_KEY, JSON.stringify(synchronizedProfile));
+        
+        // Update local state
+        setProfile(synchronizedProfile);
+        console.log("Local profile updated successfully");
+        setLoading(false);
         return;
       }
+      
+      // AUTHENTICATED MODE: Continue with the existing update logic
+      setLoading(true);
       
       // Start with the current profile or an empty object if profile doesn't exist
       const currentProfile = profile || {
@@ -378,91 +563,67 @@ export const ProfileProvider: React.FC<{ children: React.ReactNode }> = ({ child
       // make sure it gets saved regardless of database column filtering
       const explicityCompletingOnboarding = updatedFields.has_completed_onboarding === true;
       
-      // Special handling for country_region - ensure it's synced
-      if (updatedFields.country_region && (!updatedFields.diet_preferences || !updatedFields.diet_preferences.country_region)) {
-        console.log("Ensuring country_region sync - adding to diet_preferences");
-        updatedFields.diet_preferences = {
-          ...(updatedFields.diet_preferences || {}),
-          ...(currentProfile.diet_preferences || {
-            meal_frequency: 3,
-            diet_type: 'balanced',
-            allergies: [],
-            excluded_foods: [],
-            favorite_foods: []
-          }),
-          country_region: updatedFields.country_region
-        };
-      } else if (!updatedFields.country_region && updatedFields.diet_preferences?.country_region) {
-        console.log("Ensuring country_region sync - adding to root from diet_preferences");
-        updatedFields.country_region = updatedFields.diet_preferences.country_region;
+      // Preserve current onboarding step
+      let currentStep = null;
+      if (updatedFields.current_onboarding_step) {
+        currentStep = updatedFields.current_onboarding_step;
+        console.log(`Updating onboarding step to: ${currentStep}`);
       }
       
-      // Create a merged profile with the updated fields
-      const mergedProfile = {
-        ...currentProfile,
-        ...updatedFields,
-      };
+      // Deep merge the current profile with the updated fields
+      const mergedProfile = deepMerge(currentProfile, updatedFields);
       
-      // Always ensure the diet_preferences object exists with required fields
-      if (!mergedProfile.diet_preferences) {
-        mergedProfile.diet_preferences = {
-          meal_frequency: 3,
-          diet_type: 'balanced',
-          allergies: [],
-          excluded_foods: [],
-          favorite_foods: []
-        };
+      // If we're updating workout preferences, make sure they are properly synced
+      if (updatedFields.workout_preferences || 
+          updatedFields.fitness_level || 
+          updatedFields.fitness_goals) {
+        console.log("Synchronizing workout preferences");
+        synchronizeWorkoutPreferences(mergedProfile);
       }
       
-      // Synchronize data and update onboarding step
-      const synchronizedProfile = synchronizeProfileData(mergedProfile);
+      // If we're updating diet preferences, make sure they are properly synced
+      if (updatedFields.diet_preferences || 
+          updatedFields.diet_type || 
+          updatedFields.allergies) {
+        console.log("Synchronizing diet preferences");
+        synchronizeDietPreferences(mergedProfile);
+      }
       
-      // Process any unit conversions if needed (original function)
-      const processedProfile = processUnitConversions(synchronizedProfile, updatedFields);
+      // Synchronize weight fields between body_analysis and root properties
+      synchronizeWeightFields(mergedProfile, 0);
       
-      // Sanitize data to only include actual database columns
-      const sanitizedData = sanitizeForDatabase(processedProfile);
+      // Filter the profile to only include fields that exist in the database schema
+      const dbSafeProfile = sanitizeForDatabase(mergedProfile);
       
-      // CRITICAL FIX: Ensure onboarding completion flag is preserved
+      // Extra protection for critical fields
       if (explicityCompletingOnboarding) {
-        console.log('FORCING has_completed_onboarding=true into sanitized data');
-        sanitizedData.has_completed_onboarding = true;
-        sanitizedData.current_onboarding_step = 'completed';
+        console.log("Explicitly ensuring has_completed_onboarding=true is included");
+        dbSafeProfile.has_completed_onboarding = true;
       }
       
-      // Special handling for country_region since it's giving us trouble
-      // If the original update had a country_region, force it into the sanitized data
-      // regardless of database column filtering
-      if (updatedFields.country_region && typeof updatedFields.country_region === 'string') {
-        console.log('FORCING country_region into sanitized data:', updatedFields.country_region);
-        sanitizedData.country_region = updatedFields.country_region;
-        
-        // Also ensure it appears in the nested diet_preferences object
-        if (sanitizedData.diet_preferences) {
-          sanitizedData.diet_preferences.country_region = updatedFields.country_region;
-        }
+      // If onboarding step is being updated, update the tracker
+      if (currentStep) {
+        // Create a profile object with the current step to pass to updateOnboardingStep
+        const profileWithStep = {
+          ...mergedProfile,
+          current_onboarding_step: currentStep
+        };
+        await updateOnboardingStep(profileWithStep);
       }
       
-      // Log what we're actually saving
-      console.log("FINAL: Saving sanitized profile data:", JSON.stringify(sanitizedData, null, 2));
-      console.log("FINAL: Does sanitized data include country_region?", 'country_region' in sanitizedData);
-      console.log("FINAL: Does sanitized data include has_completed_onboarding?", 'has_completed_onboarding' in sanitizedData);
+      console.log("Updating profile in database");
       
-      if (sanitizedData.diet_preferences) {
-        console.log("FINAL: Does diet_preferences include country_region?", 'country_region' in sanitizedData.diet_preferences);
-      }
-      
-      // Save to Supabase
+      // Update the profile in the database
       const { data, error } = await supabase
         .from('profiles')
-        .update(sanitizedData)
+        .update(dbSafeProfile)
         .eq('id', user.id)
         .select()
         .single();
 
       if (error) {
-        console.error("Failed to update profile:", error.message, error.details, error.hint);
-        throw new Error(`Failed to update profile: ${error.message}`);
+        console.error("Error updating profile:", error);
+        throw error;
       }
       
       // Update local state with the returned data from Supabase
@@ -491,230 +652,231 @@ export const ProfileProvider: React.FC<{ children: React.ReactNode }> = ({ child
     return await fetchProfile(forceRefresh);
   };
 
-  // Get the current onboarding step
-  const getCurrentOnboardingStep = () => {
+  // Get the current onboarding step with improved reliability
+  const getCurrentOnboardingStep = async () => {
+    // Validate that we have a profile
     if (!profile) return 'welcome';
     
-    if (profile.has_completed_onboarding) {
+    // ENHANCED: First check our reliable utility for onboarding completion
+    try {
+      const onboardingComplete = await isOnboardingComplete(profile);
+      if (onboardingComplete) {
+        console.log('✅ Using enhanced onboarding check - onboarding is complete');
+        return 'completed';
+      }
+    } catch (error) {
+      console.error('Error checking onboarding completion status:', error);
+      // Continue with fallback checks if this fails
+    }
+    
+    // FALLBACK: LOCAL MODE: Check for local onboarding completion
+    if (!user && profile.has_completed_local_onboarding) {
+      return 'completed';
+    }
+    
+    // FALLBACK: AUTHENTICATED MODE: Check for server onboarding completion
+    if (user && profile.has_completed_onboarding) {
       return 'completed';
     }
     
     return profile.current_onboarding_step || 'welcome';
   };
 
-  // Mark onboarding as complete
+  // Function to complete the onboarding process with enhanced reliability
   const completeOnboarding = async () => {
-    if (!user || !profile) return;
-    
     try {
-      console.log("Marking onboarding as complete for user:", user.id);
+      console.log("Starting enhanced onboarding completion process");
       
-      // Update profile with explicit onboarding completion flag
-      await updateProfile({
-        has_completed_onboarding: true,
-        current_onboarding_step: 'completed'
-      });
+      // Use our robust utility for reliable onboarding completion
+      const success = await markOnboardingComplete(profile || undefined);
       
-      // Double-check that onboarding is marked as complete in the database
-      const { data, error } = await supabase
-        .from('profiles')
-        .select('has_completed_onboarding')
-        .eq('id', user.id)
-        .single();
+      if (!success) {
+        console.warn("Enhanced onboarding marker failed, falling back to traditional method");
+      }
       
-      if (error) {
-        console.error("Error verifying onboarding completion:", error);
+      if (!user) {
+        // LOCAL MODE: Complete local onboarding
+        console.log("Completing onboarding in local mode");
+        await updateProfile({
+          has_completed_local_onboarding: true,
+          current_onboarding_step: 'completed'
+        });
+      } else {
+        // AUTHENTICATED MODE: Complete server onboarding
+        console.log("Completing onboarding in authenticated mode");
+        await updateProfile({
+          has_completed_onboarding: true,
+          current_onboarding_step: 'completed'
+        });
+      }
+      
+      console.log("Onboarding completed successfully with multiple safeguards");
+    } catch (error) {
+      console.error("Error in completeOnboarding:", error);
+      throw error;
+    }
+  };
+
+  // Check user's auth and onboarding status with enhanced reliability, and route accordingly
+  const checkAndRouteUser = async () => {
+    try {
+      console.log('🔍 Enhanced checking of user and onboarding status');
+      
+      // First attempt to repair any potentially inconsistent onboarding state
+      await repairOnboardingStatus();
+      
+      // Use enhanced onboarding check first for maximum reliability
+      const localProfile = await getLocalProfileFromStorage();
+      const onboardingComplete = await isOnboardingComplete(localProfile || undefined);
+      
+      if (onboardingComplete) {
+        console.log('✅ Enhanced check determined onboarding is complete, routing to tabs');
+        router.replace('/(tabs)');
         return;
       }
       
-      if (!data.has_completed_onboarding) {
-        console.error("Onboarding completion flag not set in database, forcing update");
-        // Force update directly to ensure it's set
-        await supabase
-          .from('profiles')
-          .update({ has_completed_onboarding: true, current_onboarding_step: 'completed' })
-          .eq('id', user.id);
+      // If onboarding is not complete, proceed with standard flow
+      if (user) {
+        // User is authenticated
+        const currentProfile = await refreshProfile();
+        
+        // Double-check with traditional method
+        if (currentProfile?.has_completed_onboarding) {
+          console.log('✅ Profile indicates onboarding is complete, routing to tabs');
+          router.replace('/(tabs)');
+        } else {
+          // User hasn't completed onboarding, determine next step
+          const nextStep = currentProfile?.current_onboarding_step || 'welcome';
+          console.log(`⏭️ Routing to onboarding step: ${nextStep}`);
+          // Use as() to convert to a valid path
+          router.replace(`/(onboarding)/${nextStep}` as any);
+        }
+      } else {
+        // LOCAL MODE: User is not authenticated
+        // We already have localProfile from above
+        
+        // Double-check with traditional method as fallback
+        if (localProfile?.has_completed_local_onboarding) {
+          console.log('✅ Local profile indicates onboarding is complete, routing to tabs');
+          router.replace('/(tabs)');
+        } else {
+          // Local onboarding is not complete, go to welcome
+          console.log('🔄 Routing to onboarding welcome');
+          router.replace('/(onboarding)/welcome');
+        }
       }
-      
-    } catch (e) {
-      console.error('Error completing onboarding:', e);
-      setError('Failed to complete onboarding.');
+    } catch (error) {
+      console.error("❌ Error checking user status:", error);
+      // Default to welcome if any errors occur
+      router.replace('/(onboarding)/welcome');
     }
   };
 
-  // Check user profile and route accordingly based on onboarding status
-  const checkAndRouteUser = async () => {
-    if (!user) {
-      console.log("No user, redirecting to login page");
-      router.replace('/login');
-      return;
-    }
-
-    // Wait for profile loading to complete
-    if (loading) {
-      console.log("Profile still loading, waiting...");
-      return;
-    }
-
-    // If profile is null after loading complete, try to fetch again
-    if (!profile) {
-      console.log("No profile found after loading, fetching profile...");
-      await fetchProfile();
-      return;
-    }
-
-    console.log("Checking profile status:", profile.current_onboarding_step, "Has completed onboarding:", profile.has_completed_onboarding);
-
-    // Navigate based on onboarding status
-    if (!profile.has_completed_onboarding) {
-      const step = profile.current_onboarding_step || 'welcome';
-      console.log(`User has not completed onboarding, redirecting to step: ${step}`);
-      router.replace(`/(onboarding)/${step}`);
-    } else {
-      console.log("User has completed onboarding, redirecting to main app");
-      router.replace('/(tabs)');
-    }
-  };
-
-  // Fetch profile when user changes
-  useEffect(() => {
-    if (user) {
-      fetchProfile();
-    } else {
-      setProfile(null);
-      setLoading(false);
-    }
-  }, [user]);
-
-  // Helper function to retrieve profile from Supabase
-  const retrieveFromDb = async () => {
-    if (!user) {
-      console.error('No user found for profile retrieval');
-      return null;
-    }
-    
-    const { data, error } = await supabase
-      .from('profiles')
-      .select()
-      .eq('id', user.id)
-      .maybeSingle();
-    
-    if (error) {
-      console.error('Error retrieving profile from database:', error);
-      return null;
-    }
-    
-    return data;
-  };
-
-  // Synchronize data between root properties and nested objects
-  const synchronizeProfileData = (profile: UserProfile): UserProfile => {
-    // Create a copy of the profile to avoid mutating the original
-    const syncedProfile = { ...profile };
-    
-    // Log initial state for debugging
-    console.log("Starting synchronization of profile data");
-    
+  // Function to synchronize workout preferences (extracted for clarity)
+  const synchronizeWorkoutPreferences = (profile: UserProfile): void => {
     try {
-      // Ensure diet_preferences exists
-      if (!syncedProfile.diet_preferences) {
-        syncedProfile.diet_preferences = {
-          meal_frequency: 3,
-          diet_type: 'balanced',
-          allergies: [],
-          excluded_foods: [],
-          favorite_foods: []
-        };
-      }
-      
-      // Ensure workout_preferences exists
-      if (!syncedProfile.workout_preferences) {
-        syncedProfile.workout_preferences = {
+      // Ensure workout_preferences object exists
+      if (!profile.workout_preferences) {
+        profile.workout_preferences = {
           preferred_days: ['monday', 'wednesday', 'friday'],
           workout_duration: 30
         };
       }
       
-      // Ensure body_analysis exists
-      if (!syncedProfile.body_analysis) {
-        syncedProfile.body_analysis = {};
+      // Sync fitness level both ways
+      if (profile.fitness_level && !profile.workout_preferences.fitness_level) {
+        profile.workout_preferences.fitness_level = profile.fitness_level;
+      } else if (profile.workout_preferences.fitness_level && !profile.fitness_level) {
+        profile.fitness_level = profile.workout_preferences.fitness_level;
       }
       
-      // Sync country_region between root and diet_preferences
-      if (syncedProfile.country_region && !syncedProfile.diet_preferences.country_region) {
-        syncedProfile.diet_preferences.country_region = syncedProfile.country_region;
-      } else if (!syncedProfile.country_region && syncedProfile.diet_preferences.country_region) {
-        syncedProfile.country_region = syncedProfile.diet_preferences.country_region;
-      }
-      
-      // Sync workout plan - ensure it's properly stored in both locations
-      if (syncedProfile.workout_plan) {
-        // Make sure the workout plan has the expected structure
-        if (!syncedProfile.workout_plan.id) {
-          syncedProfile.workout_plan.id = `workout_plan_${Date.now()}`;
+      // Sync fitness goals to focus areas and vice versa
+      if (profile.fitness_goals && profile.fitness_goals.length > 0) {
+        if (!profile.workout_preferences.focus_areas) {
+          profile.workout_preferences.focus_areas = [...profile.fitness_goals];
         }
-        
-        // Ensure weeklySchedule is present and valid
-        if (!syncedProfile.workout_plan.weeklySchedule || !Array.isArray(syncedProfile.workout_plan.weeklySchedule)) {
-          // Try to reconstruct from workoutDays if available (legacy format)
-          if (syncedProfile.workout_plan.workoutDays && Array.isArray(syncedProfile.workout_plan.workoutDays)) {
-            syncedProfile.workout_plan.weeklySchedule = syncedProfile.workout_plan.workoutDays;
-          } else {
-            // Initialize with empty array if nothing is available
-            syncedProfile.workout_plan.weeklySchedule = [];
-          }
+      } else if (profile.workout_preferences.focus_areas && profile.workout_preferences.focus_areas.length > 0) {
+        profile.fitness_goals = [...profile.workout_preferences.focus_areas];
+      }
+      
+      // Sync workout days per week - handle as a custom property that may not be in the type
+      if (profile.workout_days_per_week && !profile.workout_preferences.preferred_days?.length) {
+        // If we have a number, convert to appropriate number of preferred days
+        const daysArray = ['monday', 'wednesday', 'friday', 'saturday'];
+        profile.workout_preferences.preferred_days = daysArray.slice(0, profile.workout_days_per_week);
+      } else if (profile.workout_preferences.preferred_days?.length && !profile.workout_days_per_week) {
+        // Set the days per week based on the number of preferred days
+        profile.workout_days_per_week = profile.workout_preferences.preferred_days.length;
+      }
+    } catch (error) {
+      console.error("Error during workout preferences synchronization:", error);
+    }
+  };
+
+  // Function to ensure profile data is consistent
+  const synchronizeProfileData = (profile: UserProfile): UserProfile => {
+    try {
+      // Create a deep copy to avoid mutating the original
+      const synchronizedProfile = { ...profile };
+      
+      // Call the helper function to synchronize workout preferences
+      synchronizeWorkoutPreferences(synchronizedProfile);
+      
+      // Call the helper function to synchronize diet preferences
+      synchronizeDietPreferences(synchronizedProfile);
+      
+      // Sync country region between root and diet preferences
+      if (synchronizedProfile.country_region && 
+          (!synchronizedProfile.diet_preferences?.country_region || 
+           synchronizedProfile.diet_preferences.country_region !== synchronizedProfile.country_region)) {
+        if (!synchronizedProfile.diet_preferences) {
+          synchronizedProfile.diet_preferences = {
+            meal_frequency: 3,
+            diet_type: 'balanced',
+            allergies: [],
+            excluded_foods: [],
+            favorite_foods: [],
+            country_region: synchronizedProfile.country_region
+          };
+        } else {
+          synchronizedProfile.diet_preferences.country_region = synchronizedProfile.country_region;
         }
-        
-        // Also store in workout_preferences for redundancy
-        // Use type assertion to handle additional properties not in the interface
-        (syncedProfile.workout_preferences as any).workout_plan = syncedProfile.workout_plan;
-      } else if ((syncedProfile.workout_preferences as any).workout_plan) {
-        // If only in workout_preferences, copy to root
-        syncedProfile.workout_plan = (syncedProfile.workout_preferences as any).workout_plan;
+      } else if (synchronizedProfile.diet_preferences?.country_region && 
+                (!synchronizedProfile.country_region || 
+                 synchronizedProfile.country_region !== synchronizedProfile.diet_preferences.country_region)) {
+        synchronizedProfile.country_region = synchronizedProfile.diet_preferences.country_region;
       }
       
-      // Sync meal plans - ensure they're properly stored in both locations
-      if (syncedProfile.meal_plans) {
-        // Make sure the meal plan has the expected structure
-        if (!syncedProfile.meal_plans.id) {
-          syncedProfile.meal_plans.id = `meal_plan_${Date.now()}`;
-        }
-        
-        // Ensure weeklyPlan is present and valid
-        if (!syncedProfile.meal_plans.weeklyPlan || !Array.isArray(syncedProfile.meal_plans.weeklyPlan)) {
-          // Initialize with empty array if nothing is available
-          syncedProfile.meal_plans.weeklyPlan = [];
-        }
-        
-        // Also store in diet_preferences for redundancy
-        // Use type assertion to handle additional properties not in the interface
-        (syncedProfile.diet_preferences as any).meal_plans = syncedProfile.meal_plans;
-      } else if ((syncedProfile.diet_preferences as any).meal_plans) {
-        // If only in diet_preferences, copy to root
-        syncedProfile.meal_plans = (syncedProfile.diet_preferences as any).meal_plans;
-      }
+      // Ensure weight fields are synchronized between body_analysis and root
+      synchronizeWeightFields(synchronizedProfile, 0);
       
-      // Handle measurements - sync between root and body_analysis
-      if (syncedProfile.height_cm && !syncedProfile.body_analysis.height_cm) {
-        syncedProfile.body_analysis.height_cm = syncedProfile.height_cm;
-      } else if (!syncedProfile.height_cm && syncedProfile.body_analysis.height_cm) {
-        syncedProfile.height_cm = syncedProfile.body_analysis.height_cm;
-      }
-      
-      if (syncedProfile.weight_kg && !syncedProfile.body_analysis.weight_kg) {
-        syncedProfile.body_analysis.weight_kg = syncedProfile.weight_kg;
-      } else if (!syncedProfile.weight_kg && syncedProfile.body_analysis.weight_kg) {
-        syncedProfile.weight_kg = syncedProfile.body_analysis.weight_kg;
-      }
-      
-      console.log("Profile data synchronization complete");
-      return syncedProfile;
+      return synchronizedProfile;
     } catch (error) {
       console.error("Error during profile synchronization:", error);
       // Return the original profile if synchronization fails
       return profile;
     }
   };
+
+  // Initialize profile - run on first mount
+  useEffect(() => {
+    const loadInitialProfile = async () => {
+      try {
+        console.log('📱 App initialized, loading profile with enhanced reliability');
+        // Ensure adapter is initialized before fetching profile
+        await persistenceAdapter.initialize(); // Make sure adapter is ready
+        await refreshProfile();
+        
+        // Verify and repair onboarding status on every app launch
+        // This ensures we don't lose track of completed onboarding
+        await repairOnboardingStatus();
+      } catch (error) {
+        console.error("❌ Error loading initial profile:", error);
+      }
+    };
+    
+    loadInitialProfile();
+  }, [user]); // Reload when user changes (login/logout)
 
   // Context value
   const value = {
@@ -734,165 +896,3 @@ export const ProfileProvider: React.FC<{ children: React.ReactNode }> = ({ child
     </ProfileContext.Provider>
   );
 };
-
-/**
- * Process unit conversions and store original values
- */
-function processUnitConversions(
-  mergedProfile: UserProfile,
-  updates: Partial<UserProfile> & Record<string, any>
-): UserProfile {
-  const result = { ...mergedProfile };
-  
-  // Handle nested objects that need special merging
-  if (updates.body_analysis) {
-    console.log('Processing body_analysis update:', JSON.stringify(updates.body_analysis, null, 2));
-    
-    // Create a proper body_analysis object
-    const bodyAnalysisUpdate = { ...updates.body_analysis };
-    
-    // Ensure body_analysis exists in the merged profile
-    if (!result.body_analysis || typeof result.body_analysis !== 'object') {
-      result.body_analysis = {};
-    }
-    
-    // Convert any camelCase properties to snake_case for database compatibility
-    if (bodyAnalysisUpdate.bodyType) {
-      bodyAnalysisUpdate.body_type = bodyAnalysisUpdate.bodyType;
-    }
-    
-    if (bodyAnalysisUpdate.analysisText) {
-      bodyAnalysisUpdate.analysis_text = bodyAnalysisUpdate.analysisText;
-    }
-    
-    if (bodyAnalysisUpdate.bodyProportions) {
-      bodyAnalysisUpdate.body_proportions = bodyAnalysisUpdate.bodyProportions;
-    }
-    
-    if (bodyAnalysisUpdate.recommendedFocusAreas) {
-      bodyAnalysisUpdate.recommended_focus_areas = bodyAnalysisUpdate.recommendedFocusAreas;
-    }
-    
-    // Deep merge the body_analysis object, preserving any existing data
-    result.body_analysis = {
-      ...result.body_analysis,
-      ...bodyAnalysisUpdate
-    };
-    
-    console.log('Updated body_analysis:', JSON.stringify(result.body_analysis, null, 2));
-  }
-  
-  if (updates.workout_preferences) {
-    console.log('Processing workout_preferences update:', updates.workout_preferences);
-    // Ensure workout_preferences object is properly merged
-    if (!result.workout_preferences) {
-      // Initialize with empty values that match the interface
-      result.workout_preferences = {
-        preferred_days: [],
-        workout_duration: 0,
-        intensity_level: 'beginner',
-        focus_areas: [],
-        equipment_available: []
-      };
-    }
-    
-    // Deep merge the workout_preferences object
-    result.workout_preferences = {
-      ...result.workout_preferences,
-      ...updates.workout_preferences
-    };
-  }
-  
-  // Handle height conversion if present (ft to cm)
-  if ((updates as any).height !== undefined) {
-    const heightUnit = (updates as any).heightUnit || (result.body_analysis && result.body_analysis.height_unit) || 'cm';
-    const heightValue = (updates as any).height;
-    let heightInCm = heightValue;
-    
-    // Convert from feet to cm if needed
-    if (heightUnit === 'ft') {
-      heightInCm = feetToCm(heightValue);
-    }
-    
-    // Store in the standardized column
-    result.height_cm = heightInCm;
-    
-    // Store original value and unit in body_analysis
-    if (!result.body_analysis) result.body_analysis = {};
-    result.body_analysis.original_height = heightValue;
-    result.body_analysis.height_unit = heightUnit;
-    result.body_analysis.height_cm = heightInCm;
-    
-    // Remove non-existent column to prevent errors
-    delete (result as any).height;
-  }
-  
-  // Handle weight conversion if present (lb to kg)
-  if ((updates as any).weight !== undefined || (updates as any).currentWeight !== undefined) {
-    const weightUnit = (updates as any).weightUnit || (result.body_analysis && result.body_analysis.weight_unit) || 'kg';
-    const weightValue = (updates as any).weight !== undefined ? (updates as any).weight : (updates as any).currentWeight;
-    let weightInKg = weightValue;
-    
-    // Convert from lbs to kg if needed
-    if (weightUnit === 'lbs') {
-      weightInKg = lbsToKg(weightValue);
-    }
-    
-    // Store in the standardized column
-    result.weight_kg = weightInKg;
-    
-    // Store original value and unit in body_analysis
-    if (!result.body_analysis) result.body_analysis = {};
-    result.body_analysis.original_weight = weightValue;
-    result.body_analysis.weight_unit = weightUnit;
-    result.body_analysis.weight_kg = weightInKg;
-    
-    // Remove non-existent columns to prevent errors
-    delete (result as any).weight;
-    delete (result as any).currentWeight;
-  }
-  
-  // Handle target weight conversion (lb to kg)
-  if ((updates as any).targetWeight !== undefined || (updates as any).target_weight !== undefined) {
-    const weightUnit = (updates as any).weightUnit || (result.body_analysis && result.body_analysis.weight_unit) || 'kg';
-    const targetWeightValue = (updates as any).targetWeight !== undefined ? (updates as any).targetWeight : (updates as any).target_weight;
-    let targetWeightInKg = targetWeightValue;
-    
-    // Convert from lbs to kg if needed
-    if (weightUnit === 'lbs') {
-      targetWeightInKg = lbsToKg(targetWeightValue);
-    }
-    
-    // Store in the standardized column
-    result.target_weight_kg = targetWeightInKg;
-    
-    // Store original value and unit in body_analysis
-    if (!result.body_analysis) result.body_analysis = {};
-    result.body_analysis.original_target_weight = targetWeightValue;
-    result.body_analysis.target_weight_kg = targetWeightInKg;
-    
-    // Remove non-existent columns to prevent errors
-    delete (result as any).target_weight;
-    delete (result as any).targetWeight;
-  }
-  
-  // Handle fitness goal mapping
-  if ((updates as any).fitnessGoal || (updates as any).fitness_goal) {
-    const fitnessGoal = (updates as any).fitnessGoal || (updates as any).fitness_goal;
-    result.weight_goal = fitnessGoal;
-    
-    // Ensure fitness_goals array exists
-    if (!Array.isArray(result.fitness_goals)) {
-      result.fitness_goals = [];
-    }
-    
-    // Update the array too for consistency
-    result.fitness_goals = [fitnessGoal];
-    
-    // Remove non-existent columns
-    delete (result as any).fitnessGoal;
-    delete (result as any).fitness_goal;
-  }
-  
-  return result as UserProfile;
-}

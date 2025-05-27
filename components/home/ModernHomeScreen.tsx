@@ -1,6 +1,9 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { View, StyleSheet, ScrollView, TouchableOpacity } from 'react-native';
 import { Text, Card, Avatar, Chip } from 'react-native-paper';
+import { format } from 'date-fns';
+import { EventRegister } from 'react-native-event-listeners';
+import { getCurrentStreak } from '../../utils/streakManager';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { Ionicons } from '@expo/vector-icons';
@@ -38,25 +41,88 @@ interface NextWorkout {
 }
 
 interface ModernHomeScreenProps {
-  userStats: UserStats;
-  workoutStats: WorkoutStats;
-  mealStats: MealStats;
+  profile: any;
+  activitySummary: {
+    workouts: { 
+      count: number, 
+      percentage: number, 
+      isRestDay?: boolean,
+      scheduledForToday?: boolean,
+      todayCompleted?: boolean,
+      todayWorkoutName?: string,
+      dayStreak?: number
+    },
+    meals: { 
+      count: number, 
+      percentage: number,
+      pendingMeals: string[],
+      allCompleted: boolean
+    },
+    progress: { percentage: number }
+  };
+  meals: any[];
   nextWorkout: NextWorkout | null;
+  completedWorkouts: number;
+  todayWorkoutCompleted: boolean;
+  todayMealsCompleted: string[];
+  bodyAnalysis: any;
+  hasWorkout: boolean;
+  workoutName: string;
   motivationalQuote: string;
   onRefreshQuote: () => void;
+  isRefreshingQuote?: boolean;
 }
 
 /**
  * ModernHomeScreen - Modern and bold minimalist design for home screen
  */
 const ModernHomeScreen: React.FC<ModernHomeScreenProps> = ({
-  userStats,
-  workoutStats,
-  mealStats,
+  profile,
+  activitySummary,
+  meals,
   nextWorkout,
+  completedWorkouts,
+  todayWorkoutCompleted,
+  todayMealsCompleted,
+  bodyAnalysis,
+  hasWorkout,
+  workoutName,
   motivationalQuote,
-  onRefreshQuote
+  onRefreshQuote,
+  isRefreshingQuote = false
 }) => {
+  // Use local state to track the streak from our new streak manager
+  const [currentStreak, setCurrentStreak] = useState(0);
+  
+  // Load the current streak when component mounts
+  useEffect(() => {
+    loadCurrentStreak();
+    
+    // Listen for streak updates
+    const streakListener = EventRegister.addEventListener(
+      'streakUpdated', 
+      (data: { streak: number }) => {
+        console.log('🔥 ModernHomeScreen received streak update event:', data);
+        setCurrentStreak(data.streak);
+      }
+    );
+    
+    return () => {
+      EventRegister.removeEventListener(streakListener as string);
+    };
+  }, []);
+  
+  // Load current streak from the streak manager
+  const loadCurrentStreak = async () => {
+    try {
+      const streak = await getCurrentStreak();
+      console.log('🔄 ModernHomeScreen loaded current streak:', streak);
+      setCurrentStreak(streak);
+    } catch (error) {
+      console.error('Error loading streak:', error);
+    }
+  };
+
   // Get time of day for greeting
   const getTimeOfDay = () => {
     const hour = new Date().getHours();
@@ -84,7 +150,7 @@ const ModernHomeScreen: React.FC<ModernHomeScreenProps> = ({
         <FadeIn from={0} duration={800}>
           <View style={styles.greetingContainer}>
             <Text style={styles.greeting}>Good {getTimeOfDay()},</Text>
-            <Text style={styles.userName}>{userStats.name}</Text>
+            <Text style={styles.userName}>{profile.name}</Text>
           </View>
         </FadeIn>
         
@@ -98,7 +164,7 @@ const ModernHomeScreen: React.FC<ModernHomeScreenProps> = ({
             >
               <Avatar.Text 
                 size={40} 
-                label={userStats.name.split(' ').map((n: string) => n[0]).join('')} 
+                label={profile.name.split(' ').map((n: string) => n[0]).join('')} 
                 style={styles.avatar}
                 labelStyle={styles.avatarLabel}
               />
@@ -108,7 +174,7 @@ const ModernHomeScreen: React.FC<ModernHomeScreenProps> = ({
       </View>
       
       {/* Streak Indicator */}
-      {workoutStats.dayStreak > 0 && (
+      {(currentStreak > 0 || (activitySummary.workouts.dayStreak ?? 0) > 0) && (
         <ScaleIn duration={800} delay={400}>
           <View style={styles.streakContainer}>
             <LinearGradient
@@ -119,7 +185,7 @@ const ModernHomeScreen: React.FC<ModernHomeScreenProps> = ({
             >
               <Ionicons name="flame" size={20} color="#FFF" />
               <Text style={styles.streakText}>
-                {workoutStats.dayStreak} day{workoutStats.dayStreak !== 1 ? 's' : ''} streak!
+                {currentStreak || (activitySummary.workouts.dayStreak ?? 0)} day{(currentStreak || (activitySummary.workouts.dayStreak ?? 0)) !== 1 ? 's' : ''} streak!
               </Text>
             </LinearGradient>
           </View>
@@ -137,7 +203,7 @@ const ModernHomeScreen: React.FC<ModernHomeScreenProps> = ({
             <View style={styles.progressHeader}>
               <Text style={styles.progressTitle}>Weight Progress</Text>
               <Text style={styles.progressValues}>
-                {userStats.progress.currentWeight}kg of {userStats.progress.targetWeight}kg
+                {profile.progress.currentWeight}kg of {profile.progress.targetWeight}kg
               </Text>
             </View>
             
@@ -148,13 +214,13 @@ const ModernHomeScreen: React.FC<ModernHomeScreenProps> = ({
                 end={{ x: 1, y: 0 }}
                 style={[
                   styles.progressBarFill,
-                  { width: `${userStats.progress.percentComplete}%` }
+                  { width: `${profile.progress.percentComplete}%` }
                 ]}
               />
             </View>
             
             <Text style={styles.progressDetails}>
-              {userStats.progress.percentComplete}% to goal • Started at {userStats.progress.startWeight}kg
+              {profile.progress.percentComplete}% to goal • Started at {profile.progress.startWeight}kg
             </Text>
           </Card.Content>
         </Card>
@@ -162,23 +228,31 @@ const ModernHomeScreen: React.FC<ModernHomeScreenProps> = ({
       
       {/* Motivational Quote Card */}
       <SlideIn distance={30} direction="right" duration={800} delay={400}>
-        <Card style={styles.quoteCard}>
-          <LinearGradient
-            colors={[colors.secondary.dark, colors.secondary.main]}
-            start={{ x: 0, y: 0 }}
-            end={{ x: 1, y: 1 }}
-            style={[StyleSheet.absoluteFill, {borderRadius: borderRadius.lg}]}
-          />
-          <Card.Content style={styles.quoteCardContent}>
-            <View style={styles.quoteIconContainer}>
-              <Ionicons name="chatbubble-ellipses-outline" size={40} color="rgba(255,255,255,0.3)" />
-            </View>
+        <LinearGradient
+          colors={[colors.primary.main, colors.secondary.main]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 1 }}
+          style={styles.quoteCard}
+        >
+          <View style={styles.quoteContent}>
             <Text style={styles.quoteText}>"{motivationalQuote}"</Text>
-            <TouchableOpacity style={styles.refreshButton} onPress={onRefreshQuote}>
-              <Ionicons name="refresh-outline" size={20} color={colors.text.primary} />
+            <TouchableOpacity 
+              onPress={onRefreshQuote} 
+              style={styles.refreshButton}
+              disabled={isRefreshingQuote}
+            >
+              <Ionicons 
+                name="refresh" 
+                size={20} 
+                color="white" 
+                style={{
+                  opacity: isRefreshingQuote ? 0.5 : 1,
+                  transform: [{ rotate: isRefreshingQuote ? '45deg' : '0deg' }]
+                }}
+              />
             </TouchableOpacity>
-          </Card.Content>
-        </Card>
+          </View>
+        </LinearGradient>
       </SlideIn>
       
       {/* Today's Workout Plan Card */}
@@ -216,14 +290,14 @@ const ModernHomeScreen: React.FC<ModernHomeScreenProps> = ({
                     </TouchableOpacity>
                   </View>
                 </View>
-              ) : workoutStats.scheduledForToday ? (
+              ) : activitySummary.workouts.scheduledForToday ? (
                 <>
                   <Text style={styles.workoutDescription}>
                     You have a workout scheduled for today: 
-                    <Text style={styles.workoutHighlight}> {workoutStats.todayWorkoutName}</Text>
+                    <Text style={styles.workoutHighlight}> {activitySummary.workouts.todayWorkoutName}</Text>
                   </Text>
                   
-                  {workoutStats.todayCompleted ? (
+                  {activitySummary.workouts.todayCompleted ? (
                     <Chip 
                       icon="check-circle" 
                       style={[styles.statusChip, { backgroundColor: colors.accent.green }]}
@@ -299,17 +373,17 @@ const ModernHomeScreen: React.FC<ModernHomeScreenProps> = ({
             
             <View style={styles.todayMeals}>
               <Text style={styles.mealDescription}>
-                {mealStats.pendingMeals.length > 0 
+                {activitySummary.meals.pendingMeals.length > 0 
                   ? 'Pending for today: ' 
                   : 'All meals completed for today'}
                 <Text style={styles.mealHighlight}>
-                  {mealStats.pendingMeals.length > 0
-                    ? mealStats.pendingMeals.join(', ')
+                  {activitySummary.meals.pendingMeals.length > 0
+                    ? activitySummary.meals.pendingMeals.join(', ')
                     : ''}
                 </Text>
               </Text>
               
-              {mealStats.allCompleted ? (
+              {activitySummary.meals.allCompleted ? (
                 <Chip 
                   icon="check-circle" 
                   style={[styles.statusChip, { backgroundColor: colors.accent.green }]}
@@ -321,7 +395,7 @@ const ModernHomeScreen: React.FC<ModernHomeScreenProps> = ({
                   icon="alert" 
                   style={[styles.statusChip, { backgroundColor: colors.accent.gold }]}
                 >
-                  {mealStats.pendingMeals.length} meal{mealStats.pendingMeals.length !== 1 ? 's' : ''} remaining
+                  {activitySummary.meals.pendingMeals.length} meal{activitySummary.meals.pendingMeals.length !== 1 ? 's' : ''} remaining
                 </Chip>
               )}
             </View>
@@ -446,14 +520,10 @@ const styles = StyleSheet.create({
     elevation: 4,
     backgroundColor: 'transparent',
   },
-  quoteCardContent: {
-    padding: spacing.md,
-    minHeight: 100,
-  },
-  quoteIconContainer: {
-    position: 'absolute',
-    top: spacing.xs,
-    left: spacing.xs,
+  quoteContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
   },
   quoteText: {
     fontSize: 16,
@@ -465,15 +535,13 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
   },
   refreshButton: {
-    position: 'absolute',
-    bottom: spacing.sm,
-    right: spacing.sm,
     width: 32,
     height: 32,
-    borderRadius: borderRadius.round,
-    backgroundColor: 'rgba(255,255,255,0.1)',
-    justifyContent: 'center',
+    borderRadius: 16,
+    backgroundColor: 'rgba(255,255,255,0.2)',
     alignItems: 'center',
+    justifyContent: 'center',
+    marginLeft: 10,
   },
   cardHeaderRow: {
     flexDirection: 'row',

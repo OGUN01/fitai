@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { View, StyleSheet, ScrollView, Image, TouchableOpacity } from 'react-native';
-import { Text, Button, Card, Divider, useTheme, Surface } from 'react-native-paper';
+import { Text, Button, Card, Divider, useTheme, Surface, ActivityIndicator } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { router } from 'expo-router';
@@ -11,6 +11,7 @@ import { useProfile } from '../../../contexts/ProfileContext';
 import BodyAnalysisCard from '../../../components/progress/BodyAnalysisCard';
 import StyledText from '../../../components/ui/StyledText';
 import { colors, spacing, borderRadius, shadows } from '../../../theme/theme';
+import { useFocusEffect } from '@react-navigation/native';
 
 /**
  * Body Analysis Details Screen
@@ -19,14 +20,33 @@ export default function BodyAnalysisDetailsScreen() {
   const theme = useTheme();
   const { user } = useAuth();
   const { profile, refreshProfile } = useProfile();
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
 
-  // Refresh profile data when component mounts
+  // Log profile data for debugging
   useEffect(() => {
-    if (user) {
-      refreshProfile();
+    if (profile) {
+      console.log('Body Analysis Screen - Profile Data:', JSON.stringify(profile, null, 2));
+      console.log('Body Analysis Data:', JSON.stringify(profile.body_analysis || {}, null, 2));
     }
-  }, [user]);
+  }, [profile]);
+
+  // Refresh profile data when component mounts or screen comes into focus
+  useFocusEffect(
+    React.useCallback(() => {
+      const loadData = async () => {
+        setLoading(true);
+        try {
+          await refreshProfile(true); // Force refresh to ensure we have the latest data
+        } catch (error) {
+          console.error('Error refreshing profile:', error);
+        } finally {
+          setLoading(false);
+        }
+      };
+      
+      loadData();
+    }, [])
+  );
 
   // Function to render posture analysis section
   const renderPostureAnalysis = () => {
@@ -440,30 +460,41 @@ export default function BodyAnalysisDetailsScreen() {
             contentContainerStyle={styles.content}
             showsVerticalScrollIndicator={false}
           >
-            {/* Main body analysis card with stats - passing false for showFullDetails to hide analysis there */}
-            <BodyAnalysisCard bodyAnalysis={profile?.body_analysis} showFullDetails={false} />
-            
-            {/* Render analysis text in its own section with better formatting */}
-            {renderAnalysisText()}
-            
-            {/* Render focus areas */}
-            {renderRecommendedFocusAreas()}
-            
-            {/* Conditionally render other sections */}
-            {profile?.body_analysis?.posture && renderPostureAnalysis()}
-            
-            {/* Don't render body measurements if no data is available */}
-            {(profile?.body_analysis as any)?.measurements && 
-             Object.keys((profile?.body_analysis as any)?.measurements).length > 0 && 
-             renderBodyMeasurements()}
-            
-            {/* Only render calculations if there are metrics to show */}
-            {renderCalculations()}
-            
-            <StyledText variant="bodySmall" color={colors.text.secondary} style={styles.disclaimer}>
-              Disclaimer: All measurements and analyses are approximate and based on AI-assisted processing of provided images. 
-              These should not be considered medical advice. Consult with a healthcare professional for medical guidance.
-            </StyledText>
+            {loading ? (
+              <View style={styles.loadingContainer}>
+                <ActivityIndicator size="large" color={colors.primary.main} />
+                <StyledText variant="bodyMedium" style={styles.loadingText}>
+                  Loading body analysis data...
+                </StyledText>
+              </View>
+            ) : (
+              <>
+                {/* Main body analysis card with stats - passing false for showFullDetails to hide analysis there */}
+                <BodyAnalysisCard bodyAnalysis={profile?.body_analysis} showFullDetails={false} />
+                
+                {/* Render analysis text in its own section with better formatting */}
+                {renderAnalysisText()}
+                
+                {/* Render focus areas */}
+                {renderRecommendedFocusAreas()}
+                
+                {/* Conditionally render other sections */}
+                {profile?.body_analysis?.posture && renderPostureAnalysis()}
+                
+                {/* Don't render body measurements if no data is available */}
+                {(profile?.body_analysis as any)?.measurements && 
+                Object.keys((profile?.body_analysis as any)?.measurements).length > 0 && 
+                renderBodyMeasurements()}
+                
+                {/* Only render calculations if there are metrics to show */}
+                {renderCalculations()}
+                
+                <StyledText variant="bodySmall" color={colors.text.secondary} style={styles.disclaimer}>
+                  Disclaimer: All measurements and analyses are approximate and based on AI-assisted processing of provided images. 
+                  These should not be considered medical advice. Consult with a healthcare professional for medical guidance.
+                </StyledText>
+              </>
+            )}
           </ScrollView>
         </SafeAreaView>
       </LinearGradient>
@@ -618,11 +649,6 @@ const styles = StyleSheet.create({
     marginVertical: spacing.md,
     fontStyle: 'italic',
   },
-  updateButton: {
-    marginVertical: spacing.md,
-    borderRadius: borderRadius.md,
-    overflow: 'hidden',
-  },
   updateButtonTop: {
     position: 'absolute',
     top: 0,
@@ -721,5 +747,13 @@ const styles = StyleSheet.create({
   },
   bulletPoint: {
     display: 'none', // Hide old bullet point
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  loadingText: {
+    marginTop: spacing.md,
   },
 }); 

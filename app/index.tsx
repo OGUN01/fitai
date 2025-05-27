@@ -17,11 +17,7 @@ export default function Index() {
     );
   }
 
-  // Redirect to the new landing page if not authenticated
-  if (!user) {
-    return <Redirect href="/login" />;
-  } else {
-    // Just redirect to tabs - NavigationGuard will handle onboarding check
-    return <Redirect href="/(tabs)" />;
-  }
+  // LOCAL MODE CHANGES: No longer require login to start
+  // For all users, direct them to onboarding which will properly route based on their status
+  return <Redirect href="/(onboarding)/welcome" />;
 }

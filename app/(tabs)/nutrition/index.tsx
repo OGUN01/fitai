@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { View, StyleSheet, ScrollView, ActivityIndicator, TouchableOpacity, Dimensions, Modal, Alert } from 'react-native';
 import { Text, Button, Card, Title, Paragraph, Divider, List, Chip, useTheme, IconButton, Checkbox, Snackbar, Avatar } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -23,6 +23,9 @@ import { reliableMealPlanGenerator } from '../../../services/ai';
 import { EventRegister } from 'react-native-event-listeners';
 import Animated from 'react-native-reanimated';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+// Import at the top
+import { vegetarianFallbackMealPlan, veganFallbackMealPlan, nonVegetarianFallbackMealPlan } from '../../../services/ai/defaultMealPlans';
+import { useFocusEffect } from 'expo-router'; // Ensure useFocusEffect is imported
 
 // Define interfaces for the meal plan data structure
 interface Nutrition {
@@ -78,6 +81,16 @@ const weekdays = [
   { abbr: "Sun", dayName: "Sunday" },
 ];
 
+// Default diet preferences if user hasn't set any
+const defaultDietPreferences = {
+  diet_type: "balanced",
+  meal_frequency: "three_meals",
+  calorie_target: 2000,
+  goal: "maintain",
+  country_region: "United States",
+  exclude_ingredients: [],
+};
+
 /**
  * Nutrition screen - main entry point for the Nutrition tab
  */
@@ -85,10 +98,11 @@ export default function NutritionScreen() {
   // Theme setup with color variables for styling
   const theme = useTheme();
   const { user } = useAuth();
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(false); // Main loading state
   const [mealPlan, setMealPlan] = useState<MealPlan | null>(null);
   const [error, setError] = useState<{ title: string; message: string; isRetryable?: boolean } | null>(null);
-  const [selectedDay, setSelectedDay] = useState<string>("Monday");
+  // Initialize selectedDay to null to represent a loading/undetermined state
+  const [selectedDay, setSelectedDay] = useState<string | null>(null);
   const { profile, updateProfile } = useProfile();
   const [completedMeals, setCompletedMeals] = useState<Record<string, Record<string, boolean>>>({});
   const [markingMeal, setMarkingMeal] = useState(false);
@@ -101,7 +115,109 @@ export default function NutritionScreen() {
   const [selectedMeal, setSelectedMeal] = useState<Meal | null>(null);
   const [mealModalVisible, setMealModalVisible] = useState(false);
   const [reload, setReload] = useState(false);
+  const [generationStage, setGenerationStage] = useState<'idle' | 'preparing' | 'generating' | 'processing'>('idle');
+  const [generationProgress, setGenerationProgress] = useState(0);
+  const [showCancelOption, setShowCancelOption] = useState(false);
+  const generationTimerId = useRef<NodeJS.Timeout | null>(null);
+  const [forceUpdate, setForceUpdate] = useState(0); // Dummy state for forcing update
   
+  const hasLoadedRef = useRef(false);
+  const isMountedRef = useRef(true); // SINGLE DECLARATION of isMountedRef
+  const isLoadingRef = useRef(false); // Keep isLoadingRef as it's used by loadCompletedMeals and event listener
+  
+  // Added effect to load meal plan on component mount
+  useEffect(() => {
+    // Set mounted flag to true when component mounts
+    isMountedRef.current = true;
+    
+    // Load selected day from AsyncStorage
+    const initializeSelectedDay = async () => {
+      let dayToSet: string;
+      // Always default to the current day
+      dayToSet = format(new Date(), 'EEEE');
+      console.log('[NutritionScreen] Initializing selectedDay to current day:', dayToSet);
+      
+      if (isMountedRef.current) {
+        setSelectedDay(dayToSet);
+        
+        // Force initial load of meal plan after selectedDay is set
+        setTimeout(() => {
+          if (isMountedRef.current && !hasLoadedRef.current) {
+            console.log('[NutritionScreen] Triggering initial meal plan load after selectedDay is set');
+            loadMealPlan();
+            hasLoadedRef.current = true;
+      }
+        }, 300);
+      }
+    };
+    
+    // Set up event listener for mealCompleted events from other tabs
+    const mealCompletionListener = EventRegister.addEventListener('mealCompleted', (data: any) => {
+      const userIdToCompare = user?.id || 'local_user'; // Renamed to avoid conflict if data.userId exists
+      const shouldProcess = !data.userId || data.userId === userIdToCompare;
+      
+      if (data && shouldProcess) {
+        console.log('🍽️ Nutrition tab received meal completion event:', data);
+        
+        // Force refresh of meal completion status immediately
+        if (isMountedRef.current && !isLoadingRef.current) { // isLoadingRef check relies on loadCompletedMeals internal logic
+          console.log('Refreshing nutrition tab meal completions due to external event');
+          loadCompletedMeals();
+          
+          // Also force UI update
+          setForceUpdate(prev => prev + 1);
+        }
+      }
+    });
+    
+    initializeSelectedDay();
+    
+    // Clean up function
+    return () => {
+      isMountedRef.current = false;
+      // Remove event listener
+      EventRegister.removeEventListener(mealCompletionListener as string);
+    };
+  }, []); // Empty dependency array ensures this runs only once on mount
+
+  // Effect to save selectedDay to AsyncStorage when it changes (and is not null)
+  useEffect(() => {
+    if (selectedDay !== null) { 
+      const savePersistedDay = async () => {
+        try {
+          await AsyncStorage.setItem('lastSelectedNutritionDay', selectedDay);
+          console.log('[NutritionScreen] Saved selectedDay to AsyncStorage:', selectedDay);
+        } catch (e) {
+          console.error('[NutritionScreen] Failed to save selectedDay to AsyncStorage', e);
+        }
+      };
+      savePersistedDay();
+    }
+  }, [selectedDay]);
+
+  // Corrected useEffect for loading completed meals based on plan/day/user changes.
+  useEffect(() => {
+    if (mealPlan && selectedDay && isMountedRef.current) { // user?.id is included in dependencies
+      console.log('[NutritionScreen] Corrected useEffect for mealPlan/selectedDay/user change, loading completed meals.');
+      loadCompletedMeals();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps 
+  }, [mealPlan, selectedDay, user?.id]); // Removed loadCompletedMeals from deps as it's not memoized
+
+  // Corrected, simpler useFocusEffect to reload meals when the tab comes into focus.
+  useFocusEffect(
+    useCallback(() => {
+      if (isMountedRef.current) { 
+        console.log('[NutritionScreen] Corrected Focus effect triggered, loading completed meals.');
+        loadCompletedMeals(); // Relies on internal isLoadingRef in loadCompletedMeals
+      }
+      return () => {
+        // Optional: any cleanup specific to focus/blur if needed in the future
+      };
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []) // Empty dependency array: run on every focus. loadCompletedMeals has its own internal guard.
+  );
+
   const toggleSection = (sectionId: string) => {
     setExpandedSections(prev => ({
       ...prev,
@@ -114,8 +230,18 @@ export default function NutritionScreen() {
     setMealModalVisible(true);
   };
   
+  // Update this function to better handle case sensitivity and null values
   const isMealMarkedComplete = (day: string, mealType: string): boolean => {
-    return completedMeals[day]?.[mealType] || false;
+    if (!day || !mealType) return false; // Added null check for arguments
+    
+    // Convert mealType to lowercase for consistency
+    const lowerMealType = mealType.toLowerCase();
+    
+    // Debug log to diagnose the issue
+    const isComplete = Boolean(completedMeals[day]?.[lowerMealType]);
+    console.log(`Checking meal completion UI state for ${day} - ${mealType}: ${isComplete}, Available data:`, completedMeals[day]);
+                
+    return isComplete;
   };
   
   // Update fallbackMealPlan to include all 7 days of the week
@@ -425,7 +551,7 @@ export default function NutritionScreen() {
     } else {
       return '12:00 PM'; // Default fallback
     }
-  }) || ["8:00 AM", "12:30 PM", "6:30 PM"];
+  }) || ["8:00 AM", "1:00 PM", "7:00 PM"];
 
   // Create a mapping of meal type to meal time from user preferences
   const getMealTypeToTimeMap = (): Record<string, string> => {
@@ -452,13 +578,13 @@ export default function NutritionScreen() {
     
     // Set defaults if preferences aren't found
     if (!mealTypeToTimeMap['breakfast']) mealTypeToTimeMap['breakfast'] = '8:00 AM';
-    if (!mealTypeToTimeMap['lunch']) mealTypeToTimeMap['lunch'] = '12:30 PM';
-    if (!mealTypeToTimeMap['dinner']) mealTypeToTimeMap['dinner'] = '6:30 PM';
+    if (!mealTypeToTimeMap['lunch']) mealTypeToTimeMap['lunch'] = '1:00 PM';
+    if (!mealTypeToTimeMap['dinner']) mealTypeToTimeMap['dinner'] = '7:00 PM';
     
     return mealTypeToTimeMap;
   };
 
-  const mapMealTimesToPlan = (plan, mealTimes) => {
+  const mapMealTimesToPlan = (plan: MealPlan | null, mealTimes: string[]) => {
     if (!plan || !plan.weeklyPlan) {
       return plan;
     }
@@ -472,7 +598,7 @@ export default function NutritionScreen() {
     console.log("Mapping meal times to plan with:", { mealTypeToTimeMap, mealTimes });
     
     // Apply preferred times to the meal plan
-    mappedPlan.weeklyPlan.forEach(day => {
+    mappedPlan.weeklyPlan.forEach((day: DayPlan) => {
       // Ensure we have a valid meals array
       if (!day.meals || !Array.isArray(day.meals)) {
         console.warn(`mapMealTimesToPlan: No valid meals array found for day ${day.day}`);
@@ -480,7 +606,7 @@ export default function NutritionScreen() {
         return;
       }
       
-      day.meals.forEach(meal => {
+      day.meals.forEach((meal: Meal) => {
         // Skip if the meal object is invalid
         if (!meal) return;
         
@@ -526,14 +652,24 @@ export default function NutritionScreen() {
   };
 
   const saveMealPlan = async (plan: MealPlan) => {
-    if (!profile) return;
-    
     try {
-      // Save to profile context and database
-      await updateProfile({
-        meal_plans: plan
-      });
-      console.log("Meal plan saved to database successfully");
+      // LOCAL MODE: Save to AsyncStorage if no authenticated user
+      if (!user) {
+        console.log("Local mode: Saving meal plan to AsyncStorage");
+        await AsyncStorage.setItem('local_meal_plan', JSON.stringify(plan));
+        console.log("Meal plan saved to AsyncStorage successfully");
+        return;
+      }
+      
+      // AUTHENTICATED MODE: Save to profile context and database
+      if (profile && updateProfile) {
+        await updateProfile({
+          meal_plans: plan
+        });
+        console.log("Meal plan saved to database successfully");
+      } else {
+        console.warn("No profile or updateProfile function available, meal plan not saved");
+      }
     } catch (error) {
       console.error("Error saving meal plan:", error);
     }
@@ -581,6 +717,70 @@ export default function NutritionScreen() {
                 plan.weeklyPlan.push(newDay);
               }
             }
+            
+            // NEW CODE: Find days with complete meal sets (at least 3 meals) to use as templates
+            const completeDays = plan.weeklyPlan.filter((d: DayPlan) => 
+              d.meals && Array.isArray(d.meals) && d.meals.length >= 3
+            );
+            
+            if (completeDays.length > 0) {
+              const templateDay = completeDays[0]; // Use the first complete day as template
+              console.log(`Found template day ${templateDay.day} with ${templateDay.meals.length} meals`);
+              
+              // Check each day and ensure it has a complete set of meals
+              const daysOfWeek = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+              
+              for (const dayPlan of plan.weeklyPlan) {
+                if (!dayPlan.meals || !Array.isArray(dayPlan.meals) || dayPlan.meals.length < 3) {
+                  console.log(`Day ${dayPlan.day} has only ${dayPlan.meals?.length || 0} meals, fixing...`);
+                  
+                  // Initialize meals array if needed
+                  if (!dayPlan.meals) {
+                    dayPlan.meals = [];
+                  }
+                  
+                  // Get existing meal types to avoid duplicates
+                  const existingMealTypes = new Set(dayPlan.meals.map((m: Meal) => m.meal.toLowerCase()));
+                  
+                  // Add missing meal types from the template day
+                  templateDay.meals.forEach((templateMeal: Meal) => {
+                    if (!existingMealTypes.has(templateMeal.meal.toLowerCase())) {
+                      // Create a variation of the template meal
+                      const newMeal = {
+                        meal: templateMeal.meal,
+                        time: templateMeal.time,
+                        recipe: {
+                          name: `${templateMeal.recipe.name} ${dayPlan.day} Variation`,
+                          ingredients: [...templateMeal.recipe.ingredients],
+                          instructions: [...templateMeal.recipe.instructions],
+                          nutrition: {...templateMeal.recipe.nutrition}
+                        }
+                      };
+                      
+                      // Add to the day's meals
+                      dayPlan.meals.push(newMeal);
+                      console.log(`Added ${newMeal.meal} (${newMeal.recipe.name}) to ${dayPlan.day}`);
+                    }
+                  });
+                  
+                  // Update daily nutrition
+                  dayPlan.dailyNutrition = {
+                    calories: dayPlan.meals.reduce((sum: number, meal: Meal) => sum + (meal.recipe?.nutrition?.calories || 0), 0),
+                    protein: dayPlan.meals.reduce((sum: number, meal: Meal) => sum + (meal.recipe?.nutrition?.protein || 0), 0),
+                    carbs: dayPlan.meals.reduce((sum: number, meal: Meal) => sum + (meal.recipe?.nutrition?.carbs || 0), 0),
+                    fats: dayPlan.meals.reduce((sum: number, meal: Meal) => sum + (meal.recipe?.nutrition?.fats || 0), 0)
+                  };
+                  
+                  console.log(`${dayPlan.day} now has ${dayPlan.meals.length} meals with ${dayPlan.dailyNutrition.calories} calories`);
+                }
+              }
+            }
+            
+            // Sort days in correct order
+            const daysOfWeek = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+            plan.weeklyPlan.sort((a: DayPlan, b: DayPlan) => {
+              return daysOfWeek.indexOf(a.day) - daysOfWeek.indexOf(b.day);
+            });
             
             // Add missing properties if needed
             return {
@@ -693,7 +893,7 @@ export default function NutritionScreen() {
         // Create days for the meal plan
         const days = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
         const weeklyPlan = days.map((day, dayIndex) => {
-          const meals = [];
+          const meals: Meal[] = [];
           
           // Add a meal for each meal type we found
           Object.keys(groupedRecipes).forEach((mealType, index) => {
@@ -724,10 +924,10 @@ export default function NutritionScreen() {
           
           // Calculate daily nutrition
           const dailyNutrition = {
-            calories: meals.reduce((sum, meal) => sum + (meal.recipe.nutrition?.calories || 0), 0) || 2000,
-            protein: meals.reduce((sum, meal) => sum + (meal.recipe.nutrition?.protein || 0), 0) || 100,
-            carbs: meals.reduce((sum, meal) => sum + (meal.recipe.nutrition?.carbs || 0), 0) || 250,
-            fats: meals.reduce((sum, meal) => sum + (meal.recipe.nutrition?.fats || 0), 0) || 70
+            calories: meals.reduce((sum: number, meal: Meal) => sum + (meal.recipe.nutrition?.calories || 0), 0) || 2000,
+            protein: meals.reduce((sum: number, meal: Meal) => sum + (meal.recipe.nutrition?.protein || 0), 0) || 100,
+            carbs: meals.reduce((sum: number, meal: Meal) => sum + (meal.recipe.nutrition?.carbs || 0), 0) || 250,
+            fats: meals.reduce((sum: number, meal: Meal) => sum + (meal.recipe.nutrition?.fats || 0), 0) || 70
           };
           
           return {
@@ -761,11 +961,11 @@ export default function NutritionScreen() {
           id: 'extracted_meal_plan_' + Date.now(),
           weeklyPlan: weeklyPlan,
           shoppingList: {
-            protein: recipesExtracted.flatMap(r => r.ingredients.filter(i => isProtein(i))),
-            produce: recipesExtracted.flatMap(r => r.ingredients.filter(i => isProduce(i))),
-            grains: recipesExtracted.flatMap(r => r.ingredients.filter(i => isGrain(i))),
-            dairy: recipesExtracted.flatMap(r => r.ingredients.filter(i => isDairy(i))),
-            other: recipesExtracted.flatMap(r => r.ingredients.filter(i => 
+            protein: recipesExtracted.flatMap(r => r.ingredients.filter((i: string) => isProtein(i))),
+            produce: recipesExtracted.flatMap(r => r.ingredients.filter((i: string) => isProduce(i))),
+            grains: recipesExtracted.flatMap(r => r.ingredients.filter((i: string) => isGrain(i))),
+            dairy: recipesExtracted.flatMap(r => r.ingredients.filter((i: string) => isDairy(i))),
+            other: recipesExtracted.flatMap(r => r.ingredients.filter((i: string) => 
               !isProtein(i) && !isProduce(i) && !isGrain(i) && !isDairy(i)
             ))
           },
@@ -815,8 +1015,8 @@ export default function NutritionScreen() {
               // Split by commas and clean up
               ingredients = ingredientsMatch[1]
                 .split(',')
-                .map(i => i.replace(/["']/g, '').trim())
-                .filter(i => i && i !== 'Ingredient 1' && i !== 'Ingredient 2');
+                .map((i: string) => i.replace(/["']/g, '').trim())
+                .filter((i: string) => i && i !== 'Ingredient 1' && i !== 'Ingredient 2');
             }
             
             // Extract nutrition if possible
@@ -885,10 +1085,10 @@ export default function NutritionScreen() {
           
           // Calculate daily nutrition
           const dailyNutrition = {
-            calories: dayMeals.reduce((sum, meal) => sum + (meal.recipe.nutrition?.calories || 0), 0) || 2000,
-            protein: dayMeals.reduce((sum, meal) => sum + (meal.recipe.nutrition?.protein || 0), 0) || 100,
-            carbs: dayMeals.reduce((sum, meal) => sum + (meal.recipe.nutrition?.carbs || 0), 0) || 250,
-            fats: dayMeals.reduce((sum, meal) => sum + (meal.recipe.nutrition?.fats || 0), 0) || 70
+            calories: dayMeals.reduce((sum: number, meal: Meal) => sum + (meal.recipe.nutrition?.calories || 0), 0) || 2000,
+            protein: dayMeals.reduce((sum: number, meal: Meal) => sum + (meal.recipe.nutrition?.protein || 0), 0) || 100,
+            carbs: dayMeals.reduce((sum: number, meal: Meal) => sum + (meal.recipe.nutrition?.carbs || 0), 0) || 250,
+            fats: dayMeals.reduce((sum: number, meal: Meal) => sum + (meal.recipe.nutrition?.fats || 0), 0) || 70
           };
           
           weeklyPlan.push({
@@ -1029,13 +1229,72 @@ export default function NutritionScreen() {
     return days[index % 7];
   };
 
-  // Generate meal plan function
-  const generateMealPlan = async () => {
-    setLoading(true);
-    setError(null);
-
+  // Cancel the current meal plan generation
+  const cancelGeneration = useCallback(async () => {
     try {
+      // Clear the generation timer
+      if (generationTimerId.current) {
+        clearTimeout(generationTimerId.current);
+        generationTimerId.current = null;
+      }
+      
+      // Mark generation as not in progress
+      await AsyncStorage.setItem('meal_plan_generation_in_progress', 'false');
+      
+      setLoading(false);
+      setGenerationStage('idle');
+      setGenerationProgress(0);
+      setShowCancelOption(false);
+      
+      console.log("Meal plan generation canceled by user");
+      
+      // Show feedback to user
+      setSnackbarMessage('Meal plan generation canceled.');
+      setSnackbarVisible(true);
+    } catch (err) {
+      console.error("Error canceling meal plan generation:", err);
+    }
+  }, []);
+
+  // Generate a new meal plan based on profile preferences
+  const generateMealPlan = useCallback(async () => {
+    try {
+      // Check if generation is already in progress and EARLY RETURN if it is
+      const generationInProgress = await AsyncStorage.getItem('meal_plan_generation_in_progress');
+      const generationTimestamp = await AsyncStorage.getItem('meal_plan_generation_timestamp');
+      
+      if (generationInProgress === 'true' && generationTimestamp) {
+        const startTime = parseInt(generationTimestamp);
+        // If generation started less than 30 seconds ago, don't start another one
+        if (Date.now() - startTime < 30 * 1000) {
+          console.log("Meal plan generation already in progress, waiting...");
+          setSnackbarMessage('Generation already in progress. Please wait...');
+          setSnackbarVisible(true);
+          return null;
+        }
+      }
+      
+      // Reset UI state
+      setLoading(true);
+      setError(null);
+      setGenerationStage('preparing');
+      setGenerationProgress(10);
+      
+      // Set up timeout to show cancel option after 15 seconds
+      generationTimerId.current = setTimeout(() => {
+        setShowCancelOption(true);
+      }, 15000);
+      
+      // Mark generation as in progress
+      await AsyncStorage.setItem('meal_plan_generation_in_progress', 'true');
+      await AsyncStorage.setItem('meal_plan_generation_timestamp', Date.now().toString());
+
       console.log("🍽️ Starting meal plan generation process...");
+      
+      // Ensure we have a profile
+      if (!profile) {
+        throw new Error("Cannot generate meal plan: No profile available");
+      }
       
       // Get preferences from profile context
       const preferences = {
@@ -1056,491 +1315,583 @@ export default function NutritionScreen() {
       
       console.log("🥗 Generating meal plan with preferences:", JSON.stringify(preferences));
       
+      // Update UI to show that we're generating the meal plan
+      setGenerationStage('generating');
+      setGenerationProgress(30);
+      
       // Use the reliable meal plan generator with all fallback mechanisms
       console.log("🔄 Using reliable meal plan generator with multi-tier fallbacks");
       const rawMealPlan = await reliableMealPlanGenerator.generateMealPlan(preferences) as MealPlan;
-      console.log("Plan received with", rawMealPlan.weeklyPlan.length, "days");
       
-      // Log the initial structure of days
-      console.log("Initial weeklyPlan structure:", rawMealPlan.weeklyPlan.map(day => ({
-        day: day.day,
-        mealCount: day.meals ? day.meals.length : 0,
-        meals: day.meals ? day.meals.map(m => m.meal) : []
-      })));
+      // Update UI to show we're processing the results
+      setGenerationStage('processing');
+      setGenerationProgress(70);
       
-      // Check if we need to add missing days - this should be rare if LLM generates correctly
-      const daysOfWeek = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
-      const existingDays = new Set(rawMealPlan.weeklyPlan.map(day => day.day));
-      
-      // Add any missing days as a fallback
-      for (const day of daysOfWeek) {
-        if (!existingDays.has(day)) {
-          console.log("Adding missing day:", day);
-          
-          // Generate a unique meal plan for this day rather than cloning
-          try {
-            // Find days with complete meal data to use as inspiration
-            const completeDays = rawMealPlan.weeklyPlan.filter(d => d.meals && d.meals.length >= 3);
-            
-            if (completeDays.length > 0) {
-              // Create new day with proper structure but different meals
-              const newDay = {
-                day: day,
-                meals: [],
-                dailyNutrition: { calories: 0, protein: 0, carbs: 0, fats: 0 }
-              };
-              
-              // Use meal structure from existing days but create variations for each meal
-              completeDays[0].meals.forEach(meal => {
-                // Create variation of the meal
-                const newMeal = {
-                  meal: meal.meal,
-                  time: meal.time,
-                  recipe: {
-                    // Modify recipe name to make it unique
-                    name: `${meal.recipe.name} Variation`,
-                    // Keep similar ingredients but suggest it's different
-                    ingredients: [...meal.recipe.ingredients],
-                    instructions: [...meal.recipe.instructions],
-                    // Keep similar nutritional profile
-                    nutrition: { ...meal.recipe.nutrition }
-                  }
-                };
-                
-                // Add meal to new day
-                newDay.meals.push(newMeal);
-                
-                // Update daily nutrition
-                newDay.dailyNutrition.calories += newMeal.recipe.nutrition.calories;
-                newDay.dailyNutrition.protein += newMeal.recipe.nutrition.protein;
-                newDay.dailyNutrition.carbs += newMeal.recipe.nutrition.carbs;
-                newDay.dailyNutrition.fats += newMeal.recipe.nutrition.fats;
-              });
-              
-              rawMealPlan.weeklyPlan.push(newDay);
-              console.log(`Added ${newDay.meals.length} unique meals to ${day}`);
-            } else {
-              console.error("No complete days found to use as template for", day);
-            }
-          } catch (e) {
-            console.error("Error creating unique meals for", day, e);
-          }
-        }
+      // Validate the response
+      if (!rawMealPlan || !rawMealPlan.weeklyPlan || rawMealPlan.weeklyPlan.length === 0) {
+        throw new Error("Generated meal plan is empty or invalid");
       }
       
-      // Sort days in correct order
-      rawMealPlan.weeklyPlan.sort((a, b) => {
-        return daysOfWeek.indexOf(a.day) - daysOfWeek.indexOf(b.day);
-      });
-      
-      // Log the final structure after repair
-      console.log("Final weeklyPlan structure:", rawMealPlan.weeklyPlan.map(day => ({
-        day: day.day,
-        mealCount: day.meals ? day.meals.length : 0,
-        meals: day.meals ? day.meals.map(m => m.meal) : []
-      })));
+      console.log("Plan received with", rawMealPlan.weeklyPlan.length, "days");
       
       // Check if the meal plan is valid
       const validatedMealPlan = validateAndRepairMealPlan(rawMealPlan);
-      if (validatedMealPlan) {
-        console.log("Meal plan successfully validated");
-        
-        // Save to profile
-          await saveMealPlan(validatedMealPlan);
-        
-        // Show success message
-        setSnackbarMessage('Meal plan regenerated successfully!');
-        setSnackbarVisible(true);
-        
-        // Done!
-        console.log("📅 Meal plan generation completed");
-        } else {
-        setError({
-          title: "Validation Error",
-          message: "Generated meal plan failed validation",
-          isRetryable: true
-        });
+      if (!validatedMealPlan) {
+        throw new Error("Meal plan validation failed");
       }
-    } catch (error) {
-      console.error("❌ Error generating meal plan:", error);
+      
+      console.log("Meal plan successfully validated with", 
+        validatedMealPlan.weeklyPlan.length, "days and",
+        validatedMealPlan.weeklyPlan[0].meals.length, "meals on first day");
+      
+      // Set the generated meal plan in state
+      setMealPlan(validatedMealPlan);
+      
+      // Save the meal plan for both local and authenticated users
+      console.log("Saving meal plan to storage");
+      await saveMealPlan(validatedMealPlan);
+      
+      // Complete the progress bar
+      setGenerationProgress(100);
+        
+      // Show success message
+      setSnackbarMessage('Meal plan generated successfully!');
+      setSnackbarVisible(true);
+      
+      return validatedMealPlan;
+      
+    } catch (err) {
+      console.error("❌ Error generating meal plan:", err);
+      
+      // Create more specific error messages based on the error type
+      const errorMessage = err instanceof Error ? err.message : String(err);
+      let errorTitle = "Generation Error";
+      let errorMsg = "Failed to generate a meal plan. Please try again.";
+      
+      if (errorMessage.includes('API_TIMEOUT')) {
+        errorTitle = "Generation Timeout";
+        errorMsg = "The meal plan generation timed out. The API might be experiencing high load. Please try again later.";
+      } else if (errorMessage.includes('API_RATE_LIMITED')) {
+        errorTitle = "API Limit Reached";
+        errorMsg = "You've reached the API usage limit. Please wait a few minutes before trying again.";
+      }
+      
       setError({
-        title: "Generation Error",
-        message: "Failed to generate meal plan: " + (error as Error).message,
+        title: errorTitle,
+        message: errorMsg,
         isRetryable: true
       });
+      return null;
     } finally {
+      // Mark generation as completed regardless of outcome
+      await AsyncStorage.setItem('meal_plan_generation_in_progress', 'false');
       setLoading(false);
+      setGenerationStage('idle');
+      setShowCancelOption(false);
+      
+      // Clear the generation timer
+      if (generationTimerId.current) {
+        clearTimeout(generationTimerId.current);
+        generationTimerId.current = null;
+      }
     }
-  };
-  
-  // Helper function to check if meal plan contains real recipes
-  const checkForRealRecipes = (plan: any): boolean => {
-    if (!plan) return false;
+  }, [profile, saveMealPlan]);
+
+  // Load completed meals from the database or local storage
+  const loadCompletedMeals = async () => {
+    if (!mealPlan || !selectedDay || isLoadingRef.current || !isMountedRef.current) {
+      if (isLoadingRef.current) {
+        console.log('[NutritionScreen] loadCompletedMeals skipped: loading already in progress.');
+      }
+      if (!isMountedRef.current) {
+        console.log('[NutritionScreen] loadCompletedMeals skipped: component unmounted.');
+      }
+      return;
+    }
+    
+    console.log(`[loadCompletedMeals] Loading for selectedDay: ${selectedDay}`);
+    isLoadingRef.current = true;
+    
+    // Don't set loading state to avoid UI flickering
+    // setLoading(true);
     
     try {
-      // Check weeklyPlan structure
-      if (plan.weeklyPlan && Array.isArray(plan.weeklyPlan) && plan.weeklyPlan.length > 0) {
-        const firstDay = plan.weeklyPlan[0];
-        if (firstDay && firstDay.meals && Array.isArray(firstDay.meals) && firstDay.meals.length > 0) {
-          const firstMeal = firstDay.meals[0];
-          if (firstMeal && firstMeal.recipe && firstMeal.recipe.name) {
-            const recipeName = firstMeal.recipe.name;
-            return (
-              recipeName !== 'Recipe Name' && 
-              !recipeName.includes('Placeholder') &&
-              !recipeName.includes('Template') &&
-              !recipeName.includes('Example')
-            );
+    const userId = user?.id || 'local_user';
+      const dateToCheck = format(new Date(), 'yyyy-MM-dd'); 
+      const dayCompletionData: Record<string, boolean> = {}; 
+
+      const dayPlanForSelectedDay = mealPlan.weeklyPlan?.find(
+        (dp: DayPlan) => dp.day.toLowerCase() === selectedDay.toLowerCase()
+      );
+
+      if (dayPlanForSelectedDay && dayPlanForSelectedDay.meals && dayPlanForSelectedDay.meals.length > 0) {
+        console.log(`[loadCompletedMeals] Found ${dayPlanForSelectedDay.meals.length} meals for ${selectedDay}. Checking status against date: ${dateToCheck}`);
+        
+        // Process meals sequentially for more predictable behavior
+        for (const meal of dayPlanForSelectedDay.meals) {
+          if (!isMountedRef.current) break; // Stop if component unmounted mid-process
+          
+          const mealType = meal.meal.toLowerCase();
+          try {
+            const isCompleted = await isMealCompleted(userId, dateToCheck, mealType);
+            console.log(`[loadCompletedMeals] ${mealType} completion status: ${isCompleted}`);
+            dayCompletionData[mealType] = isCompleted;
+          } catch (err) {
+            console.error(`Error checking meal completion for ${selectedDay} - ${mealType}:`, err);
+            dayCompletionData[mealType] = false; 
           }
         }
+      } else {
+        console.warn(`[loadCompletedMeals] No meal plan or meals found for selected day: ${selectedDay}`);
       }
       
-      return false;
+      // Only update state if component is still mounted
+      if (isMountedRef.current) {
+      setCompletedMeals(prevCompletedMeals => {
+          console.log(`[loadCompletedMeals] Updating completion status for ${selectedDay}. New data:`, dayCompletionData);
+          
+          // Create a fresh copy of the previous state
+          const newState = {...prevCompletedMeals};
+          
+          // Set the day's completion data
+          newState[selectedDay] = dayCompletionData;
+          
+          return newState;
+      });
+
+        // Force component re-render to ensure UI updates
+      setForceUpdate(c => c + 1);
+      }
     } catch (error) {
-      console.error("Error checking for real recipes:", error);
-      return false;
+      console.error('Error in loadCompletedMeals:', error);
+    } finally {
+      if (isMountedRef.current) {
+      setLoading(false);
+      }
+      // Set loading ref regardless of mounted state to avoid leaked state
+      isLoadingRef.current = false;
+      // Update last load time for potential future debouncing
+      // lastLoadTimeRef.current = Date.now();
     }
   };
 
-  // Validate that meal plan has actual content, not just template placeholders
-  const validateMealPlanContent = (plan: any): boolean => {
-    // Check if we have an actual meal plan with real content
-    try {
-      if (!plan || !plan.weeklyPlan || !Array.isArray(plan.weeklyPlan)) {
-        return false;
-      }
-      
-      // Check first day's first meal recipe name - if it's template placeholder, reject
-      const firstMeal = plan.weeklyPlan[0]?.meals?.[0];
-      if (!firstMeal || !firstMeal.recipe) {
-        return false;
-      }
-      
-      const recipeName = firstMeal.recipe.name;
-      if (!recipeName || 
-          recipeName === "Recipe Name" || 
-          recipeName.includes("Template") || 
-          recipeName.includes("Placeholder")) {
-        console.error("Meal plan contains placeholder recipe names:", recipeName);
-        return false;
-      }
-      
-      // Check if ingredients are just placeholders
-      const ingredients = firstMeal.recipe.ingredients;
-      if (!ingredients || !Array.isArray(ingredients) || ingredients.length === 0) {
-        return false;
-      }
-      
-      if (ingredients.every(ing => 
-        ing === "Ingredient 1" || 
-        ing === "Ingredient 2" || 
-        ing.includes("Template") || 
-        ing.includes("Placeholder"))) {
-        console.error("Meal plan contains placeholder ingredients");
-        return false;
-      }
-      
-      return true;
-    } catch (error) {
-      console.error("Error validating meal plan content:", error);
-      return false;
-    }
-  };
-
-  // Generate a summary of the meal plan for the home screen
-  const generateMealSummary = (plan: MealPlan): string => {
-    if (!plan || !plan.weeklyPlan || plan.weeklyPlan.length === 0) {
-      return "No meal plan available. Visit the nutrition tab to generate one.";
-    }
-    
-    try {
-      // Get average calories per day
-      const totalCalories = plan.weeklyPlan.reduce(
-        (sum, day) => sum + (day.dailyNutrition?.calories || 0), 
-        0
-      );
-      const avgCalories = Math.round(totalCalories / plan.weeklyPlan.length);
-      
-      // Get meal count per day
-      const avgMeals = Math.round(
-        plan.weeklyPlan.reduce(
-          (sum, day) => sum + (day.meals?.length || 0), 
-          0
-        ) / plan.weeklyPlan.length
-      );
-      
-      // Create a summary string
-      return `${avgMeals} meals per day averaging ${avgCalories} calories. Custom meal plan ready.`;
-    } catch (error) {
-      console.error("Error generating meal summary:", error);
-      return "Custom meal plan available. Visit the nutrition tab for details.";
-    }
-  };
-
-  // Load or generate a meal plan on initial load
+  // Main effect for loading data when dependencies change
   useEffect(() => {
-    const loadMealPlan = async () => {
+    if (mealPlan && selectedDay && isMountedRef.current) {
+      console.log(`[NutritionScreen] Dependencies changed, loading meal completions for ${selectedDay}`);
+      loadCompletedMeals();
+    }
+  }, [mealPlan, selectedDay, user?.id]); // Re-run if these change
+  
+  // Use a simplified useFocusEffect without debouncing
+  useFocusEffect(
+    useCallback(() => {
+      // Only run if component is mounted and there's meal plan data
+      if (isMountedRef.current && mealPlan && selectedDay) {
+        console.log('Nutrition screen focused, reloading meal completions');
+        loadCompletedMeals();
+      }
+      
+      return () => {
+        // No need to set isMountedRef.current = false here as this is just focus change, not component unmount
+        console.log('Nutrition screen unfocused');
+      };
+    }, [mealPlan, selectedDay, user?.id]) // Include same dependencies as main effect
+  );
+
+  // Load or generate the meal plan
+  const loadMealPlan = useCallback(async (forceRefresh = false) => {
+    try {
+      // Avoid duplicate loading
+      if (loading) {
+        console.log("Already loading, skipping duplicate request");
+        return;
+      }
+      
+      setLoading(true);
+      setError(null);
+      console.log("Loading meal plan...");
+      
+      if (!profile) {
+        console.log("No profile available, cannot load meal plan");
+        setLoading(false);
+        return;
+      }
+      
+      // Lock to prevent multiple simultaneous meal plan generations
+      await AsyncStorage.setItem('meal_plan_generation_in_progress', 'true');
+      await AsyncStorage.setItem('meal_plan_generation_timestamp', Date.now().toString());
+      
       try {
-        setLoading(true);
-        console.log("Loading meal plan...");
-        
-        if (profile?.meal_plans) {
-          console.log("Loading existing meal plan from profile");
+        // LOCAL MODE: Check AsyncStorage for meal plan if no authenticated user
+        if (!user) {
+          console.log("Local mode detected, checking AsyncStorage for meal plan");
           try {
-            // Validate and repair the meal plan structure if needed
-            const validatedPlan = validateAndRepairMealPlan(profile.meal_plans);
-            console.log("Meal plan successfully validated");
-            
-            // Set the meal plan directly first
-            setMealPlan(validatedPlan);
-            
-            // Ensure we have a selected day
-            if (validatedPlan?.weeklyPlan && validatedPlan.weeklyPlan.length > 0) {
-              setSelectedDay(validatedPlan.weeklyPlan[0].day);
-            }
-            
-            // Generate summary if it doesn't exist yet
-            if (!profile.diet_preferences?.meal_summary) {
-              console.log("Generating meal summary for cached plan");
-              const summary = generateMealSummary(validatedPlan);
+            const localMealPlanString = await AsyncStorage.getItem('local_meal_plan');
+            if (localMealPlanString) {
+              try {
+              const localMealPlan = JSON.parse(localMealPlanString);
+              console.log("Found local meal plan in AsyncStorage");
               
-              // Save the summary to the database within diet_preferences JSONB field
-              updateProfile({
-                diet_preferences: {
-                  ...profile.diet_preferences,
-                  meal_summary: summary
+              // Validate meal plan structure
+              const validMealPlan = localMealPlan.weeklyPlan && 
+                            Array.isArray(localMealPlan.weeklyPlan) && 
+                            localMealPlan.weeklyPlan.length > 0 && 
+                            localMealPlan.weeklyPlan.some((day: DayPlan) => day.meals && day.meals.length > 0);
+              
+              if (validMealPlan) {
+                console.log(`Local meal plan validation: ${localMealPlan.weeklyPlan.length} days with meals`);
+                setMealPlan(localMealPlan);
+                  
+                  // Load meal completion status right after setting the meal plan
+                  setTimeout(() => {
+                    if (isMountedRef.current) {
+                      loadCompletedMeals();
+                    }
+                  }, 300);
+                  
+                setLoading(false);
+                return;
+              } else {
+                console.warn("Local meal plan is invalid, will generate new one");
+                }
+              } catch (parseError) {
+                console.error("Error parsing local meal plan:", parseError);
+              }
+            } else {
+              console.log("No local meal plan found in AsyncStorage");
+            }
+          } catch (localError) {
+            console.error("Error reading local meal plan:", localError);
+          }
+        }
+        
+        // AUTHENTICATED MODE: Load from profile
+        if (user) {
+          // Load existing meal plan from profile if available
+          const existingMealPlan = profile.meal_plans;
+          let validMealPlan = false;
+          
+          if (existingMealPlan) {
+            console.log("Found existing meal plan in profile");
+            
+            // Validate meal plan structure
+            validMealPlan = existingMealPlan.weeklyPlan && 
+                             Array.isArray(existingMealPlan.weeklyPlan) && 
+                             existingMealPlan.weeklyPlan.length > 0 && 
+                             existingMealPlan.weeklyPlan.some((day: DayPlan) => day.meals && day.meals.length > 0);
+            
+            if (validMealPlan) {
+              console.log(`Meal plan validation: ${existingMealPlan.weeklyPlan.length} days, with meals: ${
+                existingMealPlan.weeklyPlan.filter((day: DayPlan) => day.meals && day.meals.length > 0).length
+              }`);
+              
+              // Set the meal plan in state
+              setMealPlan(existingMealPlan);
+              
+              // Load meal completion status immediately
+              setTimeout(() => {
+                if (isMountedRef.current) {
+                  loadCompletedMeals();
+                }
+              }, 300);
+              
+              // Log daily nutrition for debugging
+              existingMealPlan.weeklyPlan.forEach((day: DayPlan) => {
+                if (day.day && day.dailyNutrition) {
+                  console.log(`Day ${day.day}: calories=${day.dailyNutrition.calories}, protein=${day.dailyNutrition.protein}`);
+                } else {
+                  console.warn(`Day ${day.day}: missing daily nutrition`);
                 }
               });
+              
+              setLoading(false);
+              return;
+            } else {
+              console.warn("Existing meal plan is incomplete or invalid, generating new one");
+            }
+          } else {
+            console.log("No existing meal plan found, need to generate one");
+            
+            // Try to use a fallback meal plan right away
+            let defaultPlan;
+            const dietType = profile?.diet_preferences?.diet_type || 'balanced';
+            
+            if (dietType === 'vegetarian') {
+              defaultPlan = vegetarianFallbackMealPlan;
+            } else if (dietType === 'vegan') {
+              defaultPlan = veganFallbackMealPlan;
+            } else {
+              defaultPlan = nonVegetarianFallbackMealPlan;
+            }
+
+            // Add unique ID to the plan
+            const planWithId = {
+              ...defaultPlan,
+              id: `fallback_meal_plan_${Date.now()}`
+            };
+            
+            // Set the fallback meal plan and save it
+            setMealPlan(planWithId);
+            await saveMealPlan(planWithId);
+            
+            // Now try to generate a custom plan in the background
+            try {
+              // Anti-flicker debounce - wait 200ms
+              await new Promise(resolve => setTimeout(resolve, 200));
+              
+              // Check if meal plan generation is already in progress
+              const generationInProgress = await AsyncStorage.getItem('meal_plan_generation_in_progress');
+              const timestamp = await AsyncStorage.getItem('meal_plan_generation_timestamp');
+              
+              if (generationInProgress === 'true' && timestamp) {
+                const startTime = parseInt(timestamp);
+                // If generation started less than 60 seconds ago, don't start another one
+                if (Date.now() - startTime < 60 * 1000) {
+                  console.log("Meal plan generation already in progress in background, user can use fallback for now");
+                  return;
+                } else {
+                  // Reset lock if it's been too long (stuck generation)
+                  await AsyncStorage.setItem('meal_plan_generation_in_progress', 'false');
+                }
+              }
+              
+              // Generate in the background without blocking UI
+              generateMealPlan();
+            } catch (bgGenError) {
+              console.error("Error in background meal plan generation:", bgGenError);
             }
             
-            console.log("Meal plan loaded successfully from cache");
-          } catch (validationError) {
-            console.error("Error validating cached meal plan:", validationError);
-            console.log("Falling back to generating a new meal plan");
-            await generateMealPlan();
+            setLoading(false);
+            return;
           }
-        } else {
-          console.log("No existing meal plan found, generating new one");
-          await generateMealPlan();
         }
         
-        // Load completed meals after a short delay
-        setTimeout(() => {
-          if (user && mealPlan) {
-            loadCompletedMeals();
+        // Anti-flicker debounce - wait 500ms to see if another load request comes in
+        await new Promise(resolve => setTimeout(resolve, 500));
+        
+        // Check if meal plan generation is already in progress
+        const generationInProgress = await AsyncStorage.getItem('meal_plan_generation_in_progress');
+        const timestamp = await AsyncStorage.getItem('meal_plan_generation_timestamp');
+        
+        if (generationInProgress === 'true' && timestamp) {
+          const startTime = parseInt(timestamp);
+          // If generation started less than 60 seconds ago, don't start another one
+          if (Date.now() - startTime < 60 * 1000) {
+            console.log("Meal plan generation already in progress, waiting...");
+            setLoading(false);
+            return;
+          } else {
+            // Reset lock if it's been too long (stuck generation)
+            await AsyncStorage.setItem('meal_plan_generation_in_progress', 'false');
           }
-        }, 500);
-      } catch (err) {
-        console.error("Error in meal plan loading process:", err);
-        setError({
-          title: "Loading Error",
-          message: "Failed to load meal plan. Please try again later.",
-          isRetryable: true
-        });
-        // In case of error, try to generate a new one
+        }
+        
+        // Generate a new meal plan if none exists or if the existing one is invalid
         try {
           await generateMealPlan();
         } catch (genError) {
-          console.error("Error generating fallback meal plan:", genError);
+          console.error("Error in meal plan generation:", genError);
+          // Check for rate limit errors
+          const genErrorString = genError instanceof Error ? genError.message : String(genError);
+          if (genErrorString.includes('429') || genErrorString.includes('rate limit')) {
+            await AsyncStorage.setItem('meal_plan_rate_limited', 'true');
+            await AsyncStorage.setItem('meal_plan_rate_limit_timestamp', Date.now().toString());
+            console.warn("API rate limited, marking for future reference");
+            
+            // Use appropriate default based on diet type as fallback
+            let defaultPlan;
+            const dietType = profile?.diet_preferences?.diet_type || 'balanced';
+            
+            if (dietType === 'vegetarian') {
+              defaultPlan = vegetarianFallbackMealPlan;
+            } else if (dietType === 'vegan') {
+              defaultPlan = veganFallbackMealPlan;
+            } else {
+              defaultPlan = nonVegetarianFallbackMealPlan;
+            }
+
+            // Add unique ID to the plan
+            const planWithId = {
+              ...defaultPlan,
+              id: `fallback_meal_plan_${Date.now()}`
+            };
+            
+            // Set the fallback meal plan and save it
+            setMealPlan(planWithId);
+            await saveMealPlan(planWithId);
+          }
+        } finally {
+          // Clear generation in progress flag
+          await AsyncStorage.setItem('meal_plan_generation_in_progress', 'false');
         }
+        
+      } catch (err) {
+        console.error("Error loading meal plan:", err);
+        setError({
+          title: "Loading Error",
+          message: "Failed to load meal plan. Please try again.",
+          isRetryable: true
+        });
+        
+        // Clear any partial state to avoid UI inconsistencies
+        setMealPlan(null);
+        setLoading(false);
       } finally {
         setLoading(false);
       }
-    };
-    
-    if (profile && profile.id) {
-      loadMealPlan();
-    }
-  }, [profile?.id]); // Only depend on profile.id, not the entire profile object
-
-  // Load completed meals from the database
-  const loadCompletedMeals = async () => {
-    if (!user || !mealPlan) return;
-    
-    try {
-      const today = new Date();
-      const todayFormatted = format(today, 'yyyy-MM-dd');
-      const completed: Record<string, Record<string, boolean>> = {};
-      
-      console.log('Loading completed meals for date:', todayFormatted);
-      
-      // Initialize the structure
-      mealPlan?.weeklyPlan?.forEach(day => {
-        completed[day.day] = {};
-        day.meals?.forEach(meal => {
-          completed[day.day][meal.meal] = false;
-        });
+    } catch (err) {
+      console.error("Error loading meal plan:", err);
+      setError({
+        title: "Loading Error",
+        message: "Failed to load meal plan. Please try again.",
+        isRetryable: true
       });
       
-      // Check which meals are completed
-      for (const day of mealPlan?.weeklyPlan || []) {
-        for (const meal of day.meals || []) {
-          try {
-            console.log(`Checking if meal ${meal.meal} is completed for ${todayFormatted}`);
-            const isCompleted = await isMealCompleted(user.id, todayFormatted, meal.meal);
-            console.log(`Meal ${meal.meal} completed status:`, isCompleted);
-            
-            if (isCompleted) {
-              completed[day.day][meal.meal] = true;
-            }
-          } catch (mealError) {
-            console.error(`Error checking completion for meal ${meal.meal}:`, mealError);
-            // Continue with other meals even if one fails
-          }
-        }
-      }
-      
-      console.log('Final completed meals state:', completed);
-      setCompletedMeals(completed);
-    } catch (err) {
-      console.error('Error loading completed meals:', err);
+      // Clear any partial state to avoid UI inconsistencies
+      setMealPlan(null);
+      setLoading(false);
     }
-  };
+  }, [user, profile, selectedDay, generateMealPlan]);
 
-  // Mark a meal as complete
-  const handleCompleteMeal = async (dayName: string, mealType: string) => {
-    if (!user || !mealPlan) return;
-    
-    setMarkingMeal(true);
-    
-    try {
-      const today = format(new Date(), 'yyyy-MM-dd');
-      
-      // Find the meal plan ID - use a real ID from the data if available
-      const mealPlanId = mealPlan.id || 'default_meal_plan';
-      
-      console.log(`Attempting to mark meal complete: ${mealType} for ${today}, user ${user.id}, plan ${mealPlanId}`);
-      
-      // Mark meal as complete in the database
-      const result = await markMealComplete(
-        user.id,
-        today,
-        mealType,
-        mealPlanId
-      );
-      
-      if (result) {
-        console.log('Meal marked as complete successfully:', result);
-        // Update local state
-        setCompletedMeals(prev => ({
-          ...prev,
-          [dayName]: {
-            ...prev[dayName],
-            [mealType]: true
-          }
-        }));
-        
-        // Emit event to notify other components (like Home tab) that a meal was completed
-        EventRegister.emit('mealCompleted', {
-          userId: user.id,
-          date: today,
-          mealType: mealType
-        });
-        
-        // Show success message
-        setSnackbarMessage(`${mealType} has been marked as consumed. Great job!`);
-        setSnackbarVisible(true);
-      } else {
-        throw new Error('Failed to mark meal as complete');
-      }
-    } catch (err) {
-      console.error('Error marking meal as complete:', err);
-      setSnackbarMessage('Failed to mark meal as consumed. Please try again.');
-      setSnackbarVisible(true);
-    } finally {
-      setMarkingMeal(false);
-    }
-  };
-
-  // Load completed meals when meal plan changes
-  useEffect(() => {
-    if (mealPlan) {
-      loadCompletedMeals();
-    }
-  }, [mealPlan, user]);
-
-  // Find the selected day's plan
+  // Get the selected day's meal plan data
   const selectedDayPlan = useMemo(() => {
-    if (!mealPlan?.weeklyPlan) return null;
+    if (!mealPlan?.weeklyPlan || mealPlan.weeklyPlan.length === 0 || !selectedDay) { // Added !selectedDay check
+      console.warn("Meal plan is empty, missing weeklyPlan array, or selectedDay is null");
+      return null;
+    }
     
-    console.log("Searching for day in meal plan:", selectedDay);
-    console.log("Available days in meal plan:", mealPlan.weeklyPlan.map(day => day.day));
+    console.log(`Looking for ${selectedDay} plan in ${mealPlan.weeklyPlan.length} available days`);
     
     // Find the selected day in the meal plan
-    const dayPlan = mealPlan.weeklyPlan.find(day => day.day === selectedDay);
+    const dayPlan = mealPlan.weeklyPlan.find(day => 
+      day.day && day.day.toLowerCase() === selectedDay.toLowerCase()
+    );
     
     if (dayPlan) {
-      console.log(`Found selected day (${selectedDay}) with ${dayPlan.meals?.length || 0} meals`);
+      // Log meal availability
+      const mealCount = dayPlan.meals?.length || 0;
+      console.log(`Found ${selectedDay} with ${mealCount} meals`);
       
-      // Log the found meals for debugging
-      if (dayPlan.meals && dayPlan.meals.length > 0) {
-        console.log("Meals for selected day:", dayPlan.meals.map(meal => meal.meal));
-        console.log("First meal recipe:", dayPlan.meals[0].recipe.name);
-      } else {
-        console.warn(`No meals found for ${selectedDay}`);
+      // If meals are missing or empty, return null
+      if (!dayPlan.meals || dayPlan.meals.length === 0) {
+        console.warn(`Day ${selectedDay} has no meals`);
+        return null;
       }
       
-      return dayPlan;
+      // Log recipe details for the first meal as a sample
+      if (dayPlan.meals[0]?.recipe) {
+        console.log("First meal recipe:", dayPlan.meals[0].recipe.name);
     } else {
-      console.warn(`Could not find day ${selectedDay} in meal plan`);
-      // If we can't find the selected day, default to the first day available
-      if (mealPlan.weeklyPlan.length > 0) {
-        const firstDay = mealPlan.weeklyPlan[0];
-        console.log(`Defaulting to first day (${firstDay.day})`);
+        console.warn("First meal missing recipe data");
+      }
+      
+      // Ensure dailyNutrition exists with valid values
+      let calculatedNutrition = dayPlan.dailyNutrition;
+      const hasValidNutrition = calculatedNutrition && 
+                               typeof calculatedNutrition.calories === 'number' && 
+                               calculatedNutrition.calories > 0;
+      
+      if (!hasValidNutrition) {
+        console.log(`${selectedDay} is missing valid nutrition data, recalculating...`);
         
-        // Update the selected day to match what we're displaying
-        setSelectedDay(firstDay.day);
-        return firstDay;
+        // Calculate nutrition totals from the meals
+        calculatedNutrition = {
+          calories: Math.max(0, dayPlan.meals.reduce((sum, meal) => 
+            sum + (meal.recipe?.nutrition?.calories || 0), 0)),
+          protein: Math.max(0, dayPlan.meals.reduce((sum, meal) => 
+            sum + (meal.recipe?.nutrition?.protein || 0), 0)),
+          carbs: Math.max(0, dayPlan.meals.reduce((sum, meal) => 
+            sum + (meal.recipe?.nutrition?.carbs || 0), 0)),
+          fats: Math.max(0, dayPlan.meals.reduce((sum, meal) => 
+            sum + (meal.recipe?.nutrition?.fats || 0), 0))
+        };
+        
+        console.log("Recalculated nutrition:", calculatedNutrition);
+      }
+      
+      // Return the day plan with validated nutrition data
+      return {
+        ...dayPlan,
+        dailyNutrition: calculatedNutrition
+      };
+    }
+    
+    // If selected day is not found, try to use Monday as fallback
+    if (selectedDay !== "Monday") {
+      console.log(`${selectedDay} not found, trying Monday as fallback`);
+      const mondayPlan = mealPlan.weeklyPlan.find(day => 
+        day.day && day.day.toLowerCase() === "monday"
+      );
+      
+      if (mondayPlan && mondayPlan.meals && mondayPlan.meals.length > 0) {
+        console.log("Using Monday as fallback");
+        setSelectedDay("Monday");
+        
+        // Ensure nutrition data exists for Monday
+        let mondayNutrition = mondayPlan.dailyNutrition;
+        if (!mondayNutrition || 
+            typeof mondayNutrition.calories !== 'number' || 
+            mondayNutrition.calories <= 0) {
+          
+          mondayNutrition = {
+            calories: Math.max(0, mondayPlan.meals.reduce((sum, meal) => 
+              sum + (meal.recipe?.nutrition?.calories || 0), 0)),
+            protein: Math.max(0, mondayPlan.meals.reduce((sum, meal) => 
+              sum + (meal.recipe?.nutrition?.protein || 0), 0)),
+            carbs: Math.max(0, mondayPlan.meals.reduce((sum, meal) => 
+              sum + (meal.recipe?.nutrition?.carbs || 0), 0)),
+            fats: Math.max(0, mondayPlan.meals.reduce((sum, meal) => 
+              sum + (meal.recipe?.nutrition?.fats || 0), 0))
+          };
+        }
+        
+        return {
+          ...mondayPlan,
+          dailyNutrition: mondayNutrition
+        };
       }
     }
     
+    // If all else fails, use the first available day with meals
+    console.log("Selected day not found, using first available day");
+    const firstValidDay = mealPlan.weeklyPlan.find(day => 
+      day.meals && day.meals.length > 0
+    );
+    
+    if (firstValidDay) {
+      console.log(`Using ${firstValidDay.day} as fallback`);
+      // Update the selected day to match what we're displaying
+      setSelectedDay(firstValidDay.day);
+      
+      // Ensure nutrition data exists
+      let firstDayNutrition = firstValidDay.dailyNutrition;
+      if (!firstDayNutrition || 
+          typeof firstDayNutrition.calories !== 'number' || 
+          firstDayNutrition.calories <= 0) {
+        
+        firstDayNutrition = {
+          calories: Math.max(0, firstValidDay.meals.reduce((sum, meal) => 
+            sum + (meal.recipe?.nutrition?.calories || 0), 0)),
+          protein: Math.max(0, firstValidDay.meals.reduce((sum, meal) => 
+            sum + (meal.recipe?.nutrition?.protein || 0), 0)),
+          carbs: Math.max(0, firstValidDay.meals.reduce((sum, meal) => 
+            sum + (meal.recipe?.nutrition?.carbs || 0), 0)),
+          fats: Math.max(0, firstValidDay.meals.reduce((sum, meal) => 
+            sum + (meal.recipe?.nutrition?.fats || 0), 0))
+        };
+      }
+      
+      return {
+        ...firstValidDay,
+        dailyNutrition: firstDayNutrition
+      };
+    }
+    
+    // If no valid days with meals are found, return null
+    console.error("No valid days with meals found in meal plan");
     return null;
   }, [mealPlan, selectedDay]);
-
-  // Calculate calorie target based on user profile
-  const calculateCalorieTarget = (profile: any): number => {
-    // Basic BMR calculation using Mifflin-St Jeor Equation
-    if (!profile || !profile.body_analysis) return 2000; // Default value
-    
-    const { weight_kg, height_cm } = profile.body_analysis;
-    const age = profile.age || 30;
-    const gender = profile.gender || 'neutral';
-    
-    if (!weight_kg || !height_cm) return 2000;
-    
-    // BMR calculation
-    let bmr = 0;
-    if (gender.toLowerCase() === 'female') {
-      bmr = 10 * weight_kg + 6.25 * height_cm - 5 * age - 161;
-    } else {
-      bmr = 10 * weight_kg + 6.25 * height_cm - 5 * age + 5;
-    }
-    
-    // Activity multiplier based on fitness level
-    const activityLevels = {
-      'beginner': 1.2, // Sedentary
-      'intermediate': 1.375, // Light activity
-      'advanced': 1.55 // Moderate activity
-    };
-    
-    const activityMultiplier = activityLevels[profile.fitness_level || 'beginner'] || 1.2;
-    
-    // Calculate TDEE (Total Daily Energy Expenditure)
-    const tdee = bmr * activityMultiplier;
-    
-    // Adjust based on goal
-    const goalAdjustments = {
-      'weight-loss': 0.8, // 20% deficit
-      'muscle-gain': 1.1, // 10% surplus
-      'maintenance': 1,
-      'improved-fitness': 1
-    };
-    
-    const primaryGoal = profile.fitness_goals?.[0] || 'maintenance';
-    const goalMultiplier = goalAdjustments[primaryGoal] || 1;
-    
-    return Math.round(tdee * goalMultiplier);
-  };
 
   // Debug mode for development
   const testWorkoutStyleGeneration = async () => {
@@ -1635,6 +1986,154 @@ export default function NutritionScreen() {
     }
   }, [reload, profile]);
 
+  // Calculate calorie target based on user profile
+  const calculateCalorieTarget = (profile: any): number => {
+    // Basic BMR calculation using Mifflin-St Jeor Equation
+    if (!profile || !profile.body_analysis) return 2000; // Default value
+    
+    const { weight_kg, height_cm } = profile.body_analysis;
+    const age = profile.age || 30;
+    const gender = profile.gender || 'neutral';
+    
+    if (!weight_kg || !height_cm) return 2000;
+    
+    // BMR calculation
+    let bmr = 0;
+    if (gender.toLowerCase() === 'female') {
+      bmr = 10 * weight_kg + 6.25 * height_cm - 5 * age - 161;
+    } else {
+      bmr = 10 * weight_kg + 6.25 * height_cm - 5 * age + 5;
+    }
+    
+    // Activity multiplier based on fitness level
+    const activityLevels = {
+      'beginner': 1.2, // Sedentary
+      'intermediate': 1.375, // Light activity
+      'advanced': 1.55 // Moderate activity
+    };
+    
+    const activityMultiplier = activityLevels[profile.fitness_level as keyof typeof activityLevels || 'beginner'] || 1.2;
+    
+    // Calculate TDEE (Total Daily Energy Expenditure)
+    const tdee = bmr * activityMultiplier;
+    
+    // Adjust based on goal
+    const goalAdjustments = {
+      'weight-loss': 0.8, // 20% deficit
+      'muscle-gain': 1.1, // 10% surplus
+      'maintenance': 1,
+      'improved-fitness': 1
+    };
+    
+    const primaryGoal = profile.fitness_goals?.[0] || 'maintenance';
+    const goalMultiplier = goalAdjustments[primaryGoal as keyof typeof goalAdjustments] || 1;
+    
+    return Math.round(tdee * goalMultiplier);
+  };
+
+  // Mark a meal as complete - enhanced with better error handling and state updates
+  const handleCompleteMeal = async (dayName: string, mealType: string) => {
+    if (!mealPlan || !selectedDay) return; // Added !selectedDay check (dayName is effectively selectedDay here)
+    
+    setMarkingMeal(true);
+    
+    try {
+      const today = format(new Date(), 'yyyy-MM-dd');
+      
+      // Find the meal plan ID - use a real ID from the data if available
+      const mealPlanId = mealPlan.id || 'default_meal_plan';
+      
+      // Use local_user if no authenticated user available
+      const userId = user?.id || 'local_user';
+      
+      console.log(`Attempting to mark meal complete: ${mealType} for ${today}, user ${userId}, plan ${mealPlanId}`);
+      
+      // Mark meal as complete in the database or local storage
+      const result = await markMealComplete(
+        userId,
+        today,
+        mealType,
+        mealPlanId
+      );
+      
+      if (result) {
+        console.log('Meal marked as complete successfully:', result);
+        
+        // Update local state immediately for responsive UI
+        if (isMountedRef.current) {
+          setCompletedMeals(prev => {
+            // Create a deep copy of the previous state
+            const newState = {...prev};
+            
+            // Make sure the day exists in our state
+            if (!newState[dayName]) {
+              newState[dayName] = {};
+            }
+            
+            // Set this meal as completed
+            newState[dayName][mealType.toLowerCase()] = true;
+            
+            console.log(`UI State updated: ${dayName} - ${mealType} marked as completed`);
+            return newState;
+          });
+          
+          // Force update to refresh UI
+          setForceUpdate(c => c + 1);
+        }
+        
+        // Emit event to notify other components (like Home tab) that a meal was completed
+        EventRegister.emit('mealCompleted', {
+          userId: userId,
+          date: today,
+          mealType: mealType
+        });
+        
+        // Show success message
+        if (isMountedRef.current) {
+        setSnackbarMessage(`${mealType} has been marked as consumed. Great job!`);
+        setSnackbarVisible(true);
+        }
+      } else {
+        throw new Error('Failed to mark meal as complete');
+      }
+    } catch (err) {
+      console.error('Error marking meal as complete:', err);
+      if (isMountedRef.current) {
+      setSnackbarMessage('Failed to mark meal as consumed. Please try again.');
+      setSnackbarVisible(true);
+      }
+    } finally {
+      if (isMountedRef.current) {
+      setMarkingMeal(false);
+      }
+    }
+  };
+
+  // Delete Meal Plan
+  const deleteMealPlan = async () => {
+    try {
+      // LOCAL MODE: Delete from AsyncStorage if no authenticated user
+      if (!user) {
+        console.log("Local mode: Deleting meal plan from AsyncStorage");
+        await AsyncStorage.removeItem('local_meal_plan');
+        console.log("Meal plan deleted from AsyncStorage successfully");
+        return;
+      }
+      
+      // AUTHENTICATED MODE: Delete from profile context and database
+      if (profile && updateProfile) {
+        await updateProfile({
+          meal_plans: null
+        });
+        console.log("Meal plan deleted from database successfully");
+      } else {
+        console.warn("No profile or updateProfile function available, meal plan not deleted");
+      }
+    } catch (error) {
+      console.error("Error deleting meal plan:", error);
+    }
+  };
+
   return (
     <SafeAreaView style={styles.container} edges={['right', 'left']}>
       <StatusBar style="light" />
@@ -1677,12 +2176,39 @@ export default function NutritionScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {loading ? (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color={colors.primary.main} />
-            <StyledText variant="bodyMedium" style={styles.loadingText}>Loading your meal plan...</StyledText>
+        {loading && (
+          <View style={styles.loadingOverlay}>
+            <ActivityIndicator size="large" color="#ffffff" />
+            
+            {/* Show different text based on generation stage */}
+            <Text style={styles.loadingText}>
+              {generationStage === 'preparing' && 'Preparing meal plan request...'}
+              {generationStage === 'generating' && 'Generating your meal plan...'}
+              {generationStage === 'processing' && 'Processing meal plan results...'}
+            </Text>
+            
+            {/* Progress bar */}
+            <View style={styles.progressBarContainer}>
+              <View style={[styles.progressBar, { width: `${generationProgress}%` }]} />
+            </View>
+            
+            {/* Status text */}
+            <Text style={styles.progressText}>
+              {generationStage === 'preparing' && 'This may take a moment...'}
+              {generationStage === 'generating' && 'Creating personalized recipes...'}
+              {generationStage === 'processing' && 'Almost done...'}
+            </Text>
+            
+            {/* Cancel button - only show after delay */}
+            {showCancelOption && (
+              <TouchableOpacity style={styles.cancelButton} onPress={cancelGeneration}>
+                <Text style={styles.cancelButtonText}>Cancel Generation</Text>
+              </TouchableOpacity>
+            )}
           </View>
-        ) : error ? (
+        )}
+        
+        {error ? (
           <View style={styles.errorContainer}>
             <LinearGradient
               colors={['rgba(108, 19, 89, 0.7)', 'rgba(65, 12, 53, 0.9)']}
@@ -1717,6 +2243,7 @@ export default function NutritionScreen() {
         ) : (
           <>
             {/* Day Selector */}
+            {mealPlan && mealPlan.weeklyPlan && (
             <FadeIn duration={600} delay={100}>
               <LinearGradient
                 colors={[colors.surface.light, colors.surface.main]}
@@ -1746,9 +2273,9 @@ export default function NutritionScreen() {
                 
                 <View style={styles.daysContainer}>
                   {/* Log available days before rendering */}
-                  {mealPlan?.weeklyPlan?.length > 0 && (() => {
+                  {mealPlan?.weeklyPlan && mealPlan.weeklyPlan.length > 0 && (() => {
                     console.log("Rendering day buttons, mealPlan available:", Boolean(mealPlan));
-                    console.log("mealPlan?.weeklyPlan?.length:", mealPlan?.weeklyPlan?.length || 0);
+                    console.log("mealPlan?.weeklyPlan?.length:", mealPlan.weeklyPlan.length || 0);
                     
                     // Log all the days available in the meal plan
                     const availableDays = mealPlan.weeklyPlan.map(day => day.day);
@@ -1795,6 +2322,7 @@ export default function NutritionScreen() {
                 </View>
               </LinearGradient>
             </FadeIn>
+            )}
             
             {/* Daily Nutrition Goals */}
             <ScaleIn duration={600} delay={200}>
@@ -1868,6 +2396,11 @@ export default function NutritionScreen() {
                 if (name.includes('snack')) return "food-croissant";
                 return "food-fork-drink";
               };
+
+              // **** DIAGNOSTIC LOG ****
+              const isActuallyComplete = selectedDay ? isMealMarkedComplete(selectedDay, meal.meal) : false; // Added null check for selectedDay
+              console.log(`[MealCard Render] Day: ${selectedDay}, Meal: ${meal.meal}, isActuallyComplete: ${isActuallyComplete}`);
+              // **** END DIAGNOSTIC LOG ****
               
               return (
               <SlideIn key={`meal-${index}`} duration={500} delay={300 + (index * 100)}>
@@ -1877,7 +2410,7 @@ export default function NutritionScreen() {
                 >
                   <LinearGradient
                     colors={[colors.surface.light, colors.surface.main]}
-                    style={[styles.mealCard, isMealMarkedComplete(selectedDay, meal.meal) && styles.completedMealCard]}
+                    style={[styles.mealCard, isActuallyComplete && styles.completedMealCard]} // Use the logged variable
                     start={{ x: 0, y: 0 }}
                     end={{ x: 1, y: 1 }}
                   >
@@ -1892,7 +2425,7 @@ export default function NutritionScreen() {
                           {meal.meal}
                         </StyledText>
                         
-                        {isMealMarkedComplete(selectedDay, meal.meal) && (
+                        {isActuallyComplete && ( // Use the logged variable
                           <View style={styles.completedBadge}>
                             <MaterialCommunityIcons 
                               name="check-circle" 
@@ -2058,13 +2591,15 @@ export default function NutritionScreen() {
                     <TouchableOpacity
                       style={styles.markCompleteButton}
                       onPress={() => {
-                        handleCompleteMeal(selectedDay, selectedMeal.meal);
-                        setMealModalVisible(false);
+                        if (selectedDay && selectedMeal) { // Ensure selectedDay and selectedMeal are not null
+                          handleCompleteMeal(selectedDay, selectedMeal.meal);
+                          setMealModalVisible(false);
+                        }
                       }}
-                      disabled={markingMeal || isMealMarkedComplete(selectedDay, selectedMeal.meal)}
+                      disabled={markingMeal || (selectedDay && selectedMeal ? isMealMarkedComplete(selectedDay, selectedMeal.meal) : true)}
                     >
                       <LinearGradient
-                        colors={isMealMarkedComplete(selectedDay, selectedMeal.meal) 
+                        colors={(selectedDay && selectedMeal && isMealMarkedComplete(selectedDay, selectedMeal.meal)) 
                           ? [colors.accent.green, colors.accent.green] 
                           : [colors.primary.main, colors.primary.dark]}
                         style={styles.gradientButton}
@@ -2072,12 +2607,12 @@ export default function NutritionScreen() {
                         end={{ x: 1, y: 1 }}
                       >
                         <MaterialCommunityIcons 
-                          name={isMealMarkedComplete(selectedDay, selectedMeal.meal) ? "check-circle" : "silverware-fork-knife"} 
+                          name={(selectedDay && selectedMeal && isMealMarkedComplete(selectedDay, selectedMeal.meal)) ? "check-circle" : "silverware-fork-knife"} 
                           size={20} 
                           color={colors.text.primary} 
                         />
                         <StyledText variant="bodyMedium" style={styles.buttonText}>
-                          {isMealMarkedComplete(selectedDay, selectedMeal.meal) 
+                          {(selectedDay && selectedMeal && isMealMarkedComplete(selectedDay, selectedMeal.meal)) 
                             ? "Marked as Consumed" 
                             : markingMeal ? "Marking..." : "Mark as Consumed"}
                         </StyledText>
@@ -2113,10 +2648,59 @@ const styles = StyleSheet.create({
     flex: 1,
     backgroundColor: colors.background.primary,
   },
+  loadingOverlay: {
+    position: 'absolute',
+    top: 0,
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.8)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 999,
+    padding: 20,
+  },
+  loadingText: {
+    color: '#ffffff',
+    marginTop: 15,
+    fontSize: 18,
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
+  progressText: {
+    color: '#ffffff',
+    marginTop: 8,
+    fontSize: 14,
+    opacity: 0.8,
+    textAlign: 'center',
+  },
+  progressBarContainer: {
+    width: '80%',
+    height: 6,
+    backgroundColor: 'rgba(255, 255, 255, 0.3)',
+    borderRadius: 3,
+    marginTop: 20,
+    overflow: 'hidden',
+  },
+  progressBar: {
+    height: '100%',
+    backgroundColor: '#4CAF50',
+  },
+  cancelButton: {
+    marginTop: 30,
+    paddingVertical: 10,
+    paddingHorizontal: 20,
+    backgroundColor: 'rgba(255, 59, 48, 0.8)',
+    borderRadius: 5,
+  },
+  cancelButtonText: {
+    color: 'white',
+    fontWeight: 'bold',
+  },
   header: {
-    paddingHorizontal: spacing.xl,
-    paddingTop: spacing.lg,
-    paddingBottom: spacing.md,
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 20,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
@@ -2155,7 +2739,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     paddingVertical: spacing.xxl,
   },
-  loadingText: {
+  loadingStatusText: {
     marginTop: spacing.md,
     color: colors.text.secondary,
   },
@@ -2475,7 +3059,6 @@ const styles = StyleSheet.create({
   regenerateButton: {
     overflow: 'hidden',
     borderRadius: borderRadius.sm,
-    elevation: 2,
     ...shadows.small,
   },
   regenerateGradient: {
@@ -2522,6 +3105,17 @@ const styles = StyleSheet.create({
     color: colors.accent.green,
     marginLeft: 4,
     fontWeight: '500',
+  },
+  settingsDivider: {
+    height: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.1)',
+    marginVertical: 15,
+  },
+  notificationItem: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 15,
   },
 });
 

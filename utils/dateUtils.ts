@@ -4,7 +4,7 @@
  * @returns Day name (Sunday, Monday, etc.)
  */
 export function getDayName(dayIndex: number): string {
-  const days = [" Sunday\, \Monday\, \Tuesday\, \Wednesday\, \Thursday\, \Friday\, \Saturday\];
- return days[dayIndex];
+  const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+  return days[dayIndex];
 }
 

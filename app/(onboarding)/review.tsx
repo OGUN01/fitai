@@ -134,33 +134,50 @@ export default function ReviewScreen() {
       setCompleting(true);
       console.log("Starting onboarding completion...");
       
-      // Use the dedicated completeOnboarding function from ProfileContext
-      // This has additional safeguards to ensure the flag is properly set
-      await completeOnboarding();
-      
-      console.log("Profile updated successfully, onboarding complete");
-      
-      // Mark onboarding as completed locally
+      // First show a success banner in the review screen
       setOnboardingCompleted(true);
       
-      // Force refresh profile to verify completion status
-      const refreshedProfile = await refreshProfile(true);
+      // Set step to completed so navigation guard knows to allow the completed screen
+      await updateProfile({
+        current_onboarding_step: 'completed'
+      });
       
-      // Double-check that onboarding is now marked as complete
-      if (refreshedProfile && !refreshedProfile.has_completed_onboarding) {
-        console.error("Warning: Onboarding still not marked as complete after refresh");
-        // Try one more direct update as a fallback
-        await updateProfile({
-          has_completed_onboarding: true,
-          current_onboarding_step: 'completed'
-        });
-      }
-      
-      // Navigate to main app
-      setTimeout(() => {
-        router.replace('/(tabs)');
+      // Wait briefly to show the success message before navigating
+      setTimeout(async () => {
+        try {
+          console.log("Navigating to completed screen to show summary");
+          // First navigate to the completion screen to show the summary
+          router.replace('/(onboarding)/completed');
+          
+          // Then perform the actual onboarding completion tasks asynchronously
+          await completeOnboarding();
+          console.log("Profile updated successfully, onboarding complete");
+          
+          // Force refresh profile to verify completion status
+          const refreshedProfile = await refreshProfile(true);
+          
+          // Double-check that onboarding is now marked as complete
+          if (user && refreshedProfile && !refreshedProfile.has_completed_onboarding) {
+            console.error("Warning: Onboarding still not marked as complete after refresh");
+            // Try one more direct update as a fallback
+            await updateProfile({
+              has_completed_onboarding: true,
+              current_onboarding_step: 'completed'
+            });
+          } else if (!user && refreshedProfile && !refreshedProfile.has_completed_local_onboarding) {
+            console.error("Warning: Local onboarding still not marked as complete after refresh");
+            // Try one more direct update as a fallback
+            await updateProfile({
+              has_completed_local_onboarding: true,
+              current_onboarding_step: 'completed'
+            });
+          }
+        } catch (asyncError) {
+          console.error("Error in async onboarding completion:", asyncError);
+        } finally {
+          setCompleting(false);
+        }
       }, 1000);
-      
     } catch (error) {
       console.error("Error completing onboarding:", error);
       Alert.alert(
@@ -168,7 +185,6 @@ export default function ReviewScreen() {
         "There was a problem completing your setup. Please try again.",
         [{ text: "OK" }]
       );
-    } finally {
       setCompleting(false);
     }
   };

@@ -6,15 +6,15 @@ import { StatusBar } from 'expo-status-bar';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
 import { MaterialCommunityIcons, Ionicons } from '@expo/vector-icons';
-import gemini from '../../../lib/gemini';
-import { useProfile } from '../../../contexts/ProfileContext';
-import { useAuth } from '../../../contexts/AuthContext';
-import supabase from '../../../lib/supabase';
+import gemini from './lib/gemini';
+import { useProfile } from './contexts/ProfileContext';
+import { useAuth } from './contexts/AuthContext';
+import supabase from './lib/supabase';
 import { format } from 'date-fns';
-import { markMealComplete, isMealCompleted } from '../../../services/trackingService';
-import { FadeIn, SlideIn, ScaleIn, Pulse } from '../../../components/animations';
-import { colors, spacing, borderRadius, shadows, gradients } from '../../../theme/theme';
-import StyledText from '../../../components/ui/StyledText';
+import { markMealComplete, isMealCompleted } from './services/trackingService';
+import { FadeIn, SlideIn, ScaleIn, Pulse } from './components/animations';
+import { colors, spacing, borderRadius, shadows, gradients } from './theme/theme';
+import StyledText from './components/ui/StyledText';
 
 // Define interfaces for the meal plan data structure
 interface Nutrition {
@@ -74,6 +74,16 @@ export default function NutritionScreen() {
   const [markingMeal, setMarkingMeal] = useState(false);
   const [snackbarVisible, setSnackbarVisible] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState('');
+  // Store expanded sections state - moved inside component
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
+
+  // Function to toggle section expansion
+  const toggleSection = (sectionId: string) => {
+    setExpandedSections(prev => ({
+      ...prev,
+      [sectionId]: !prev[sectionId],
+    }));
+  };
   
   // Fallback meal plan for when the API fails
   const fallbackMealPlan: MealPlan = {
@@ -131,7 +141,7 @@ export default function NutritionScreen() {
   const userPreferences = {
     dietType: (profile?.diet_type || "balanced") as 'vegetarian' | 'vegan' | 'non-vegetarian' | 'pescatarian' | 'flexitarian',
     dietPlanPreference: (profile?.diet_plan_preference || "balanced") as 'balanced' | 'high-protein' | 'low-carb' | 'keto' | 'mediterranean',
-    fitnessGoal: (profile?.fitness_goal || "maintenance") as 'weight loss' | 'muscle gain' | 'improved fitness' | 'maintenance',
+    fitnessGoal: (profile?.fitness_goals?.[0] || "maintenance") as 'weight loss' | 'muscle gain' | 'improved fitness' | 'maintenance',
     allergies: profile?.allergies || [],
     mealFrequency: profile?.meal_frequency || 3,
     preferredMealTimes: ["8:00 AM", "12:30 PM", "6:30 PM"],
@@ -240,12 +250,16 @@ export default function NutritionScreen() {
             const summary = generateMealSummary(profile.meal_plans as MealPlan);
             
             // Save the summary to the database within diet_preferences JSONB field
-            // instead of trying to save to a non-existent column
+            const updatedDietPreferences = { 
+              ...(profile.diet_preferences || {}),
+              meal_summary: summary,
+              meal_frequency: profile.diet_preferences?.meal_frequency || 3,
+              diet_type: profile?.diet_type || "balanced",
+              allergies: profile?.allergies || [],
+            };
+            
             updateProfile({
-              diet_preferences: {
-                ...profile.diet_preferences,
-                meal_summary: summary
-              }
+              diet_preferences: updatedDietPreferences as any
             });
           }
         } else {
@@ -423,7 +437,7 @@ export default function NutritionScreen() {
             
             <Divider style={styles.divider} />
             
-            <Text variant="titleSmall" style={[styles.recipeTitle, isCompleted && styles.completedText]}>{meal.recipe.name}</Text>
+            <Text variant="titleSmall" style={[styles.recipeName, isCompleted && styles.completedText]}>{meal.recipe.name}</Text>
             
             <View style={styles.nutritionInfo}>
               <View style={[styles.nutritionChip, isCompleted && styles.completedChip]}>
@@ -589,10 +603,7 @@ export default function NutritionScreen() {
                       >
                         <StyledText 
                           variant="bodyMedium" 
-                          style={[
-                            styles.dayText,
-                            selectedDay === dayPlan.day && styles.selectedDayText
-                          ]}
+                          style={selectedDay === dayPlan.day ? styles.selectedDayText : styles.dayText}
                         >
                           {dayPlan.day}
                         </StyledText>
@@ -661,7 +672,7 @@ export default function NutritionScreen() {
             
             {/* Meals for the selected day */}
             {selectedDayPlan?.meals.map((meal, index) => (
-              <SlideIn from="right" key={`meal-${index}`} duration={500} delay={300 + (index * 100)}>
+              <SlideIn direction="right" key={`meal-${index}`} duration={500} delay={300 + (index * 100)}>
                 <View style={styles.mealContainer}>
                   <View style={styles.mealHeader}>
                     <View style={styles.mealTitleContainer}>
@@ -791,25 +802,30 @@ export default function NutritionScreen() {
                       onPress={() => handleCompleteMeal(selectedDay, meal.meal)}
                       disabled={markingMeal}
                     >
-                      <LinearGradient
-                        colors={isMealMarkedComplete(selectedDay, meal.meal) 
-                          ? [colors.accent.green, colors.accent.green] 
-                          : [colors.primary.main, colors.primary.dark]}
-                        style={styles.gradientButton}
-                        start={{ x: 0, y: 0 }}
-                        end={{ x: 1, y: 1 }}
-                      >
-                        <MaterialCommunityIcons 
-                          name={isMealMarkedComplete(selectedDay, meal.meal) ? "check-circle" : "silverware-fork-knife"} 
-                          size={20} 
-                          color={colors.text.primary} 
-                        />
-                        <StyledText variant="bodyMedium" style={styles.buttonText}>
-                          {isMealMarkedComplete(selectedDay, meal.meal) 
-                            ? "Marked as Consumed" 
-                            : markingMeal ? "Marking..." : "Mark as Consumed"}
-                        </StyledText>
-                      </LinearGradient>
+                      {(() => {
+                        const isCompleted = completedMeals[selectedDay]?.[meal.meal] || false;
+                        return (
+                          <LinearGradient
+                            colors={isCompleted 
+                              ? [colors.accent.green, colors.accent.green] 
+                              : [colors.primary.main, colors.primary.dark]}
+                            style={styles.gradientButton}
+                            start={{ x: 0, y: 0 }}
+                            end={{ x: 1, y: 1 }}
+                          >
+                            <MaterialCommunityIcons 
+                              name={isCompleted ? "check-circle" : "silverware-fork-knife"} 
+                              size={20} 
+                              color={colors.text.primary} 
+                            />
+                            <StyledText variant="bodyMedium" style={styles.buttonText}>
+                              {isCompleted 
+                                ? "Marked as Consumed" 
+                                : markingMeal ? "Marking..." : "Mark as Consumed"}
+                            </StyledText>
+                          </LinearGradient>
+                        );
+                      })()}
                     </TouchableOpacity>
                   </LinearGradient>
                 </View>
@@ -840,9 +856,9 @@ const styles = StyleSheet.create({
     backgroundColor: colors.background.primary,
   },
   header: {
-    paddingHorizontal: spacing.xl,
-    paddingTop: spacing.lg,
-    paddingBottom: spacing.md,
+    paddingHorizontal: spacing.md,
+    paddingTop: spacing.md,
+    paddingBottom: spacing.sm,
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
@@ -850,47 +866,30 @@ const styles = StyleSheet.create({
   },
   title: {
     color: colors.text.primary,
-    fontSize: 32,
-    fontWeight: 'bold',
-  },
-  profileGradient: {
-    width: 50,
-    height: 50,
-    borderRadius: 25,
-    justifyContent: 'center',
-    alignItems: 'center',
-    ...shadows.medium,
-  },
-  profileAvatar: {
-    backgroundColor: 'transparent',
-  },
-  profileLabel: {
-    fontSize: 16,
     fontWeight: 'bold',
   },
   scrollView: {
     flex: 1,
   },
   scrollContent: {
-    paddingHorizontal: spacing.lg,
-    paddingBottom: spacing.xxl,
+    paddingBottom: spacing.lg,
   },
   loadingContainer: {
     flex: 1,
     justifyContent: 'center',
     alignItems: 'center',
-    paddingVertical: spacing.xxl,
+    paddingVertical: spacing.lg,
   },
   loadingText: {
-    marginTop: spacing.md,
+    marginTop: spacing.sm,
     color: colors.text.secondary,
   },
   errorContainer: {
-    paddingVertical: spacing.xl,
+    paddingVertical: spacing.lg,
   },
   errorCard: {
     borderRadius: borderRadius.lg,
-    padding: spacing.xl,
+    padding: spacing.lg,
     alignItems: 'center',
     ...shadows.medium,
   },
@@ -915,6 +914,107 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.sm,
     paddingHorizontal: spacing.md,
     borderRadius: borderRadius.round,
+  },
+  profileGradient: {
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    justifyContent: 'center',
+    alignItems: 'center',
+    ...shadows.medium,
+  },
+  profileAvatar: {
+    backgroundColor: 'transparent',
+  },
+  profileLabel: {
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  mealCard: {
+    marginHorizontal: spacing.md,
+    marginBottom: spacing.md,
+    borderRadius: borderRadius.lg,
+    overflow: 'hidden',
+    backgroundColor: colors.surface.light,
+    ...shadows.medium,
+  },
+  completedMealCard: {
+    opacity: 0.85,
+    backgroundColor: colors.surface.main,
+  },
+  cardGradient: {
+    padding: spacing.sm,
+    borderRadius: borderRadius.lg - 2,
+  },
+  completedGradient: {
+    opacity: 0.7,
+  },
+  mealTitle: {
+    color: colors.text.primary,
+    marginLeft: spacing.sm,
+  },
+  mealTitleRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  completedText: {
+    color: colors.text.muted,
+    textDecorationLine: 'line-through',
+  },
+  mealTime: {
+    color: colors.text.secondary,
+    marginLeft: spacing.sm,
+  },
+  consumedBadge: {
+    backgroundColor: colors.feedback.success,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs / 2,
+    borderRadius: borderRadius.sm,
+    alignSelf: 'flex-start',
+  },
+  consumedText: {
+    color: colors.text.primary,
+    fontSize: 12,
+  },
+  recipeName: {
+    color: colors.text.primary,
+    fontWeight: 'bold',
+    marginBottom: spacing.md,
+  },
+  divider: {
+    marginVertical: spacing.sm,
+  },
+  nutritionInfo: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    marginHorizontal: spacing.md,
+    marginTop: spacing.sm,
+  },
+  nutritionChip: {
+    backgroundColor: colors.surface.light,
+    borderRadius: borderRadius.sm,
+    paddingHorizontal: spacing.sm,
+    paddingVertical: spacing.xs / 2,
+    marginRight: spacing.sm,
+    marginBottom: spacing.sm,
+  },
+  completedChip: {
+    backgroundColor: colors.surface.main,
+  },
+  chipText: {
+    fontSize: 12,
+    color: colors.text.secondary,
+  },
+  completedChipText: {
+    color: colors.text.muted,
+  },
+  accordion: {
+    backgroundColor: 'transparent',
+  },
+  mealButton: {
+    margin: spacing.xs,
+    borderRadius: borderRadius.md,
   },
   buttonText: {
     color: colors.text.primary,
@@ -989,23 +1089,6 @@ const styles = StyleSheet.create({
   mealTitleContainer: {
     flexDirection: 'row',
     alignItems: 'center',
-  },
-  mealTitle: {
-    color: colors.text.primary,
-    marginLeft: spacing.sm,
-  },
-  mealTime: {
-    color: colors.text.muted,
-  },
-  mealCard: {
-    borderRadius: borderRadius.lg,
-    padding: spacing.lg,
-    ...shadows.medium,
-  },
-  recipeName: {
-    color: colors.text.primary,
-    fontWeight: 'bold',
-    marginBottom: spacing.md,
   },
   nutritionBadges: {
     flexDirection: 'row',
@@ -1092,6 +1175,23 @@ const styles = StyleSheet.create({
   },
   snackbar: {
     backgroundColor: colors.surface.dark,
+  },
+  trackButton: {
+    marginTop: spacing.xs,
+    borderRadius: borderRadius.md,
+    overflow: 'hidden',
+  },
+  trackButtonGradient: {
+    paddingHorizontal: spacing.md,
+    paddingVertical: spacing.sm,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  trackButtonText: {
+    color: colors.text.primary,
+    fontWeight: 'bold',
+    marginLeft: spacing.xs,
   },
 });
 

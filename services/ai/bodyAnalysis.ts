@@ -5,10 +5,9 @@
  * with advanced error handling and fallback mechanisms.
  */
 
-import gemini from '../../lib/gemini';
+import gemini, { extractAndParseJSON } from '../../lib/gemini';
 import { API_TIMEOUTS } from '../../constants/api';
 import { promptManager } from './promptManager';
-import { extractAndParseJSON } from '../../lib/gemini';
 
 // Type definitions
 export interface BodyPhoto {
@@ -251,75 +250,75 @@ export class BodyAnalysisService {
       if (bodyFat) {
         if (userDetails.gender.toLowerCase() === 'male') {
           if (bodyFat < 10) {
-            bodyType = 'Athletic (low body fat)'; 
-            recommendedFocusAreas = ['Muscle maintenance', 'Performance training', 'Adequate nutrition'];
+            bodyType = 'Athletic build with low body fat'; 
+            recommendedFocusAreas = ['Maintain your current muscle', 'Focus on performance training', 'Eat enough to support your activity'];
           } else if (bodyFat < 20) {
-            bodyType = 'Fit to Average';
-            recommendedFocusAreas = ['Body composition improvement', 'Strength training', 'Balanced nutrition'];
+            bodyType = 'Balanced build with good muscle tone';
+            recommendedFocusAreas = ['Work on improving muscle definition', 'Build overall strength', 'Keep a balanced diet'];
           } else {
-            bodyType = 'Higher body fat';
-            recommendedFocusAreas = ['Fat loss', 'Cardiovascular training', 'Caloric deficit'];
+            bodyType = 'Build with higher body fat';
+            recommendedFocusAreas = ['Focus on fat loss', 'Add cardio workouts', 'Reduce daily calories slightly'];
           }
         } else if (userDetails.gender.toLowerCase() === 'female') {
           if (bodyFat < 18) {
-            bodyType = 'Athletic (low body fat)';
-            recommendedFocusAreas = ['Muscle maintenance', 'Performance training', 'Adequate nutrition'];
+            bodyType = 'Athletic build with low body fat';
+            recommendedFocusAreas = ['Maintain your current muscle', 'Focus on performance training', 'Eat enough to support your activity'];
           } else if (bodyFat < 28) {
-            bodyType = 'Fit to Average';
-            recommendedFocusAreas = ['Body composition improvement', 'Strength training', 'Balanced nutrition'];
+            bodyType = 'Balanced build with good muscle tone';
+            recommendedFocusAreas = ['Work on improving muscle definition', 'Build overall strength', 'Keep a balanced diet'];
           } else {
-            bodyType = 'Higher body fat';
-            recommendedFocusAreas = ['Fat loss', 'Cardiovascular training', 'Caloric deficit'];
+            bodyType = 'Build with higher body fat';
+            recommendedFocusAreas = ['Focus on fat loss', 'Add cardio workouts', 'Reduce daily calories slightly'];
           }
         }
       } else {
         // Use BMI as fallback if body fat percentage isn't available
         if (bmi < 18.5) {
-          bodyType = 'Ectomorph tendency (lean build)';
-          recommendedFocusAreas = ['Strength training', 'Muscle building', 'Overall caloric surplus'];
+          bodyType = 'Naturally slim build';
+          recommendedFocusAreas = ['Build strength with regular weight training', 'Add muscle with proper nutrition', 'Eat more calories than you burn'];
         } else if (bmi >= 18.5 && bmi < 25) {
-          bodyType = 'Likely balanced body type';
-          recommendedFocusAreas = ['Balanced approach', 'Strength and conditioning'];
+          bodyType = 'Balanced build';
+          recommendedFocusAreas = ['Mix of strength and cardio training', 'Focus on overall fitness'];
         } else if (bmi >= 25 && bmi < 30) {
-          bodyType = 'Endomorph tendency (holds more body fat)';
-          recommendedFocusAreas = ['Fat loss', 'Cardiovascular training', 'Moderate caloric deficit'];
+          bodyType = 'Solid build with some extra weight';
+          recommendedFocusAreas = ['Focus on fat loss', 'Add regular cardio', 'Slightly reduce daily calories'];
         } else {
-          bodyType = 'Strong endomorph tendency';
-          recommendedFocusAreas = ['Fat loss', 'Cardiovascular training', 'Strength training', 'Caloric deficit'];
+          bodyType = 'Build with significant extra weight';
+          recommendedFocusAreas = ['Focus on fat loss', 'Regular cardio workouts', 'Strength training', 'Reduce daily calories'];
         }
       }
     } else {
       // Without sufficient data, provide general recommendations
-      recommendedFocusAreas = ['Balanced fitness approach', 'Combination of strength and cardio'];
+      recommendedFocusAreas = ['Mix of strength and cardio training', 'Balance of different exercise types'];
     }
     
     // Default posture analysis
     const posture: PostureAnalysis = {
-      alignment: 'Unable to assess without image analysis',
-      issues: ['Cannot determine without successful analysis'],
-      recommendations: ['Maintain neutral spine', 'Practice good standing and sitting posture']
+      alignment: 'Not enough information to assess your posture',
+      issues: ['We need more information to give you feedback on your posture'],
+      recommendations: ['Stand tall with shoulders back', 'Sit with good back support']
     };
     
     // Default proportions
     const bodyProportions: BodyProportions = {
-      shoulders: 'Unable to assess',
-      torso: 'Unable to assess',
-      arms: 'Unable to assess',
-      legs: 'Unable to assess'
+      shoulders: 'Not enough information available',
+      torso: 'Not enough information available',
+      arms: 'Not enough information available',
+      legs: 'Not enough information available'
     };
     
     // Return a structured fallback response
     return {
       bodyFatEstimate: null, // Cannot estimate without analysis
       bodyType,
-      analysisText: `Unable to provide detailed analysis due to: ${errorMessage}. ` +
-                  `Basic assessment based on provided metrics (height, weight) suggests ${bodyType}.`,
+      analysisText: `Based on your height and weight information, you have a ${bodyType.toLowerCase()}. ` +
+                  `To get more detailed feedback, please try uploading a photo for analysis.`,
       bodyProportions,
       posture,
       recommendedFocusAreas,
       recommendations: [
-        'Consider consulting with a fitness professional for personalized assessment',
-        'Focus on a balanced approach to fitness until more specific guidance is available',
+        'Talk to a fitness trainer for personalized advice',
+        'Start with a balanced fitness plan until you get more specific guidance',
         ...recommendedFocusAreas
       ],
       isFallback: true,

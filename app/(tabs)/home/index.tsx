@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { View, StyleSheet, ActivityIndicator } from 'react-native';
 import { useFocusEffect } from 'expo-router';
 import { Text, Button } from 'react-native-paper';
@@ -6,14 +6,17 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
 import { EventRegister } from 'react-native-event-listeners';
 import { useRouter } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { getRandomQuote, getNextQuote } from '../../../data/motivationalQuotes';
+import * as Haptics from 'expo-haptics';
 
 // Import theme and components
 import { colors, spacing } from '../../../theme/theme';
 import ModernHomeScreen from '../../../components/home/ModernHomeScreen';
 import EnhancedHomeScreen from '../../../components/home/EnhancedHomeScreen';
+import LoginPrompt from '../../../components/ui/LoginPrompt';
 
-// Import needed functions for streak and progress calculation
-import { getUserStreak } from '../../../utils/profileHelpers';
+// Import needed functions for progress calculation
 import { format } from 'date-fns';
 
 // Import tracking service functions
@@ -22,6 +25,7 @@ import { isWorkoutCompleted, isMealCompleted } from '../../../services/trackingS
 // Import real contexts instead of using mock data
 import { useAuth } from '../../../contexts/AuthContext';
 import { useProfile } from '../../../contexts/ProfileContext';
+import { useStreak } from '../../../contexts/StreakContext';
 import { UserProfile } from '../../../types/profile'; // Import UserProfile from the types folder
 
 // Enhanced type for UserProfile with workout_plan
@@ -135,7 +139,7 @@ const LoadingScreen = () => (
 );
 
 // Simple error screen component
-const ErrorScreen = ({ message, onRetry }) => (
+const ErrorScreen = ({ message, onRetry }: { message: string, onRetry: () => void }) => (
   <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
     <Text style={{ fontSize: 16, color: colors.text.primary, marginBottom: 20, textAlign: 'center' }}>
       Something went wrong: {message}
@@ -153,28 +157,33 @@ export default function HomeScreen() {
   // Get authenticated user
   const { user } = useAuth();  
   const { profile, loading, error } = useProfile();
+  const { currentStreak, syncStreakData } = useStreak();
   const { workouts, todayWorkout, hasWorkouts } = useWorkouts();
   const { mealTimes } = useMeals();
   
   // Define state variables
   const [refreshing, setRefreshing] = useState(false);
   const [quote, setQuote] = useState<string | null>(null);
-  
-  // Keep track of the active tab
+  const [showLoginBanner, setShowLoginBanner] = useState(true);
+  const [isRefreshingQuote, setIsRefreshingQuote] = useState(false);
   const [activeTab, setActiveTab] = useState<'modern' | 'enhanced'>('enhanced');
-  
-  // Calculate the streak days if any
   const [streak, setStreak] = useState(0);
-  // Track today's meal and workout completion
   const [todayMealsCompleted, setTodayMealsCompleted] = useState<string[]>([]);
   const [todayWorkoutCompleted, setTodayWorkoutCompleted] = useState(false);
+  const [isWorkoutScheduledToday, setIsWorkoutScheduledToday] = useState(false);
   
   // Register event listeners for meal and workout completion
   useEffect(() => {
     // Listen for meal completion events
     const mealCompletionListener = EventRegister.addEventListener('mealCompleted', (data: any) => {
-      if (data && data.userId === user?.id) {
-        console.log('Home tab received meal completion event:', data);
+      console.log('🍽️ Home tab received meal completion event:', data);
+      
+      // Be more lenient with user ID matching to handle async user loading
+      // Only use the user ID check if we have a user and the event has a userId
+      const shouldProcess = !user || !data.userId || data.userId === user.id || data.userId === 'local_user';
+      
+      if (data && shouldProcess) {
+        console.log('✅ Processing meal completion in home tab');
         // Update the meals completed state
         setTodayMealsCompleted(prev => {
           // Only add the meal if it's not already in the array
@@ -183,129 +192,309 @@ export default function HomeScreen() {
           }
           return prev;
         });
+        
+        // Force an immediate refresh of completion status
+        setTimeout(() => {
+          checkCompletionStatus();
+        }, 100);
+      } else {
+        console.log('❌ Home tab ignoring meal completion event - user ID mismatch');
       }
     });
     
     // Listen for workout completion event
     const workoutCompletionListener = EventRegister.addEventListener('workoutCompleted', (data: any) => {
-      if (data && data.userId === user?.id) {
-        console.log('Home tab received workout completion event:', data);
-        
+      console.log('🏋️ Home tab received workout completion event:', data);
+      
+      // Be more lenient with user ID matching to handle async user loading
+      // Only use the user ID check if we have a user and the event has a userId
+      const shouldProcess = !user || !data.userId || data.userId === user.id || data.userId === 'local_user';
+      
+      if (data && shouldProcess) {
+        console.log('✅ Processing workout completion in home tab');
         // Update the workout completed state
         setTodayWorkoutCompleted(true);
         
-        // Force a refresh of the UI after a small delay
+        // Force an immediate refresh of completion status
         setTimeout(() => {
           checkCompletionStatus();
-          
-          // Log completion status for debugging
-          const currentMeals = todayMealsCompleted || [];
-          const completedMeals = todayMealsCompleted || [];
-          
-          console.log('Today workout completion status:', {
-            workoutCompleted: todayWorkoutCompleted,
-            mealsCompleted: completedMeals.length,
-            totalMeals: currentMeals.length || 0,
-            activitySummary
-          });
-        }, 500);
+        }, 100);
+      } else {
+        console.log('❌ Home tab ignoring workout completion event - user ID mismatch');
       }
     });
     
-    // Cleanup listeners on component unmount
+    // Listen for direct streak updates
+    const streakUpdatedListener = EventRegister.addEventListener('streakUpdated', (data: any) => {
+      console.log('🔥 Home tab received streak update event:', data);
+      if (data && typeof data.streak === 'number') {
+        console.log(`Setting streak state directly to ${data.streak}`);
+        setStreak(data.streak);
+      }
+    });
+    
+    // Clean up event listeners when component unmounts
     return () => {
       EventRegister.removeEventListener(mealCompletionListener as string);
       EventRegister.removeEventListener(workoutCompletionListener as string);
+      EventRegister.removeEventListener(streakUpdatedListener as string);
     };
   }, [user, todayWorkoutCompleted]);
   
-  // Function to check meal and workout completion status
-  const checkCompletionStatus = async () => {
-    if (!user) return;
-    
-    try {
-      // Check meal completion
-      const today = format(new Date(), 'yyyy-MM-dd');
-      const completedMeals: string[] = [];
-      
-      // Check each meal type
-      const standardMealTypes = ['Breakfast', 'Lunch', 'Dinner'];
-      for (const mealType of standardMealTypes) {
-        try {
-          const isCompleted = await isMealCompleted(user.id, today, mealType);
-          if (isCompleted) {
-            completedMeals.push(mealType);
-          }
-        } catch (err) {
-          console.error(`Error checking completion for ${mealType}:`, err);
-        }
-      }
-      
-      setTodayMealsCompleted(completedMeals);
-      
-      // Check workout completion for today
-      try {
-        const isWorkoutDone = await isWorkoutCompleted(user.id, new Date());
-        setTodayWorkoutCompleted(isWorkoutDone);
-      } catch (err) {
-        console.error('Error checking workout completion:', err);
-      }
-    } catch (err) {
-      console.error('Error checking completion status:', err);
-    }
-  };
-  
+  // Use useFocusEffect to run checkCompletionStatus when the screen comes into focus
   useFocusEffect(
     React.useCallback(() => {
-      if (profile) {
-        // Calculate streak from workout history or fetch from profile if it exists
-        const calculatedStreak = profile.streak || 0;
-        setStreak(calculatedStreak);
-        
-        // Set motivational quote from profile cache or get new one
-        if (profile.motivational_quote) {
-          setQuote(profile.motivational_quote);
-        } else {
-          // Default quote if none exists
-          setQuote("Believe in yourself and all that you are.");
-        }
-        
-        // Check completion status when screen is focused
+      console.log('Home screen focused, checking completion status...');
+      // Check completion status regardless of auth state - works for both local and authenticated users
         checkCompletionStatus();
-      }
-    }, [profile, user])
+        loadSavedQuote(); // Also load quote on focus
+      
+      // Check if login banner should be hidden
+      const checkBannerPreference = async () => {
+        try {
+          const hideBanner = await AsyncStorage.getItem('hideLoginBanner');
+          if (hideBanner === 'true') {
+            setShowLoginBanner(false);
+          }
+        } catch (e) {
+          console.warn('Could not read banner preference:', e);
+        }
+      };
+      checkBannerPreference();
+    }, [profile]) // Keep profile as dependency to catch any profile changes
   );
   
-  // Function to refresh quote
-  const refreshQuote = () => {
-    // In a real app, this would fetch a new quote from a quotes API
-    setQuote("Your body can stand almost anything. It's your mind that you have to convince.");
+  // Get the current day name (needed for useMemo hooks below)
+  const currentDayName = format(new Date(), 'EEEE');
+
+  // Check if there's a workout scheduled for today based on workout days
+  // Removed useMemo of isWorkoutScheduledToday to use state variable instead
+  
+  // Update isWorkoutScheduledToday state on profile changes
+  useEffect(() => {
+    if (profile?.workout_preferences?.preferred_days) {
+      const preferredDays = profile.workout_preferences.preferred_days || [];
+      const normalizedPreferredDays = preferredDays.map(day => 
+        typeof day === 'string' ? day.toLowerCase() : ''
+      );
+      setIsWorkoutScheduledToday(normalizedPreferredDays.includes(currentDayName.toLowerCase()));
+    } else {
+      setIsWorkoutScheduledToday(false);
+    }
+  }, [profile, currentDayName]);
+
+  // Get the next workout day (if workouts exist)
+  const getNextWorkout = useMemo(() => {
+    if (!profile || !hasWorkouts || !workouts || workouts.length === 0) {
+      return null;
+    }
+    // Simplified example, actual logic might be more complex
+    // This assumes 'workouts' is an array of objects with a 'day' or 'date' property
+    // and 'todayWorkout' gives info about today.
+    // For now, returning the structure used by components.
+    return {
+      day: todayWorkout?.title ? 'Today' : 'Next', // Placeholder
+      name: todayWorkout?.title || workouts[0]?.title || 'Upcoming Workout',
+      daysUntil: 0 // Placeholder, would need date logic
+    };
+  }, [profile, hasWorkouts, workouts, todayWorkout]);
+  
+  // Create the activity summary data for the UI components
+  const activitySummary = useMemo(() => {
+    const isWorkoutDay = isWorkoutScheduledToday; // Use the memoized value
+    const isRestDay = !isWorkoutDay;
+    let dailyProgressPercentage = 0;
+    const totalMeals = mealTimes?.length || 1;
+
+    if (isWorkoutDay) {
+      const completedItems = (todayWorkoutCompleted ? 1 : 0) + todayMealsCompleted.length;
+      const totalItems = 1 + totalMeals;
+      dailyProgressPercentage = totalItems > 0 ? Math.round((completedItems / totalItems) * 100) : 0;
+    } else {
+      dailyProgressPercentage = totalMeals > 0 ? Math.round((todayMealsCompleted.length / totalMeals) * 100) : 0;
+    }
+    
+    let workoutPercentage = 0;
+    if (isRestDay) {
+      workoutPercentage = 100;
+    } else {
+      // It's a scheduled workout day
+      workoutPercentage = todayWorkoutCompleted ? 100 : 0;
+    }
+
+    return {
+      workouts: {
+        count: todayWorkoutCompleted ? 1 : 0,
+        percentage: workoutPercentage,
+        isRestDay: isRestDay,
+        scheduledForToday: isWorkoutDay,
+        todayCompleted: todayWorkoutCompleted,
+        todayWorkoutName: todayWorkout?.title || (isRestDay ? 'Rest Day' : 'Workout'),
+        dayStreak: streak
+      },
+      meals: {
+        count: todayMealsCompleted.length,
+        percentage: totalMeals > 0 ? Math.round((todayMealsCompleted.length / totalMeals) * 100) : 0,
+        pendingMeals: mealTimes
+          ?.filter(meal => !todayMealsCompleted.includes(meal.name))
+          ?.map(meal => meal.name) || [],
+        allCompleted: (mealTimes?.length || 0) > 0 && todayMealsCompleted.length === (mealTimes?.length || 0)
+      },
+      progress: {
+        percentage: dailyProgressPercentage
+      }
+    };
+  }, [profile, todayMealsCompleted, todayWorkoutCompleted, mealTimes, todayWorkout, streak, isWorkoutScheduledToday]);
+  
+  // Function to check meal and workout completion status
+  const checkCompletionStatus = async () => {
+    console.log('Checking completion status for home screen...');
+    try {
+      // Check if workout is completed for today
+      const now = new Date();
+      const dateString = format(now, 'yyyy-MM-dd');
+      const userId = user?.id || 'local_user';
+      
+      // Determine if today is a workout day
+      const currentDayName = format(now, 'EEEE');
+      
+      // Check if workout is scheduled for today based on profile workout_preferences
+      setIsWorkoutScheduledToday(
+        profile?.workout_preferences?.preferred_days
+          ? profile.workout_preferences.preferred_days.some(
+              (day: string) => day === currentDayName
+            )
+          : false
+      );
+      
+      // Check if workout is completed for today
+      let workoutDone = false;
+      try {
+        workoutDone = await isWorkoutCompleted(userId, dateString);
+        console.log(`🏋️‍♂️ Is workout completed for today? ${workoutDone ? 'Yes' : 'No'}`);
+      } catch (workoutCheckError) {
+        console.error('Error checking workout completion:', workoutCheckError);
+      }
+      
+      // Check if meals are completed for today
+      let mealResults: string[] = [];
+      try {
+        // We check each meal type
+        const mealTypes = ["Breakfast", "Lunch", "Dinner"];
+        for (const mealType of mealTypes) {
+          const isMealDone = await isMealCompleted(userId, dateString, mealType);
+          if (isMealDone) {
+            mealResults.push(mealType);
+          }
+        }
+        console.log(`🍽️ Meals completed for today: ${mealResults.length > 0 ? mealResults.join(', ') : 'None'}`);
+      } catch (mealCheckError) {
+        console.error('Error checking meal completion:', mealCheckError);
+      }
+      
+      setTodayMealsCompleted(mealResults);
+      setTodayWorkoutCompleted(workoutDone);
+
+      // --- STREAK CHECK ---
+      try {
+        // Check if today is a rest day based on workout schedule
+        const currentDayName = format(new Date(), 'EEEE').toLowerCase();
+        const isRestDay = profile?.workout_preferences?.preferred_days 
+          ? !profile.workout_preferences.preferred_days.some(
+              (day: string) => day.toLowerCase() === currentDayName
+            )
+          : true; // Default to rest day if no preferences
+        
+        console.log(`Checking streak (today is ${isRestDay ? 'a REST day' : 'a WORKOUT day'})`);
+        
+        // Sync streak data to ensure we have the latest streak value
+        await syncStreakData();
+        
+        // Get the current streak from the StreakContext
+        console.log(`Current streak: ${currentStreak} days`);
+        setStreak(currentStreak);
+      } catch (streakError) {
+        console.error('Error checking streak:', streakError);
+      }
+    } catch (e) {
+      console.error('Error checking completion status:', e);
+    }
+  };
+
+  // Function to load a saved quote from AsyncStorage
+  const loadSavedQuote = async () => {
+    try {
+      const savedQuote = await AsyncStorage.getItem('motivational_quote');
+      if (savedQuote) {
+        setQuote(savedQuote);
+      } else {
+        // If no saved quote, get a random one and save it
+        const newQuote = getRandomQuote();
+        setQuote(newQuote);
+        await AsyncStorage.setItem('motivational_quote', newQuote);
+      }
+    } catch (error) {
+      console.error('Error loading saved quote:', error);
+      // Fallback to a random quote if loading fails
+      setQuote(getRandomQuote());
+    }
+  };
+
+  // Function to refresh quote with animation
+  const refreshQuote = async () => {
+    setIsRefreshingQuote(true);
+    
+    try {
+      // Get the next quote based on the current one
+      const currentQuote = quote || '';
+      const newQuote = getNextQuote(currentQuote);
+      
+      // Save the new quote to AsyncStorage
+      await AsyncStorage.setItem('motivational_quote', newQuote);
+      
+      // Update state with the new quote
+      setQuote(newQuote);
+    } catch (error) {
+      console.error('Error refreshing quote:', error);
+    } finally {
+      // Add a small delay for the animation effect
+      setTimeout(() => {
+        setIsRefreshingQuote(false);
+      }, 500);
+    }
   };
   
   const router = useRouter();
   
+  // Function to handle dismissing the login banner
+  const handleDismissBanner = () => {
+    setShowLoginBanner(false);
+    
+    // Save preference to localStorage if available
+    try {
+      localStorage.setItem('hideLoginBanner', 'true');
+    } catch (e) {
+      // Handle the case where localStorage is not available (e.g., in native app)
+      console.warn('Could not save banner preference to localStorage:', e);
+    }
+  };
+
+  // Conditional rendering for loading state
   if (loading) {
-    return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center' }}>
-        <ActivityIndicator size="large" color="#6A65D8" />
-        <Text style={{ fontSize: 16, color: colors.text.primary, marginBottom: 20, textAlign: 'center' }}>
-          Loading your fitness data...
-        </Text>
-      </View>
-    );
+    return <LoadingScreen />;
   }
   
+  // Conditional rendering for error state
   if (error) {
     return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', padding: 20 }}>
-        <Text style={{ fontSize: 16, color: 'red', marginBottom: 20, textAlign: 'center' }}>
-          Error loading profile: {error}
-        </Text>
-      </View>
+      <ErrorScreen 
+        message={typeof error === 'string' ? error : 'An unknown error occurred'} 
+        onRetry={checkCompletionStatus} // Or a more general retry logic
+      />
     );
   }
   
-  // Process and format the data for the home screen
+  // Process and format the data for the home screen (after loading and error checks)
   const userStats = {
     name: profile?.full_name ? profile.full_name.split(' ')[0] : 'User',
     goal: profile?.weight_goal || 'Maintain Weight',
@@ -317,66 +506,27 @@ export default function HomeScreen() {
     }
   };
   
-  // Calculate percentage progress towards weight goal
-  function calculateProgressPercentage(profile: any): number {
-    if (!profile) return 0;
-    
-    const currentWeight = profile?.weight_kg || profile?.current_weight_kg || profile?.body_analysis?.weight_kg;
-    const startWeight = profile?.starting_weight_kg || profile?.initial_weight_kg;
-    const targetWeight = profile?.target_weight_kg || profile?.body_analysis?.target_weight_kg;
-    
-    // If any values are missing, return 0
-    if (!currentWeight || !startWeight || !targetWeight) return 0;
-    
-    // Check if user wants to lose or gain weight
-    const isWeightLoss = startWeight > targetWeight;
-    
-    if (isWeightLoss) {
-      // Weight loss calculation
-      const totalToLose = startWeight - targetWeight;
-      const lostSoFar = startWeight - currentWeight;
-      
-      // Avoid division by zero
-      if (totalToLose === 0) return 100;
-      
-      // Calculate percentage and cap between 0-100
-      const percentage = Math.min(100, Math.max(0, (lostSoFar / totalToLose) * 100));
-      return Math.round(percentage);
-    } else {
-      // Weight gain calculation
-      const totalToGain = targetWeight - startWeight;
-      const gainedSoFar = currentWeight - startWeight;
-      
-      // Avoid division by zero
-      if (totalToGain === 0) return 100;
-      
-      // Calculate percentage and cap between 0-100
-      const percentage = Math.min(100, Math.max(0, (gainedSoFar / totalToGain) * 100));
-      return Math.round(percentage);
-    }
-  }
-  
-  // Workout stats from actual data if available
+  // Determine if today is a workout day based on preferences (already done by isWorkoutScheduledToday)
+  const isWorkoutDayForStats = isWorkoutScheduledToday;
+
   const workoutStats = {
-    scheduledForToday: hasWorkouts,
+    scheduledForToday: isWorkoutDayForStats,
     todayCompleted: todayWorkoutCompleted,
-    todayWorkoutName: hasWorkouts ? (todayWorkout?.title || 'Daily Workout') : 'No Workout',
-    focusArea: hasWorkouts ? todayWorkout?.focusArea || null : null,
+    todayWorkoutName: isWorkoutDayForStats ? (todayWorkout?.title || 'Daily Workout') : 'Rest Day',
+    focusArea: isWorkoutDayForStats ? (todayWorkout?.focusArea || null) : null,
     bodyParts: [],
     dayStreak: streak
   };
   
-  // Actual meal times from profile
   const mealStats = {
-    allCompleted: todayMealsCompleted.length === mealTimes.length,
+    allCompleted: (mealTimes?.length || 0) > 0 && todayMealsCompleted.length === (mealTimes?.length || 0),
     pendingMeals: mealTimes
-      .filter(meal => !todayMealsCompleted.includes(meal.name))
-      .map(meal => {
-        // Extract the name and time directly from user preferences
+      ?.filter(meal => !todayMealsCompleted.includes(meal.name))
+      ?.map(meal => {
         const mealName = typeof meal.name === 'string' ? meal.name : 'Meal';
         const mealTime = typeof meal.time === 'string' ? meal.time : '12:00 PM';
         return `${mealName} (${mealTime})`;
-      }),
+      }) || [],
     mealDetails: {
       breakfast: {
         name: "Breakfast",
@@ -396,112 +546,14 @@ export default function HomeScreen() {
     }
   };
   
-  // Helper functions to safely extract meal times with proper type checking
-  function getBreakfastTime(): string {
-    // Check root meal_times array
-    if (profile?.meal_times && Array.isArray(profile.meal_times)) {
-      const meal = profile.meal_times.find(m => {
-        if (typeof m === 'object' && m !== null && 'name' in m) {
-          return (m.name || '').toLowerCase() === 'breakfast';
-        }
-        return false;
-      });
-      if (meal && typeof meal === 'object' && 'time' in meal) {
-        return meal.time || "08:00 AM";
-      }
-    }
-    
-    // Check diet_preferences.meal_times
-    if (profile?.diet_preferences?.meal_times && Array.isArray(profile.diet_preferences.meal_times)) {
-      const meal = profile.diet_preferences.meal_times.find(m => {
-        if (typeof m === 'object' && m !== null && 'name' in m) {
-          return (m.name || '').toLowerCase() === 'breakfast';
-        }
-        return false;
-      });
-      if (meal && typeof meal === 'object' && 'time' in meal) {
-        return meal.time || "08:00 AM";
-      }
-    }
-    
-    // Default fallback
-    return "08:00 AM";
-  }
-
-  function getLunchTime(): string {
-    // Check root meal_times array
-    if (profile?.meal_times && Array.isArray(profile.meal_times)) {
-      const meal = profile.meal_times.find(m => {
-        if (typeof m === 'object' && m !== null && 'name' in m) {
-          return (m.name || '').toLowerCase() === 'lunch';
-        }
-        return false;
-      });
-      if (meal && typeof meal === 'object' && 'time' in meal) {
-        return meal.time || "12:30 PM";
-      }
-    }
-    
-    // Check diet_preferences.meal_times
-    if (profile?.diet_preferences?.meal_times && Array.isArray(profile.diet_preferences.meal_times)) {
-      const meal = profile.diet_preferences.meal_times.find(m => {
-        if (typeof m === 'object' && m !== null && 'name' in m) {
-          return (m.name || '').toLowerCase() === 'lunch';
-        }
-        return false;
-      });
-      if (meal && typeof meal === 'object' && 'time' in meal) {
-        return meal.time || "12:30 PM";
-      }
-    }
-    
-    // Default fallback
-    return "12:30 PM";
-  }
-
-  function getDinnerTime(): string {
-    // Check root meal_times array
-    if (profile?.meal_times && Array.isArray(profile.meal_times)) {
-      const meal = profile.meal_times.find(m => {
-        if (typeof m === 'object' && m !== null && 'name' in m) {
-          return (m.name || '').toLowerCase() === 'dinner';
-        }
-        return false;
-      });
-      if (meal && typeof meal === 'object' && 'time' in meal) {
-        return meal.time || "07:00 PM";
-      }
-    }
-    
-    // Check diet_preferences.meal_times
-    if (profile?.diet_preferences?.meal_times && Array.isArray(profile.diet_preferences.meal_times)) {
-      const meal = profile.diet_preferences.meal_times.find(m => {
-        if (typeof m === 'object' && m !== null && 'name' in m) {
-          return (m.name || '').toLowerCase() === 'dinner';
-        }
-        return false;
-      });
-      if (meal && typeof meal === 'object' && 'time' in meal) {
-        return meal.time || "07:00 PM";
-      }
-    }
-    
-    // Default fallback
-    return "07:00 PM";
-  }
-  
-  // Next workout info
-  const nextWorkout = hasWorkouts ? {
-    day: 'Today',
-    name: todayWorkout?.title || 'Daily Workout',
-    daysUntil: 0
-  } : null;
+  // Next workout info (using the memoized getNextWorkout)
+  const nextWorkoutInfo = getNextWorkout;
   
   // Motivational quote
-  const motivationalQuote = quote || 'Stay consistent, see results.';
+  const motivationalQuoteToDisplay = quote || 'Stay consistent, see results.';
   
-  // Body analysis data - this is the key part we're fixing
-  const bodyAnalysis = profile?.body_analysis || {
+  // Body analysis data
+  const bodyAnalysisData = profile?.body_analysis || {
     height_cm: 0,
     weight_kg: 0,
     body_fat_percentage: 0,
@@ -511,60 +563,160 @@ export default function HomeScreen() {
   };
   
   // If there's a body_type property but no bodyType property, set bodyType from body_type
-  if (bodyAnalysis.body_type && !bodyAnalysis.bodyType) {
-    bodyAnalysis.bodyType = bodyAnalysis.body_type;
+  if (bodyAnalysisData.body_type && !bodyAnalysisData.bodyType) {
+    bodyAnalysisData.bodyType = bodyAnalysisData.body_type;
+  }
+
+  // Helper functions (ensure they don't rely on profile being defined before loading check if called by useMemos)
+  function calculateProgressPercentage(currentProfile: EnhancedUserProfile | null): number {
+    if (!currentProfile) return 0;
+    const currentWeight = currentProfile?.weight_kg || currentProfile?.current_weight_kg || currentProfile?.body_analysis?.weight_kg;
+    const startWeight = currentProfile?.starting_weight_kg || currentProfile?.initial_weight_kg;
+    const targetWeight = currentProfile?.target_weight_kg || currentProfile?.body_analysis?.target_weight_kg;
+    if (!currentWeight || !startWeight || !targetWeight) return 0;
+    const isWeightLoss = startWeight > targetWeight;
+    if (isWeightLoss) {
+      const totalToLose = startWeight - targetWeight;
+      const lostSoFar = startWeight - currentWeight;
+      if (totalToLose === 0) return currentWeight === targetWeight ? 100 : 0; // if start and target are same
+      const percentage = Math.min(100, Math.max(0, (lostSoFar / totalToLose) * 100));
+      return Math.round(percentage);
+    } else {
+      const totalToGain = targetWeight - startWeight;
+      const gainedSoFar = currentWeight - startWeight;
+      if (totalToGain === 0) return currentWeight === targetWeight ? 100 : 0; // if start and target are same
+      const percentage = Math.min(100, Math.max(0, (gainedSoFar / totalToGain) * 100));
+      return Math.round(percentage);
+    }
   }
   
-  console.log('Body Analysis Data:', bodyAnalysis);
-
-  // Activity summary for the week
-  const activitySummary = {
-    workouts: { 
-      count: todayWorkoutCompleted ? 1 : 0, 
-      percentage: todayWorkoutCompleted ? 100 : 0 
-    },
-    meals: { 
-      count: todayMealsCompleted.length, 
-      percentage: mealTimes.length > 0 ? Math.round((todayMealsCompleted.length / mealTimes.length) * 100) : 0 
-    },
-    progress: { 
-      percentage: Math.round(
-        ((todayWorkoutCompleted ? 1 : 0) + todayMealsCompleted.length) / 
-        (1 + mealTimes.length) * 100
-      ) 
+  function getBreakfastTime(): string {
+    if (profile?.meal_times && Array.isArray(profile.meal_times)) {
+      const meal = profile.meal_times.find(m => {
+        if (typeof m === 'object' && m !== null && 'name' in m) {
+          return (m.name || '').toLowerCase() === 'breakfast';
+        }
+        return false;
+      });
+      if (meal && typeof meal === 'object' && 'time' in meal) {
+        return meal.time || "08:00 AM";
+      }
     }
-  };
-  
-  console.log('Today\'s completion status:', {
-    workoutCompleted: todayWorkoutCompleted,
-    mealsCompleted: todayMealsCompleted,
-    totalMeals: mealTimes.length,
-    activitySummary
-  });
+    
+    if (profile?.diet_preferences?.meal_times && Array.isArray(profile.diet_preferences.meal_times)) {
+      const meal = profile.diet_preferences.meal_times.find(m => {
+        if (typeof m === 'object' && m !== null && 'name' in m) {
+          return (m.name || '').toLowerCase() === 'breakfast';
+        }
+        return false;
+      });
+      if (meal && typeof meal === 'object' && 'time' in meal) {
+        return meal.time || "08:00 AM";
+      }
+    }
+    
+    return "08:00 AM";
+  }
+
+  function getLunchTime(): string {
+    if (profile?.meal_times && Array.isArray(profile.meal_times)) {
+      const meal = profile.meal_times.find(m => {
+        if (typeof m === 'object' && m !== null && 'name' in m) {
+          return (m.name || '').toLowerCase() === 'lunch';
+        }
+        return false;
+      });
+      if (meal && typeof meal === 'object' && 'time' in meal) {
+        return meal.time || "12:30 PM";
+      }
+    }
+    
+    if (profile?.diet_preferences?.meal_times && Array.isArray(profile.diet_preferences.meal_times)) {
+      const meal = profile.diet_preferences.meal_times.find(m => {
+        if (typeof m === 'object' && m !== null && 'name' in m) {
+          return (m.name || '').toLowerCase() === 'lunch';
+        }
+        return false;
+      });
+      if (meal && typeof meal === 'object' && 'time' in meal) {
+        return meal.time || "12:30 PM";
+      }
+    }
+    
+    return "12:30 PM";
+  }
+
+  function getDinnerTime(): string {
+    if (profile?.meal_times && Array.isArray(profile.meal_times)) {
+      const meal = profile.meal_times.find(m => {
+        if (typeof m === 'object' && m !== null && 'name' in m) {
+          return (m.name || '').toLowerCase() === 'dinner';
+        }
+        return false;
+      });
+      if (meal && typeof meal === 'object' && 'time' in meal) {
+        return meal.time || "07:00 PM";
+      }
+    }
+    
+    if (profile?.diet_preferences?.meal_times && Array.isArray(profile.diet_preferences.meal_times)) {
+      const meal = profile.diet_preferences.meal_times.find(m => {
+        if (typeof m === 'object' && m !== null && 'name' in m) {
+          return (m.name || '').toLowerCase() === 'dinner';
+        }
+        return false;
+      });
+      if (meal && typeof meal === 'object' && 'time' in meal) {
+        return meal.time || "07:00 PM";
+      }
+    }
+    
+    return "07:00 PM";
+  }
   
   // Return the enhanced home screen interface
   return (
     <SafeAreaView style={{ flex: 1, backgroundColor: colors.background.primary }}>
       <StatusBar style="light" />
+      {!user && showLoginBanner && (
+        <LoginPrompt 
+          variant="banner"
+          message="Create an account to sync your progress across devices"
+          onDismiss={handleDismissBanner} 
+          showDismiss={true}
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            router.push('/(auth)/signin');
+          }}
+        />
+      )}
       {activeTab === 'modern' ? (
         <ModernHomeScreen 
-          userStats={userStats}
-          workoutStats={workoutStats}
-          mealStats={mealStats}
-          nextWorkout={nextWorkout}
-          motivationalQuote={motivationalQuote}
+          profile={profile!}
+          activitySummary={activitySummary}
+          meals={mealTimes}
+          nextWorkout={nextWorkoutInfo}
+          completedWorkouts={streak}
+          todayWorkoutCompleted={todayWorkoutCompleted}
+          todayMealsCompleted={todayMealsCompleted}
+          bodyAnalysis={bodyAnalysisData}
+          hasWorkout={hasWorkouts}
+          workoutName={todayWorkout?.title || 'Daily Workout'}
+          motivationalQuote={motivationalQuoteToDisplay}
           onRefreshQuote={refreshQuote}
+          isRefreshingQuote={isRefreshingQuote}
         />
       ) : (
         <EnhancedHomeScreen
           userStats={userStats}
           workoutStats={workoutStats}
           mealStats={mealStats}
-          nextWorkout={nextWorkout}
-          motivationalQuote={motivationalQuote}
+          nextWorkout={nextWorkoutInfo}
+          motivationalQuote={motivationalQuoteToDisplay}
           onRefreshQuote={refreshQuote}
-          bodyAnalysis={bodyAnalysis}
+          bodyAnalysis={bodyAnalysisData}
           activitySummary={activitySummary}
+          isRefreshingQuote={isRefreshingQuote}
         />
       )}
       {__DEV__ && (

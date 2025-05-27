@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, ScrollView, KeyboardAvoidingView, Platform, Alert, TouchableOpacity, ActivityIndicator } from 'react-native';
+import React, { useState, useEffect, useRef } from 'react';
+import { View, StyleSheet, ScrollView, KeyboardAvoidingView, Platform, Alert, TouchableOpacity, ActivityIndicator, Dimensions, Animated as RNAnimated } from 'react-native';
 import { Text, Button, TextInput, useTheme, Surface, Avatar, SegmentedButtons, HelperText } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
@@ -13,8 +13,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 import Animated, { useSharedValue, useAnimatedStyle, withSpring, interpolate, Extrapolate } from 'react-native-reanimated';
 import Slider from '@react-native-community/slider';
 import { colors, spacing, borderRadius, shadows, gradients } from '../../../theme/theme';
-import Svg, { Path, Circle, Defs, LinearGradient as SvgLinearGradient, Stop } from 'react-native-svg';
-import { TextInput as RNTextInput } from 'react-native';
+import Svg, { Path, Circle, Defs, LinearGradient as SvgLinearGradient, Stop, G, ClipPath, Rect } from 'react-native-svg';
+import * as Haptics from 'expo-haptics';
 
 // Update the EditProfileSchema to include unit fields and water intake
 const editProfileSchema = z.object({
@@ -24,6 +24,7 @@ const editProfileSchema = z.object({
   weight: z.number().positive('Weight must be positive').optional(),
   weightUnit: z.enum(['kg', 'lbs']).optional(),
   target_weight: z.number().positive('Target weight must be positive').optional(),
+  target_weight_unit: z.enum(['kg', 'lbs']).optional(),
   fitness_goal: z.enum(['weight-loss', 'muscle-gain', 'improved-fitness']).optional(),
   water_intake_goal: z.number().min(0.1).max(10),
   water_intake_unit: z.enum(['l', 'oz']),
@@ -31,60 +32,173 @@ const editProfileSchema = z.object({
 
 type EditProfileFormData = z.infer<typeof editProfileSchema>;
 
-// Water bottle fill icon SVG component
-const WaterBottleFill = ({ fillPercentage }: { fillPercentage: number }) => {
+// Enhanced water bottle fill SVG component with wave animation
+const WaterBottleFill = ({ fillPercentage, color1 = '#36D1DC', color2 = '#5B86E5' }: { fillPercentage: number, color1?: string, color2?: string }) => {
   const height = 100;
   const width = 45;
   const cornerRadius = 5;
   const neckWidth = 18;
   const neckHeight = 15;
-  const fillHeight = (height - neckHeight) * (fillPercentage / 100);
+  
+  // Ensure the fill height is correctly calculated
+  // Use max to ensure we don't go below 0, and min to ensure we don't exceed bottle height
+  const actualFillPercentage = Math.max(0, Math.min(100, fillPercentage));
+  const bottleBodyHeight = height - neckHeight;
+  const fillHeight = (bottleBodyHeight * actualFillPercentage) / 100;
+  
+  console.log(`WaterBottleFill rendering. fillPercentage: ${fillPercentage}, actualFillPercentage: ${actualFillPercentage}, fillHeight: ${fillHeight}`);
+  
+  // Different color stops based on water level - use more vibrant colors
+  const waterColor1 = fillPercentage < 30 ? '#FF4040' : '#00B4FF';
+  const waterColor2 = fillPercentage < 30 ? '#FF0000' : '#0070FF';
 
   return (
-    <Svg height={height} width={width} viewBox={`0 0 ${width} ${height}`}>
-      <Defs>
-        <SvgLinearGradient id="waterGradient" x1="0" y1="0" x2="0" y2="1">
-          <Stop offset="0" stopColor="#36D1DC" stopOpacity="1" />
-          <Stop offset="1" stopColor="#5B86E5" stopOpacity="1" />
-        </SvgLinearGradient>
-      </Defs>
-      
-      {/* Bottle outline */}
-      <Path
-        d={`
-          M${(width - neckWidth) / 2},0
-          L${(width - neckWidth) / 2},${neckHeight}
-          Q${cornerRadius},${neckHeight} ${cornerRadius},${neckHeight + cornerRadius}
-          L${cornerRadius},${height - cornerRadius}
-          Q${cornerRadius},${height} ${cornerRadius * 2},${height}
-          L${width - cornerRadius * 2},${height}
-          Q${width - cornerRadius},${height} ${width - cornerRadius},${height - cornerRadius}
-          L${width - cornerRadius},${neckHeight + cornerRadius}
-          Q${width - cornerRadius},${neckHeight} ${width - neckWidth - (width - neckWidth) / 2},${neckHeight}
-          L${width - neckWidth - (width - neckWidth) / 2},0
-          Z
-        `}
-        fill="rgba(255, 255, 255, 0.1)"
-        stroke="rgba(255, 255, 255, 0.2)"
-        strokeWidth="1"
-      />
-      
-      {/* Water fill */}
-      {fillPercentage > 0 && (
+    <View style={{ height, width }}>
+      <Svg height={height} width={width} viewBox={`0 0 ${width} ${height}`}>
+        {/* Bottle fill - this is the actual water, SOLID COLORS */}
+        {fillPercentage > 0 && (
+          <Path
+            d={`
+              M${cornerRadius + 1},${height - fillHeight}
+              L${cornerRadius + 1},${height - cornerRadius - 1}
+              Q${cornerRadius + 1},${height - 1} ${cornerRadius * 2 + 1},${height - 1}
+              L${width - cornerRadius * 2 - 1},${height - 1}
+              Q${width - cornerRadius - 1},${height - 1} ${width - cornerRadius - 1},${height - cornerRadius - 1}
+              L${width - cornerRadius - 1},${height - fillHeight}
+              Z
+            `}
+            fill={waterColor1}
+          />
+        )}
+        
+        {/* Bottle outline - draw after water to ensure outline is visible */}
         <Path
           d={`
-            M${cornerRadius + 2},${height - fillHeight}
-            L${cornerRadius + 2},${height - cornerRadius - 2}
-            Q${cornerRadius + 2},${height - 2} ${cornerRadius * 2 + 2},${height - 2}
-            L${width - cornerRadius * 2 - 2},${height - 2}
-            Q${width - cornerRadius - 2},${height - 2} ${width - cornerRadius - 2},${height - cornerRadius - 2}
-            L${width - cornerRadius - 2},${height - fillHeight}
+            M${(width - neckWidth) / 2},0
+            L${(width - neckWidth) / 2},${neckHeight}
+            Q${cornerRadius},${neckHeight} ${cornerRadius},${neckHeight + cornerRadius}
+            L${cornerRadius},${height - cornerRadius}
+            Q${cornerRadius},${height} ${cornerRadius * 2},${height}
+            L${width - cornerRadius * 2},${height}
+            Q${width - cornerRadius},${height} ${width - cornerRadius},${height - cornerRadius}
+            L${width - cornerRadius},${neckHeight + cornerRadius}
+            Q${width - cornerRadius},${neckHeight} ${width - neckWidth - (width - neckWidth) / 2},${neckHeight}
+            L${width - neckWidth - (width - neckWidth) / 2},0
             Z
           `}
-          fill="url(#waterGradient)"
+          fill="rgba(255, 255, 255, 0.05)"
+          stroke="rgba(255, 255, 255, 0.5)"
+          strokeWidth="1"
         />
-      )}
-    </Svg>
+        
+        {/* Wave on top of water - add after water fill */}
+        {fillPercentage > 5 && (
+          <Path
+            d={`
+              M${cornerRadius + 1},${height - fillHeight}
+              Q${width * 0.25},${height - fillHeight - 3}
+              ${width * 0.5},${height - fillHeight}
+              Q${width * 0.75},${height - fillHeight + 3}
+              ${width - cornerRadius - 1},${height - fillHeight}
+            `}
+            stroke="#FFFFFF"
+            strokeWidth="2"
+            fill="none"
+          />
+        )}
+        
+        {/* Debug rectangle to verify SVG positioning */}
+        <Rect
+          x={cornerRadius}
+          y={height - fillHeight - 5}
+          width={5}
+          height={5}
+          fill="yellow"
+        />
+      </Svg>
+    </View>
+  );
+};
+
+// Custom Slider Thumb component
+const SliderThumb = ({ 
+  value, 
+  maximumValue, 
+  animatedColor 
+}: { 
+  value: number; 
+  maximumValue: number; 
+  animatedColor: any; // Using any for RNAnimated.AnimatedInterpolation
+}) => {
+  return (
+    <RNAnimated.View
+      style={{
+        width: 28,
+        height: 28,
+        borderRadius: 14,
+        backgroundColor: animatedColor,
+        justifyContent: 'center',
+        alignItems: 'center',
+        elevation: 4,
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.3,
+        shadowRadius: 3,
+      }}
+    >
+      <View
+        style={{
+          width: 12,
+          height: 12,
+          borderRadius: 6,
+          backgroundColor: 'white',
+        }}
+      />
+    </RNAnimated.View>
+  );
+};
+
+// Create a custom segmented buttons component
+const CustomSegmentedButtons = ({ 
+  value, 
+  onValueChange, 
+  buttons, 
+  style 
+}: { 
+  value: string, 
+  onValueChange: (value: string) => void, 
+  buttons: Array<{value: string, label: string}>,
+  style?: any 
+}) => {
+  return (
+    <View style={[{
+      flexDirection: 'row',
+      borderRadius: 8,
+      overflow: 'hidden',
+      backgroundColor: 'rgba(32, 32, 60, 0.9)',
+    }, style]}>
+      {buttons.map((button) => (
+        <TouchableOpacity
+          key={button.value}
+          style={{
+            flex: 1,
+            padding: 10,
+            alignItems: 'center',
+            backgroundColor: value === button.value ? '#5B86E5' : 'transparent',
+            borderWidth: 1,
+            borderColor: 'rgba(255, 255, 255, 0.2)',
+          }}
+          onPress={() => onValueChange(button.value)}
+        >
+          <Text style={{
+            color: value === button.value ? '#fff' : 'rgba(255, 255, 255, 0.7)',
+            fontWeight: value === button.value ? 'bold' : 'normal',
+          }}>
+            {button.label}
+          </Text>
+        </TouchableOpacity>
+      ))}
+    </View>
   );
 };
 
@@ -93,15 +207,50 @@ export default function EditProfileScreen() {
   const { profile, updateProfile } = useProfile();
   const [saving, setSaving] = useState(false);
   const [sliderValue, setSliderValue] = useState(profile?.water_intake_goal || 3.5);
+  const [prevSliderValue, setPrevSliderValue] = useState(profile?.water_intake_goal || 3.5);
   
-  // Animation values
+  // Enhanced animation values
   const headerAnimation = useSharedValue(0);
   const waterBottleAnimation = useSharedValue(0);
+  const sliderAnimation = useSharedValue(0);
+  
+  // Color animation for the water
+  const waterColorAnimation = useRef(new RNAnimated.Value(sliderValue / 10)).current;
+  const animatedColor = waterColorAnimation.interpolate({
+    inputRange: [0, 0.3, 0.6, 1],
+    outputRange: ['#FF7373', '#36D1DC', '#5B86E5', '#4D6BE5'],
+  });
+  
+  // Update color animation when slider changes
+  useEffect(() => {
+    RNAnimated.timing(waterColorAnimation, {
+      toValue: sliderValue / 10,
+      duration: 300,
+      useNativeDriver: false,
+    }).start();
+    
+    // Add haptic feedback for significant changes
+    if (Math.abs(sliderValue - prevSliderValue) > 0.5) {
+      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    }
+    
+    // Animate bottle on significant changes
+    if (Math.abs(sliderValue - prevSliderValue) > 1) {
+      waterBottleAnimation.value = 0;
+      setTimeout(() => {
+        waterBottleAnimation.value = withSpring(1, { damping: 8, stiffness: 80 });
+      }, 50);
+    }
+    
+    // Update previous value
+    setPrevSliderValue(sliderValue);
+  }, [sliderValue]);
 
   useEffect(() => {
     // Trigger animations when component mounts
     headerAnimation.value = withSpring(1, { damping: 15 });
     waterBottleAnimation.value = withSpring(1, { damping: 12 });
+    sliderAnimation.value = withSpring(1, { damping: 10, stiffness: 60 });
   }, []);
 
   const { control, handleSubmit, formState: { errors }, watch, setValue } = useForm<EditProfileFormData>({
@@ -119,6 +268,7 @@ export default function EditProfileScreen() {
       target_weight: profile?.target_weight_kg !== undefined ? profile.target_weight_kg :
                      profile?.body_analysis?.target_weight_kg ||
                      profile?.body_analysis?.original_target_weight || undefined,
+      target_weight_unit: ((profile?.body_analysis as any)?.target_weight_unit) || 'kg',
       fitness_goal: (profile?.weight_goal as any) || 'improved-fitness',
       water_intake_goal: profile?.water_intake_goal || 3.5,
       water_intake_unit: (profile?.water_intake_unit as 'l' | 'oz') || 'l',
@@ -156,6 +306,34 @@ export default function EditProfileScreen() {
       ]
     };
   });
+  
+  const sliderAnimStyle = useAnimatedStyle(() => {
+    return {
+      opacity: sliderAnimation.value,
+      transform: [
+        { scaleX: interpolate(sliderAnimation.value, [0, 1], [0.9, 1], Extrapolate.CLAMP) }
+      ]
+    };
+  });
+
+  // Calculate water goal as percentage for bottle fill
+  const waterFillPercentage = (sliderValue / 10) * 100;
+
+  // Custom functions for slider
+  const handleSliderValueChange = (value: number) => {
+    console.log(`Slider value changed to: ${value.toFixed(1)}`);
+    
+    // Update both states immediately without requestAnimationFrame
+    setSliderValue(value);
+    setValue('water_intake_goal', value);
+    
+    // Update previous value for haptic feedback
+    setPrevSliderValue(sliderValue);
+  };
+  
+  const handleSliderComplete = () => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+  };
 
   const onSubmit = async (data: EditProfileFormData) => {
     try {
@@ -174,14 +352,15 @@ export default function EditProfileScreen() {
       let originalWeight = data.weight;
       let targetWeightInKg = data.target_weight;
       let originalTargetWeight = data.target_weight;
-      if (data.weightUnit === 'lbs') {
+      
+      if (data.weightUnit === 'lbs' && data.weight) {
         // Convert pounds to kg (1 lb = 0.45359237 kg)
-        if (data.weight) {
-          weightInKg = data.weight * 0.45359237;
-        }
-        if (data.target_weight) {
-          targetWeightInKg = data.target_weight * 0.45359237;
-        }
+        weightInKg = data.weight * 0.45359237;
+      }
+      
+      if (data.target_weight_unit === 'lbs' && data.target_weight) {
+        // Convert pounds to kg (1 lb = 0.45359237 kg)
+        targetWeightInKg = data.target_weight * 0.45359237;
       }
 
       // Create the profile updates object with only valid database columns
@@ -195,7 +374,7 @@ export default function EditProfileScreen() {
 
         // Store the fitness goal in correct columns
         weight_goal: data.fitness_goal, // Valid column
-        fitness_goals: [data.fitness_goal], // Valid column
+        fitness_goals: data.fitness_goal ? [data.fitness_goal] : [], // Make sure it's a string array
 
         // Store water intake goal
         water_intake_goal: data.water_intake_goal,
@@ -206,6 +385,7 @@ export default function EditProfileScreen() {
           ...(profile?.body_analysis || {}),
           height_unit: data.heightUnit,
           weight_unit: data.weightUnit,
+          target_weight_unit: data.target_weight_unit,
           original_height: originalHeight,
           original_weight: originalWeight,
           original_target_weight: originalTargetWeight,
@@ -230,471 +410,443 @@ export default function EditProfileScreen() {
     }
   };
 
-  return (
-    <SafeAreaView style={styles.container} edges={['left', 'right']}>
-      <KeyboardAvoidingView
-        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        style={styles.keyboardAvoidingView}
+  // Render the waterGoalContainer 
+  const renderWaterGoalSection = () => (
+    <View style={styles.inputContainer}>
+      <Text style={styles.inputLabel}>Daily Water Goal</Text>
+      <LinearGradient
+        colors={['rgba(30,35,60,0.9)', 'rgba(20,25,45,0.95)']}
+        style={styles.waterGoalContainer}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 0, y: 1 }}
       >
-        <StatusBar style="light" />
+        <Animated.View style={[styles.waterBottleContainer, waterBottleAnimStyle]}>
+          <WaterBottleFill 
+            fillPercentage={waterFillPercentage} 
+            color1={waterFillPercentage < 30 ? '#FF9B9B' : '#36D1DC'}
+            color2={waterFillPercentage < 30 ? '#FF7373' : '#5B86E5'}
+          />
+        </Animated.View>
         
-        {/* Premium Gradient Header */}
-        <LinearGradient
-          colors={['#FF2E93', '#FF6EB5', '#D30069']}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 0 }}
-          style={styles.header}
-        >
-          <Animated.View style={[styles.headerContent, headerAnimStyle]}>
-            <TouchableOpacity 
-              onPress={() => router.back()}
-              style={styles.backButton}
+        <View style={styles.waterGoalContent}>
+          <View style={styles.waterValueContainer}>
+            <RNAnimated.Text 
+              style={[
+                styles.waterGoalValue,
+                { color: animatedColor }
+              ]}
             >
-              <MaterialCommunityIcons name="arrow-left" size={24} color="white" />
-            </TouchableOpacity>
-            <Text variant="headlineSmall" style={styles.headerTitle}>Edit Profile</Text>
-          </Animated.View>
-        </LinearGradient>
+              {sliderValue.toFixed(1)}
+              <Text style={styles.waterGoalUnit}>L</Text>
+            </RNAnimated.Text>
+            
+            <View style={styles.waterGoalMessage}>
+              {sliderValue < 2.5 ? (
+                <Text style={styles.waterStatusText}>Not enough water</Text>
+              ) : sliderValue >= 2.5 && sliderValue < 4 ? (
+                <Text style={[styles.waterStatusText, { color: '#36D1DC' }]}>Good hydration</Text>
+              ) : (
+                <Text style={[styles.waterStatusText, { color: '#5B86E5' }]}>Excellent hydration!</Text>
+              )}
+            </View>
+          </View>
+          
+          <Controller
+            control={control}
+            name="water_intake_goal"
+            render={({ field: { onChange, value } }) => (
+              <Animated.View style={[styles.sliderContainer, sliderAnimStyle]}>
+                <View style={styles.sliderTrack}>
+                  <LinearGradient
+                    colors={['#36D1DC', '#5B86E5']}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 0 }}
+                    style={styles.sliderTrackGradient}
+                  />
+                </View>
+                
+                <Slider
+                  style={styles.waterSlider}
+                  minimumValue={0.5}
+                  maximumValue={10}
+                  value={value}
+                  onValueChange={handleSliderValueChange}
+                  onSlidingComplete={handleSliderComplete}
+                  minimumTrackTintColor="#36D1DC"
+                  maximumTrackTintColor="rgba(255,255,255,0.15)"
+                  thumbTintColor="#5B86E5"
+                />
+              </Animated.View>
+            )}
+          />
+          
+          <View style={styles.waterGoalRange}>
+            <Text style={styles.waterGoalRangeText}>0.5<Text style={styles.waterGoalUnitSmall}>L</Text></Text>
+            <Text style={styles.waterGoalRangeText}>10<Text style={styles.waterGoalUnitSmall}>L</Text></Text>
+          </View>
+          
+          {/* Water milestone indicators */}
+          <View style={styles.milestoneContainer}>
+            {[2.5, 5, 7.5].map((milestone) => (
+              <View 
+                key={milestone}
+                style={[
+                  styles.milestone,
+                  {
+                    left: `${((milestone - 0.5) / 9.5) * 100}%`,
+                    backgroundColor: sliderValue >= milestone 
+                      ? (sliderValue >= 7.5 ? '#5B86E5' : 
+                         sliderValue >= 5 ? '#4AAAE0' : '#36D1DC')
+                      : 'rgba(255,255,255,0.3)'
+                  }
+                ]}
+              />
+            ))}
+          </View>
+        </View>
+      </LinearGradient>
+    </View>
+  );
 
-        <ScrollView 
-          style={styles.scrollView} 
+  // Handle navigation
+  const handleBack = () => {
+    router.back();
+  };
+
+  return (
+    <SafeAreaView style={styles.container} edges={['top', 'left', 'right']}>
+      <StatusBar style="light" />
+      
+      {/* Premium gradient background */}
+      <LinearGradient
+        colors={['#1a1b4b', '#162339']}
+        style={StyleSheet.absoluteFillObject}
+        start={{ x: 0, y: 0 }}
+        end={{ x: 0, y: 1 }}
+      />
+
+      {/* Header */}
+      <Animated.View style={[styles.header, headerAnimStyle]}>
+        <TouchableOpacity onPress={handleBack} style={styles.backButton}>
+          <MaterialCommunityIcons name="arrow-left" size={24} color="#fff" />
+        </TouchableOpacity>
+        <Text style={styles.headerTitle}>Edit Profile</Text>
+        <View style={{ width: 24 }} /> {/* Spacer for alignment */}
+      </Animated.View>
+
+      <KeyboardAvoidingView 
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        style={{ flex: 1 }}
+      >
+        <ScrollView
+          style={styles.scrollView}
           contentContainerStyle={styles.scrollContent}
           showsVerticalScrollIndicator={false}
         >
-          <View style={styles.avatarContainer}>
-            <Avatar.Text
-              size={80}
-              label={profile?.full_name?.split(' ').map(n => n[0]).join('') || 'U'}
-              style={styles.avatar}
-              color="white"
-            />
-          </View>
-
-          {/* Main Form Container */}
-          <Surface style={styles.formContainer} elevation={1}>
-            {/* Full Name */}
-            <Controller
-              control={control}
-              name="full_name"
-              render={({ field: { onChange, onBlur, value } }) => (
-                <View style={styles.inputContainer}>
-                  <TextInput
-                    label="Full Name"
-                    value={value}
-                    onChangeText={onChange}
-                    onBlur={onBlur}
-                    mode="outlined"
-                    style={[styles.input, { color: 'white' }]}
-                    outlineColor="rgba(255,255,255,0.5)"
-                    activeOutlineColor="#FF2E93"
-                    theme={{ 
-                      colors: { 
-                        text: 'white', 
-                        placeholder: 'white',
-                        primary: '#FF2E93'
-                      }
-                    }}
-                    placeholderTextColor="white"
-                    error={!!errors.full_name}
-                    left={<TextInput.Icon icon="account" color="#FF6EB5" />}
-                    render={props => 
-                      <RNTextInput 
-                        {...props} 
-                        style={[props.style, { color: 'white', fontSize: 18, fontWeight: '600' }]} 
-                      />
-                    }
-                  />
-                  {errors.full_name && (
-                    <HelperText type="error">{errors.full_name.message}</HelperText>
-                  )}
-                </View>
-              )}
-            />
-
-            {/* Height with units */}
-            <Controller
-              control={control}
-              name="height"
-              render={({ field: { onChange, onBlur, value } }) => (
-                <View style={styles.inputContainer}>
-                  <Text variant="bodyMedium" style={styles.label}>Height</Text>
-                  <View style={styles.unitInputContainer}>
-                    <TextInput
-                      value={value?.toString() || ''}
-                      onChangeText={(text) => onChange(text ? parseFloat(text) : undefined)}
-                      onBlur={onBlur}
-                      mode="outlined"
-                      keyboardType="numeric"
-                      style={[styles.unitInput, { color: 'white' }]}
-                      outlineColor="rgba(255,255,255,0.5)"
-                      activeOutlineColor="#FF2E93"
-                      theme={{ 
-                        colors: { 
-                          text: 'white', 
-                          placeholder: 'white',
-                          primary: '#FF2E93'
-                        }
-                      }}
-                      placeholderTextColor="white"
-                      placeholder={heightUnit === 'cm' ? '175' : '5.9'}
-                      error={!!errors.height}
-                      left={<TextInput.Icon icon="human-male-height" color="#FF6EB5" />}
-                      render={props => 
-                        <RNTextInput 
-                          {...props} 
-                          style={[props.style, { color: 'white', fontSize: 18, fontWeight: '600' }]} 
-                        />
-                      }
-                    />
-                    <Controller
-                      control={control}
-                      name="heightUnit"
-                      render={({ field: { onChange, value } }) => (
-                        <SegmentedButtons
-                          value={value}
-                          onValueChange={onChange}
-                          buttons={[
-                            { value: 'cm', label: 'cm' },
-                            { value: 'ft', label: 'ft' },
-                          ]}
-                          style={styles.unitSelector}
-                          theme={{ colors: { primary: '#FF2E93', secondaryContainer: 'rgba(255,255,255,0.2)' } }}
-                        />
-                      )}
-                    />
-                  </View>
-                  {errors.height && (
-                    <HelperText type="error">{errors.height.message}</HelperText>
-                  )}
-                </View>
-              )}
-            />
-
-            {/* Current Weight with units */}
-            <Controller
-              control={control}
-              name="weight"
-              render={({ field: { onChange, onBlur, value } }) => (
-                <View style={styles.inputContainer}>
-                  <Text variant="bodyMedium" style={styles.label}>Current Weight</Text>
-                  <View style={styles.unitInputContainer}>
-                    <TextInput
-                      value={value?.toString() || ''}
-                      onChangeText={(text) => onChange(text ? parseFloat(text) : undefined)}
-                      onBlur={onBlur}
-                      mode="outlined"
-                      keyboardType="numeric"
-                      style={[styles.unitInput, { color: 'white' }]}
-                      outlineColor="rgba(255,255,255,0.5)"
-                      activeOutlineColor="#FF2E93"
-                      theme={{ 
-                        colors: { 
-                          text: 'white', 
-                          placeholder: 'white',
-                          primary: '#FF2E93'
-                        }
-                      }}
-                      placeholderTextColor="white"
-                      placeholder={weightUnit === 'kg' ? '70' : '154'}
-                      error={!!errors.weight}
-                      left={<TextInput.Icon icon="weight" color="#FF6EB5" />}
-                      render={props => 
-                        <RNTextInput 
-                          {...props} 
-                          style={[props.style, { color: 'white', fontSize: 18, fontWeight: '600' }]} 
-                        />
-                      }
-                    />
-                    <Controller
-                      control={control}
-                      name="weightUnit"
-                      render={({ field: { onChange, value } }) => (
-                        <SegmentedButtons
-                          value={value}
-                          onValueChange={onChange}
-                          buttons={[
-                            { value: 'kg', label: 'kg' },
-                            { value: 'lbs', label: 'lbs' },
-                          ]}
-                          style={styles.unitSelector}
-                          theme={{ colors: { primary: '#FF2E93', secondaryContainer: 'rgba(255,255,255,0.2)' } }}
-                        />
-                      )}
-                    />
-                  </View>
-                  {errors.weight && (
-                    <HelperText type="error">{errors.weight.message}</HelperText>
-                  )}
-                </View>
-              )}
-            />
-
-            {/* Target Weight with units */}
-            <Controller
-              control={control}
-              name="target_weight"
-              render={({ field: { onChange, onBlur, value } }) => (
-                <View style={styles.inputContainer}>
-                  <Text variant="bodyMedium" style={styles.label}>Target Weight</Text>
-                  <View style={styles.unitInputContainer}>
-                    <TextInput
-                      value={value?.toString() || ''}
-                      onChangeText={(text) => onChange(text ? parseFloat(text) : undefined)}
-                      onBlur={onBlur}
-                      mode="outlined"
-                      keyboardType="numeric"
-                      style={[styles.unitInput, { color: 'white' }]}
-                      outlineColor="rgba(255,255,255,0.5)"
-                      activeOutlineColor="#FF2E93"
-                      theme={{ 
-                        colors: { 
-                          text: 'white', 
-                          placeholder: 'white',
-                          primary: '#FF2E93'
-                        }
-                      }}
-                      placeholderTextColor="white"
-                      placeholder={weightUnit === 'kg' ? '65' : '143'}
-                      error={!!errors.target_weight}
-                      left={<TextInput.Icon icon="target" color="#FF6EB5" />}
-                      render={props => 
-                        <RNTextInput 
-                          {...props} 
-                          style={[props.style, { color: 'white', fontSize: 18, fontWeight: '600' }]} 
-                        />
-                      }
-                    />
-                    <Controller
-                      control={control}
-                      name="weightUnit"
-                      render={({ field: { onChange, value } }) => (
-                        <SegmentedButtons
-                          value={value}
-                          onValueChange={onChange}
-                          buttons={[
-                            { value: 'kg', label: 'kg' },
-                            { value: 'lbs', label: 'lbs' },
-                          ]}
-                          style={styles.unitSelector}
-                          theme={{ colors: { primary: '#FF2E93', secondaryContainer: 'rgba(255,255,255,0.2)' } }}
-                        />
-                      )}
-                    />
-                  </View>
-                  {errors.target_weight && (
-                    <HelperText type="error">{errors.target_weight.message}</HelperText>
-                  )}
-                </View>
-              )}
-            />
-
-            {/* Fitness Goal */}
+          {/* Profile Form */}
+          <View style={styles.formContainer}>
+            {/* Name Input */}
             <View style={styles.inputContainer}>
-              <Text variant="bodyMedium" style={styles.label}>Fitness Goal</Text>
+              <Text style={styles.inputLabel}>Full Name</Text>
               <Controller
                 control={control}
-                name="fitness_goal"
+                name="full_name"
                 render={({ field: { onChange, value } }) => (
-                  <View style={styles.goalContainer}>
-                    <TouchableOpacity 
-                      style={[
-                        styles.goalOption, 
-                        value === 'weight-loss' && styles.goalOptionSelected
-                      ]}
-                      onPress={() => onChange('weight-loss')}
-                    >
-                      <FontAwesome5 
-                        name="weight" 
-                        size={24} 
-                        color={value === 'weight-loss' ? 'white' : colors.secondary.main} 
-                      />
-                      <Text 
-                        style={[
-                          styles.goalText, 
-                          value === 'weight-loss' && styles.goalTextSelected
-                        ]}
-                      >
-                        Weight Loss
-                      </Text>
-                    </TouchableOpacity>
-                    
-                    <TouchableOpacity 
-                      style={[
-                        styles.goalOption, 
-                        value === 'muscle-gain' && styles.goalOptionSelected
-                      ]}
-                      onPress={() => onChange('muscle-gain')}
-                    >
-                      <FontAwesome5 
-                        name="dumbbell" 
-                        size={24} 
-                        color={value === 'muscle-gain' ? 'white' : colors.secondary.main} 
-                      />
-                      <Text 
-                        style={[
-                          styles.goalText, 
-                          value === 'muscle-gain' && styles.goalTextSelected
-                        ]}
-                      >
-                        Muscle Gain
-                      </Text>
-                    </TouchableOpacity>
-                    
-                    <TouchableOpacity 
-                      style={[
-                        styles.goalOption, 
-                        value === 'improved-fitness' && styles.goalOptionSelected
-                      ]}
-                      onPress={() => onChange('improved-fitness')}
-                    >
-                      <FontAwesome5 
-                        name="running" 
-                        size={24} 
-                        color={value === 'improved-fitness' ? 'white' : colors.secondary.main} 
-                      />
-                      <Text 
-                        style={[
-                          styles.goalText, 
-                          value === 'improved-fitness' && styles.goalTextSelected
-                        ]}
-                      >
-                        Fitness
-                      </Text>
-                    </TouchableOpacity>
+                  <View>
+                    <TextInput
+                      mode="outlined"
+                      outlineColor="rgba(255, 255, 255, 0.3)"
+                      activeOutlineColor="#5B86E5"
+                      style={styles.textInput}
+                      onChangeText={onChange}
+                      value={value}
+                      placeholder="Enter your name"
+                      placeholderTextColor="rgba(255, 255, 255, 0.5)"
+                      textColor="#ffffff"
+                      theme={{
+                        colors: {
+                          text: '#ffffff',
+                          placeholder: 'rgba(255, 255, 255, 0.5)',
+                          background: 'rgba(32, 32, 60, 0.9)'
+                        }
+                      }}
+                    />
                   </View>
                 )}
               />
-            </View>
-
-            {/* Water Intake Goal - Enhanced UI */}
-            <View style={[styles.inputContainer, styles.waterIntakeContainer]}>
-              <LinearGradient
-                colors={['rgba(54, 209, 220, 0.2)', 'rgba(91, 134, 229, 0.2)']}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-                style={styles.waterIntakeGradient}
-              />
-              
-              <View style={styles.waterIntakeHeader}>
-                <MaterialCommunityIcons name="water" size={28} color="#36D1DC" />
-                <Text style={styles.waterIntakeTitle}>
-                  Daily Water Goal
-                </Text>
-              </View>
-              
-              <View style={styles.waterIntakeContent}>
-                <Animated.View style={[styles.waterBottleContainer, waterBottleAnimStyle]}>
-                  <WaterBottleFill fillPercentage={Math.min((sliderValue / 10) * 100, 100)} />
-                </Animated.View>
-                
-                <View style={styles.waterIntakeControls}>
-                  <Controller
-                    control={control}
-                    name="water_intake_goal"
-                    render={({ field: { onChange, value } }) => (
-                      <>
-                        <Text style={styles.waterValueText}>
-                          {sliderValue.toFixed(1)}
-                          <Text style={styles.waterUnitText}>
-                            {waterIntakeUnit === 'l' ? 'L' : 'oz'}
-                          </Text>
-                        </Text>
-                        
-                        <Slider
-                          style={styles.slider}
-                          minimumValue={0.5}
-                          maximumValue={10}
-                          value={sliderValue}
-                          step={0.1}
-                          minimumTrackTintColor="#36D1DC"
-                          maximumTrackTintColor="rgba(255,255,255,0.4)"
-                          thumbTintColor="#5B86E5"
-                          onValueChange={(val) => {
-                            setSliderValue(val);
-                            onChange(val);
-                          }}
-                        />
-                        
-                        <View style={styles.sliderLabels}>
-                          <Text style={styles.sliderLabel}>0.5L</Text>
-                          <Text style={styles.sliderLabel}>10L</Text>
-                        </View>
-                      </>
-                    )}
-                  />
-                  
-                  <View style={styles.unitSelectorContainer}>
-                    <Text style={styles.unitSelectorLabel}>Preferred Unit:</Text>
-                    <Controller
-                      control={control}
-                      name="water_intake_unit"
-                      render={({ field: { onChange, value } }) => (
-                        <SegmentedButtons
-                          value={value}
-                          onValueChange={(val: string) => {
-                            // Explicitly cast the value to our enum type
-                            const newValue = val as 'l' | 'oz';
-                            onChange(newValue);
-                            // Convert value when units change
-                            if (newValue === 'oz' && waterIntakeUnit === 'l') {
-                              // Convert L to oz (1L = 33.814 oz)
-                              setValue('water_intake_goal', parseFloat((waterIntakeGoal * 33.814).toFixed(1)));
-                              setSliderValue(parseFloat((waterIntakeGoal * 33.814).toFixed(1)));
-                            } else if (newValue === 'l' && waterIntakeUnit === 'oz') {
-                              // Convert oz to L (1 oz = 0.0295735 L)
-                              setValue('water_intake_goal', parseFloat((waterIntakeGoal * 0.0295735).toFixed(1)));
-                              setSliderValue(parseFloat((waterIntakeGoal * 0.0295735).toFixed(1)));
-                            }
-                          }}
-                          buttons={[
-                            { value: 'l', label: 'Liters' },
-                            { value: 'oz', label: 'Ounces' },
-                          ]}
-                          style={styles.waterUnitSelector}
-                          theme={{ colors: { primary: '#36D1DC', secondaryContainer: 'rgba(255,255,255,0.2)' } }}
-                        />
-                      )}
-                    />
-                  </View>
-                </View>
-              </View>
-              
-              {errors.water_intake_goal && (
-                <HelperText type="error" style={styles.waterError}>
-                  {errors.water_intake_goal.message}
+              {errors.full_name && (
+                <HelperText type="error" visible={true}>
+                  {errors.full_name.message}
                 </HelperText>
               )}
             </View>
 
-            {/* Action Buttons */}
-            <View style={styles.buttonsContainer}>
+            {/* Height Input */}
+            <View style={styles.inputContainer}>
+              <Text style={styles.inputLabel}>Height</Text>
+              <View style={styles.measurementContainer}>
+                <Controller
+                  control={control}
+                  name="height"
+                  render={({ field: { onChange, value } }) => (
+                    <View>
+                      <TextInput
+                        mode="outlined"
+                        outlineColor="rgba(255, 255, 255, 0.3)"
+                        activeOutlineColor="#5B86E5"
+                        style={[styles.textInput, styles.measurementInput]}
+                        onChangeText={(text) => onChange(text ? parseFloat(text) : '')}
+                        value={value?.toString() || ''}
+                        keyboardType="numeric"
+                        placeholder="Enter height"
+                        placeholderTextColor="rgba(255, 255, 255, 0.5)"
+                        textColor="#ffffff"
+                        theme={{
+                          colors: {
+                            text: '#ffffff',
+                            placeholder: 'rgba(255, 255, 255, 0.5)',
+                            background: 'rgba(32, 32, 60, 0.9)'
+                          }
+                        }}
+                      />
+                    </View>
+                  )}
+                />
+                <Controller
+                  control={control}
+                  name="heightUnit"
+                  render={({ field: { onChange, value } }) => (
+                    <View>
+                      <CustomSegmentedButtons
+                        value={value || 'cm'}
+                        onValueChange={onChange}
+                        buttons={[
+                          { value: 'cm', label: 'cm' },
+                          { value: 'ft', label: 'ft' }
+                        ]}
+                        style={styles.unitSelector}
+                      />
+                    </View>
+                  )}
+                />
+              </View>
+            </View>
+
+            {/* Weight Input */}
+            <View style={styles.inputContainer}>
+              <Text style={styles.inputLabel}>Current Weight</Text>
+              <View style={styles.measurementContainer}>
+                <Controller
+                  control={control}
+                  name="weight"
+                  render={({ field: { onChange, value } }) => (
+                    <View>
+                      <TextInput
+                        mode="outlined"
+                        outlineColor="rgba(255, 255, 255, 0.3)"
+                        activeOutlineColor="#5B86E5"
+                        style={[styles.textInput, styles.measurementInput]}
+                        onChangeText={(text) => onChange(text ? parseFloat(text) : '')}
+                        value={value?.toString() || ''}
+                        keyboardType="numeric"
+                        placeholder="Enter weight"
+                        placeholderTextColor="rgba(255, 255, 255, 0.5)"
+                        textColor="#ffffff"
+                        theme={{
+                          colors: {
+                            text: '#ffffff',
+                            placeholder: 'rgba(255, 255, 255, 0.5)',
+                            background: 'rgba(32, 32, 60, 0.9)'
+                          }
+                        }}
+                      />
+                    </View>
+                  )}
+                />
+                <Controller
+                  control={control}
+                  name="weightUnit"
+                  render={({ field: { onChange, value } }) => (
+                    <View>
+                      <CustomSegmentedButtons
+                        value={value || 'kg'}
+                        onValueChange={onChange}
+                        buttons={[
+                          { value: 'kg', label: 'kg' },
+                          { value: 'lbs', label: 'lbs' }
+                        ]}
+                        style={styles.unitSelector}
+                      />
+                    </View>
+                  )}
+                />
+              </View>
+            </View>
+
+            {/* Target Weight Input */}
+            <View style={styles.inputContainer}>
+              <Text style={styles.inputLabel}>Target Weight</Text>
+              <View style={styles.measurementContainer}>
+                <Controller
+                  control={control}
+                  name="target_weight"
+                  render={({ field: { onChange, value } }) => (
+                    <View>
+                      <TextInput
+                        mode="outlined"
+                        outlineColor="rgba(255, 255, 255, 0.3)"
+                        activeOutlineColor="#5B86E5"
+                        style={[styles.textInput, styles.measurementInput]}
+                        onChangeText={(text) => onChange(text ? parseFloat(text) : '')}
+                        value={value?.toString() || ''}
+                        keyboardType="numeric"
+                        placeholder="Enter target weight"
+                        placeholderTextColor="rgba(255, 255, 255, 0.5)"
+                        textColor="#ffffff"
+                        theme={{
+                          colors: {
+                            text: '#ffffff',
+                            placeholder: 'rgba(255, 255, 255, 0.5)',
+                            background: 'rgba(32, 32, 60, 0.9)'
+                          }
+                        }}
+                      />
+                    </View>
+                  )}
+                />
+                <Controller
+                  control={control}
+                  name="target_weight_unit"
+                  render={({ field: { onChange, value } }) => (
+                    <View>
+                      <CustomSegmentedButtons
+                        value={value || 'kg'}
+                        onValueChange={onChange}
+                        buttons={[
+                          { value: 'kg', label: 'kg' },
+                          { value: 'lbs', label: 'lbs' }
+                        ]}
+                        style={styles.unitSelector}
+                      />
+                    </View>
+                  )}
+                />
+              </View>
+            </View>
+
+            {/* Fitness Goal */}
+            <View style={styles.inputContainer}>
+              <Text style={styles.inputLabel}>Fitness Goal</Text>
+              <Controller
+                control={control}
+                name="fitness_goal"
+                render={({ field: { onChange, value } }) => (
+                  <View style={styles.fitnessGoalContainer}>
+                    <TouchableOpacity
+                      style={styles.goalOption}
+                      onPress={() => onChange('weight-loss')}
+                    >
+                      <LinearGradient
+                        colors={value === 'weight-loss' 
+                          ? ['rgba(255,145,144,0.6)', 'rgba(255,145,144,0.3)'] 
+                          : ['rgba(40, 40, 70, 0.8)', 'rgba(30, 30, 50, 0.95)']}
+                        style={[StyleSheet.absoluteFill, styles.goalGradient]}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 0, y: 1 }}
+                      />
+                      <View style={styles.goalIconContainer}>
+                        <FontAwesome5 name="weight" size={24} color={value === 'weight-loss' ? '#fff' : 'rgba(255,255,255,0.7)'} />
+                      </View>
+                      <Text style={[styles.goalText, value === 'weight-loss' && styles.goalTextSelected]}>Weight Loss</Text>
+                    </TouchableOpacity>
+                    
+                    <TouchableOpacity
+                      style={styles.goalOption}
+                      onPress={() => onChange('muscle-gain')}
+                    >
+                      <LinearGradient
+                        colors={value === 'muscle-gain' 
+                          ? ['rgba(94,114,235,0.6)', 'rgba(94,114,235,0.3)'] 
+                          : ['rgba(40, 40, 70, 0.8)', 'rgba(30, 30, 50, 0.95)']}
+                        style={[StyleSheet.absoluteFill, styles.goalGradient]}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 0, y: 1 }}
+                      />
+                      <View style={styles.goalIconContainer}>
+                        <MaterialCommunityIcons name="arm-flex" size={24} color={value === 'muscle-gain' ? '#fff' : 'rgba(255,255,255,0.7)'} />
+                      </View>
+                      <Text style={[styles.goalText, value === 'muscle-gain' && styles.goalTextSelected]}>Muscle Gain</Text>
+                    </TouchableOpacity>
+                    
+                    <TouchableOpacity
+                      style={styles.goalOption}
+                      onPress={() => onChange('improved-fitness')}
+                    >
+                      <LinearGradient
+                        colors={value === 'improved-fitness' 
+                          ? ['rgba(64,223,217,0.6)', 'rgba(64,223,217,0.3)'] 
+                          : ['rgba(40, 40, 70, 0.8)', 'rgba(30, 30, 50, 0.95)']}
+                        style={[StyleSheet.absoluteFill, styles.goalGradient]}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 0, y: 1 }}
+                      />
+                      <View style={styles.goalIconContainer}>
+                        <MaterialCommunityIcons name="run" size={24} color={value === 'improved-fitness' ? '#fff' : 'rgba(255,255,255,0.7)'} />
+                      </View>
+                      <Text style={[styles.goalText, value === 'improved-fitness' && styles.goalTextSelected]}>Improved Fitness</Text>
+                    </TouchableOpacity>
+                  </View>
+                )}
+              />
+            </View>
+
+            {/* Water Goal with animated slider */}
+            {renderWaterGoalSection()}
+
+            {/* Water Intake Unit */}
+            <View style={styles.inputContainer}>
+              <Text style={styles.inputLabel}>Water Intake Unit</Text>
+              <Controller
+                control={control}
+                name="water_intake_unit"
+                render={({ field: { onChange, value } }) => (
+                  <View style={{ marginTop: 16 }}>
+                    <CustomSegmentedButtons
+                      value={value}
+                      onValueChange={onChange}
+                      buttons={[
+                        { value: 'l', label: 'Liters' },
+                        { value: 'oz', label: 'Ounces' }
+                      ]}
+                      style={{ width: '100%' }}
+                    />
+                  </View>
+                )}
+              />
+            </View>
+
+            {/* Save Button - now inside the ScrollView */}
+            <View style={styles.saveButtonWrapper}>
               <TouchableOpacity
-                onPress={() => router.back()}
-                style={[styles.button, styles.cancelButton]}
-                disabled={saving}
-              >
-                <Text style={styles.cancelButtonText}>Cancel</Text>
-              </TouchableOpacity>
-              
-              <TouchableOpacity
+                style={styles.saveButton}
                 onPress={handleSubmit(onSubmit)}
-                style={[styles.button, styles.saveButton]}
                 disabled={saving}
               >
                 <LinearGradient
-                  colors={['#FF2E93', '#FF6EB5', '#D30069']}
+                  colors={['#5B86E5', '#36D1DC']}
                   start={{ x: 0, y: 0 }}
                   end={{ x: 1, y: 0 }}
-                  style={[StyleSheet.absoluteFill, { borderRadius: 30 }]}
-                />
-                {saving ? (
-                  <ActivityIndicator color="white" />
-                ) : (
-                  <Text style={styles.saveButtonText}>Save Changes</Text>
-                )}
+                  style={styles.saveButtonGradient}
+                >
+                  {saving ? (
+                    <ActivityIndicator color="#fff" />
+                  ) : (
+                    <Text style={styles.saveButtonText}>Save Changes</Text>
+                  )}
+                </LinearGradient>
               </TouchableOpacity>
             </View>
-          </Surface>
+          </View>
         </ScrollView>
       </KeyboardAvoidingView>
     </SafeAreaView>
@@ -704,264 +856,255 @@ export default function EditProfileScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: colors.background.primary,
-  },
-  keyboardAvoidingView: {
-    flex: 1,
+    backgroundColor: '#121232',
   },
   header: {
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-    ...shadows.medium,
-  },
-  headerContent: {
+    paddingHorizontal: 16,
+    paddingVertical: 12,
     flexDirection: 'row',
     alignItems: 'center',
+    justifyContent: 'space-between',
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.1)',
+  },
+  headerTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#fff',
+    flex: 1,
+    textAlign: 'center',
   },
   backButton: {
     padding: 8,
-    marginRight: 8,
     borderRadius: 20,
     backgroundColor: 'rgba(255, 255, 255, 0.1)',
-  },
-  headerTitle: {
-    color: 'white',
-    fontWeight: 'bold',
   },
   scrollView: {
     flex: 1,
   },
   scrollContent: {
     padding: 16,
-    paddingBottom: 40,
-  },
-  avatarContainer: {
-    alignItems: 'center',
-    marginVertical: 20,
-  },
-  avatar: {
-    backgroundColor: colors.primary.main,
   },
   formContainer: {
-    padding: 24,
-    borderRadius: 16,
-    backgroundColor: 'rgba(20, 20, 35, 0.95)', // Much darker for better contrast with white text
-    ...shadows.medium,
-    borderWidth: 2,
-    borderColor: 'rgba(255, 255, 255, 0.2)', // Brighter border for aesthetic appeal
-    shadowColor: colors.primary.main,
-    shadowOpacity: 0.2,
-    shadowRadius: 20,
+    gap: 24,
+  },
+  textInput: {
+    backgroundColor: 'rgba(32, 32, 60, 0.9)',
+    color: '#fff',
+    fontSize: 16,
+    height: 50,
   },
   inputContainer: {
     marginBottom: 24,
   },
-  input: {
-    backgroundColor: 'rgba(20, 20, 35, 0.9)', // Darker background for better text contrast
-    borderRadius: 12,
-    height: 56,
-    color: 'white', // Ensuring text is white
-    borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.2)', // More visible border
-    fontSize: 18, // Larger text
-  },
-  label: {
+  inputLabel: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
     marginBottom: 8,
-    color: 'white', // Ensuring label text is white
-    fontWeight: '700', // Bolder
-    fontSize: 16, // Larger text
-    textShadowColor: 'rgba(0, 0, 0, 0.5)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 3,
   },
-  unitInputContainer: {
+  measurementContainer: {
     flexDirection: 'row',
     alignItems: 'center',
     gap: 12,
   },
-  unitInput: {
+  measurementInput: {
     flex: 1,
-    backgroundColor: 'rgba(20, 20, 35, 0.9)', // Darker background for better text contrast
-    borderRadius: 12,
-    height: 56,
-    color: 'white', // Ensuring text is white
-    borderWidth: 1, // Add border
-    borderColor: 'rgba(255, 255, 255, 0.2)', // More visible border
-    fontSize: 18, // Larger text
   },
   unitSelector: {
-    minWidth: 100,
-    backgroundColor: 'rgba(69, 71, 112, 0.9)', // Brighter for better contrast
+    width: 120,
+    backgroundColor: 'rgba(69, 71, 112, 0.9)',
   },
-  goalContainer: {
+  fitnessGoalContainer: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    gap: 12, // Increased gap for better spacing
+    gap: 12,
   },
   goalOption: {
     flex: 1,
+    height: 110,
+    backgroundColor: 'transparent',
+    borderRadius: 12,
+    overflow: 'hidden',
+    position: 'relative',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 2 },
+        shadowOpacity: 0.25,
+        shadowRadius: 3.84,
+      },
+      android: {
+        elevation: 5,
+      },
+      web: {
+        boxShadow: '0 2px 4px rgba(0,0,0,0.25)',
+      }
+    }),
+  },
+  goalGradient: {
+    borderRadius: 12,
+  },
+  goalIconContainer: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
     alignItems: 'center',
     justifyContent: 'center',
-    paddingVertical: 16,
-    backgroundColor: 'rgba(20, 20, 35, 0.9)', // Darker for better contrast
-    borderRadius: 12,
-    gap: 8,
-    borderWidth: 1.5, // Thicker border
-    borderColor: 'rgba(255, 255, 255, 0.25)', // Brighter border
-    ...shadows.small, // Added shadow for depth
-  },
-  goalOptionSelected: {
-    backgroundColor: '#36BFFA', // Brighter and more vibrant
-    borderColor: '#7DD3FB', // Highlight border when selected
+    paddingBottom: 24,
   },
   goalText: {
-    color: 'white', // White text for visibility
-    fontSize: 15, // Larger
-    fontWeight: '600', // Bolder
+    color: 'rgba(255, 255, 255, 0.7)',
+    marginTop: 8,
+    fontSize: 14,
     textAlign: 'center',
-    textShadowColor: 'rgba(0, 0, 0, 0.5)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 2,
+    position: 'absolute',
+    bottom: 16,
+    left: 0,
+    right: 0,
   },
   goalTextSelected: {
-    color: 'white',
-    fontWeight: 'bold',
-    fontSize: 16, // Even larger when selected
+    color: '#fff',
+    fontWeight: '600',
   },
-  waterIntakeContainer: {
-    position: 'relative',
-    padding: 24, // More padding for spaciousness
-    marginBottom: 30,
+  waterGoalContainer: {
     borderRadius: 16,
-    borderWidth: 2, // Thicker border
-    borderColor: 'rgba(91, 134, 229, 0.5)', // Brighter border
+    padding: 20,
+    flexDirection: 'row',
+    alignItems: 'center',
     overflow: 'hidden',
-    ...shadows.medium, // Added shadow for depth
-  },
-  waterIntakeGradient: {
-    ...StyleSheet.absoluteFillObject,
-    borderRadius: 16,
-    opacity: 0.95, // Increased opacity for more vibrant gradient
-  },
-  waterIntakeHeader: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginBottom: 24, // Increased spacing
-  },
-  waterIntakeTitle: {
-    color: 'white', // Changed to white for visibility
-    fontWeight: 'bold',
-    marginLeft: 10,
-    fontSize: 20, // Larger
-    textShadowColor: 'rgba(54, 209, 220, 0.6)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 5,
-  },
-  waterIntakeContent: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
+    ...Platform.select({
+      ios: {
+        shadowColor: '#000',
+        shadowOffset: { width: 0, height: 4 },
+        shadowOpacity: 0.2,
+        shadowRadius: 8,
+      },
+      android: {
+        elevation: 8,
+      },
+    }),
   },
   waterBottleContainer: {
-    width: '30%',
+    width: 80,
+    height: 160,
     alignItems: 'center',
     justifyContent: 'center',
-    marginRight: 10, // Added margin for spacing
+    marginRight: 5,
   },
-  waterIntakeControls: {
-    width: '65%',
-    alignItems: 'center',
-  },
-  waterValueText: {
-    fontSize: 40, // Much larger for emphasis
-    fontWeight: 'bold',
-    color: 'white',
-    marginBottom: 15, // More space
-    textShadowColor: 'rgba(54, 209, 220, 0.6)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 5,
-  },
-  waterUnitText: {
-    fontSize: 24, // Adjusted for better proportion
-    marginLeft: 4,
-    color: 'white', // Pure white for visibility
-    opacity: 1, // Fully opaque
-  },
-  slider: {
-    width: '100%',
-    height: 50, // Taller slider for easier interaction
-  },
-  sliderLabels: {
-    width: '100%',
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    paddingHorizontal: 10,
-    marginTop: 0,
-  },
-  sliderLabel: {
-    color: 'white',
-    fontSize: 14, // Larger
-    fontWeight: '600',
-    opacity: 1, // Fully visible
-  },
-  unitSelectorContainer: {
-    marginTop: 20, // Increased space
-    width: '100%',
-  },
-  unitSelectorLabel: {
-    color: 'white', // Changed to white
-    marginBottom: 8,
-    fontSize: 14,
-    fontWeight: '500',
-  },
-  waterUnitSelector: {
-    marginTop: 4,
-    backgroundColor: 'rgba(54, 209, 220, 0.1)', // Subtle background
-  },
-  waterError: {
-    color: colors.feedback.error,
-    marginTop: 8,
-    fontWeight: '500',
-    textAlign: 'center',
-  },
-  buttonsContainer: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    marginTop: 30, // More space
-    gap: 20, // More gap between buttons
-  },
-  button: {
+  waterGoalContent: {
     flex: 1,
-    height: 60, // Even taller buttons
-    borderRadius: 30, // Fully rounded corners
+    marginLeft: 15,
+  },
+  waterValueContainer: {
     alignItems: 'center',
+    marginBottom: 12,
+  },
+  waterGoalValue: {
+    fontSize: 28,
+    fontWeight: 'bold',
+    marginBottom: 4,
+  },
+  waterGoalUnit: {
+    fontSize: 18,
+    fontWeight: 'normal',
+    marginLeft: 2,
+    opacity: 0.8,
+  },
+  waterGoalUnitSmall: {
+    fontSize: 10,
+    marginLeft: 1,
+    opacity: 0.7,
+  },
+  waterGoalMessage: {
+    backgroundColor: 'rgba(0,0,0,0.15)',
+    paddingHorizontal: 10,
+    paddingVertical: 2,
+    borderRadius: 10,
+    marginTop: 5,
+  },
+  waterStatusText: {
+    color: 'rgba(255,255,255,0.9)',
+    fontSize: 12,
+    fontWeight: '500',
+  },
+  sliderContainer: {
+    width: '100%',
+    height: 40,
     justifyContent: 'center',
+    position: 'relative',
+  },
+  sliderTrack: {
+    position: 'absolute',
+    height: 6,
+    width: '100%',
+    top: 17, // Center in the parent container
+    borderRadius: 3,
     overflow: 'hidden',
-    ...shadows.medium,
   },
-  cancelButton: {
-    backgroundColor: 'rgba(255, 255, 255, 0.08)', // More visible
-    borderWidth: 2, // Thicker border
-    borderColor: 'rgba(255, 255, 255, 0.3)', // Brighter border
+  sliderTrackGradient: {
+    height: '100%',
+    width: '100%',
   },
-  cancelButtonText: {
-    color: 'white', // White text
-    fontWeight: '600',
-    fontSize: 18, // Larger text
-    textShadowColor: 'rgba(0, 0, 0, 0.5)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 3,
+  waterSlider: {
+    width: '100%',
+    height: 40,
+    position: 'absolute',
+  },
+  waterGoalRange: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    width: '100%',
+    marginTop: 4,
+  },
+  waterGoalRangeText: {
+    color: 'rgba(255, 255, 255, 0.7)',
+    fontSize: 12,
+  },
+  milestoneContainer: {
+    position: 'relative',
+    width: '100%',
+    height: 12,
+    marginTop: -12,
+  },
+  milestone: {
+    position: 'absolute',
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: 'rgba(255,255,255,0.3)',
+    top: 3,
+    marginLeft: -3,
+  },
+  saveButtonWrapper: {
+    marginTop: 24,
+    paddingTop: 16,
+    borderTopWidth: 1,
+    borderTopColor: 'rgba(255, 255, 255, 0.1)',
+    marginBottom: 40,
   },
   saveButton: {
-    backgroundColor: 'transparent', // Let gradient show through
-    ...shadows.large, // Enhanced shadow
+    height: 50,
+    width: '100%',
+    borderRadius: 25,
+    overflow: 'hidden',
+    elevation: 4,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.25,
+    shadowRadius: 4,
+  },
+  saveButtonGradient: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 24,
   },
   saveButtonText: {
-    color: 'white',
-    fontWeight: '700', // Bolder
-    fontSize: 18, // Larger text
-    textShadowColor: 'rgba(0, 0, 0, 0.3)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 2,
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
   },
 });

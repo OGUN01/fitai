@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   View, 
   StyleSheet, 
@@ -7,7 +7,8 @@ import {
   Platform,
   Dimensions,
   ImageBackground,
-  ScrollView
+  ScrollView,
+  Animated
 } from 'react-native';
 import { TextInput, Button, Snackbar } from 'react-native-paper';
 import { router } from 'expo-router';
@@ -16,6 +17,8 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../contexts/AuthContext';
 import StyledText from '../../components/ui/StyledText';
 import { colors, spacing, borderRadius, shadows } from '../../theme/theme';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { Ionicons } from '@expo/vector-icons';
 
 // Get screen dimensions for responsive sizing
 const { width, height } = Dimensions.get('window');
@@ -29,27 +32,106 @@ export default function SignInScreen() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
   const [snackbarVisible, setSnackbarVisible] = useState(false);
+  const [errorOpacity] = useState(new Animated.Value(0));
   const { signIn } = useAuth();
 
+  useEffect(() => {
+    // Check if there's an auth error from previous attempt
+    const checkAuthError = async () => {
+      try {
+        const errorJson = await AsyncStorage.getItem('auth_error');
+        if (errorJson) {
+          const errorData = JSON.parse(errorJson);
+          setError(errorData.message);
+          showErrorAnimation();
+          // Clean up the error
+          await AsyncStorage.removeItem('auth_error');
+        }
+      } catch (err) {
+        console.error('Error checking auth status:', err);
+      }
+    };
+    
+    checkAuthError();
+  }, []);
+
+  const showErrorAnimation = () => {
+    // Reset the animation value first to ensure it works if called multiple times
+    errorOpacity.setValue(0);
+    
+    // Use a longer display time and no fade out animation to ensure visibility
+    Animated.timing(errorOpacity, {
+      toValue: 1,
+      duration: 300,
+      useNativeDriver: true
+    }).start();
+    
+    // Error stays visible until next login attempt or for 20 seconds
+    setTimeout(() => {
+      Animated.timing(errorOpacity, {
+        toValue: 0,
+        duration: 300,
+        useNativeDriver: true
+      }).start();
+    }, 20000); // Keep error visible for 20 seconds
+  };
+
   const handleSignIn = async () => {
+    // Clear any previous error
+    setError('');
+    
+    // Input validation
     if (!email || !password) {
       setError('Please enter both email and password');
-      setSnackbarVisible(true);
+      showErrorAnimation();
       return;
     }
 
     try {
       setLoading(true);
-      setError('');
-      await signIn(email, password);
-      router.replace('/(tabs)/');
+      console.log("Starting sign in process...");
+      
+      // Try to sign in and get the auth data
+      const authData = await signIn(email, password);
+      
+      // If we get here, sign in was successful
+      console.log("Sign in successful, redirecting...");
+      
+      // Navigate to the tabs screen
+      if (authData && authData.session) {
+        router.replace("/(tabs)" as any);
+      }
     } catch (err) {
       console.error('Login error:', err);
-      setError(err instanceof Error ? err.message : 'Failed to sign in');
-      setSnackbarVisible(true);
+      
+      // Set the error directly in the component with a user-friendly message
+      let errorMessage = "Sign in failed. Please try again.";
+      
+      if (err.message) {
+        if (err.message.includes("Invalid login credentials")) {
+          errorMessage = "Email or password is incorrect";
+        } else if (err.message.includes("network")) {
+          errorMessage = "Network error. Check your connection and try again.";
+        } else {
+          errorMessage = err.message;
+        }
+      }
+      
+      setError(errorMessage);
+      showErrorAnimation();
     } finally {
+      // Always ensure loading is reset
       setLoading(false);
     }
+  };
+
+  // Add a function to dismiss the error message
+  const dismissError = () => {
+    Animated.timing(errorOpacity, {
+      toValue: 0,
+      duration: 300,
+      useNativeDriver: true
+    }).start(() => setError(''));
   };
 
   return (
@@ -68,6 +150,32 @@ export default function SignInScreen() {
           style={styles.keyboardAvoid}
         >
           <ScrollView contentContainerStyle={styles.scrollContent}>
+            {/* Error Message */}
+            {error ? (
+              <Animated.View 
+                style={[
+                  styles.errorContainer, 
+                  { 
+                    opacity: errorOpacity,
+                    transform: [{ translateY: errorOpacity.interpolate({
+                      inputRange: [0, 1],
+                      outputRange: [-20, 0]
+                    }) }] 
+                  }
+                ]}
+              >
+                <View style={styles.errorContent}>
+                  <Ionicons name="alert-circle" size={24} color="#fff" />
+                  <StyledText variant="bodyMedium" style={styles.errorText}>
+                    {error}
+                  </StyledText>
+                </View>
+                <TouchableOpacity onPress={dismissError} style={styles.dismissButton}>
+                  <Ionicons name="close-circle" size={24} color="#fff" />
+                </TouchableOpacity>
+              </Animated.View>
+            ) : null}
+            
             {/* Header */}
             <View style={styles.header}>
               <TouchableOpacity onPress={() => router.back()} style={styles.backButton}>
@@ -178,16 +286,6 @@ export default function SignInScreen() {
             </View>
           </ScrollView>
         </KeyboardAvoidingView>
-        
-        {/* Error Snackbar */}
-        <Snackbar
-          visible={snackbarVisible}
-          onDismiss={() => setSnackbarVisible(false)}
-          duration={3000}
-          style={styles.snackbar}
-        >
-          {error}
-        </Snackbar>
       </ImageBackground>
     </View>
   );
@@ -213,6 +311,27 @@ const styles = StyleSheet.create({
     flexGrow: 1,
     padding: spacing.xl,
     justifyContent: 'center',
+  },
+  errorContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(255, 59, 48, 0.9)',
+    borderRadius: 8,
+    padding: spacing.md,
+    marginBottom: spacing.md,
+    borderLeftWidth: 4,
+    borderLeftColor: '#fff',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.3,
+    shadowRadius: 4,
+    elevation: 5,
+  },
+  errorText: {
+    color: '#fff',
+    marginLeft: spacing.sm,
+    flex: 1,
+    fontWeight: 'bold',
   },
   header: {
     flexDirection: 'row',
@@ -288,5 +407,13 @@ const styles = StyleSheet.create({
   },
   snackbar: {
     backgroundColor: colors.feedback.error,
+  },
+  errorContent: {
+    flexDirection: 'row',
+    flex: 1,
+    alignItems: 'center',
+  },
+  dismissButton: {
+    padding: 4,
   },
 }); 

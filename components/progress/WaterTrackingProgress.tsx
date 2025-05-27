@@ -1,5 +1,5 @@
 import React, { useEffect } from 'react';
-import { View, StyleSheet, Dimensions, TouchableOpacity, ViewStyle, TextStyle } from 'react-native';
+import { View, StyleSheet, Dimensions, TouchableOpacity, ViewStyle, TextStyle, ActivityIndicator } from 'react-native';
 import { BarChart } from 'react-native-chart-kit';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { colors, spacing, borderRadius, shadows } from '../../theme/theme';
@@ -113,7 +113,7 @@ const WaterTrackingProgress: React.FC<WaterTrackingProgressProps> = ({
     let labels: string[] = [];
     let data: number[] = [];
     
-    if (!waterData) {
+    if (!waterData || !waterData.dailyIntake || Object.keys(waterData.dailyIntake).length === 0) {
       // Return empty state based on timeRange
       if (timeRange === '7days') {
         labels = ['S', 'M', 'T', 'W', 'T', 'F', 'S'];
@@ -138,14 +138,23 @@ const WaterTrackingProgress: React.FC<WaterTrackingProgressProps> = ({
       data = [0, 0, 0, 0, 0, 0, 0];
       
       if (waterData.dailyIntake && Object.keys(waterData.dailyIntake).length > 0) {
+        // Get today's date
+        const today = new Date();
+        const weekAgo = new Date();
+        weekAgo.setDate(today.getDate() - 7);
+        
         // Map intake data to days
         Object.entries(waterData.dailyIntake).forEach(([dateStr, amount]) => {
           try {
             const date = new Date(dateStr);
+            
+            // Only include data from the last 7 days
+            if (date >= weekAgo && date <= today) {
             const dayIndex = date.getDay(); // 0 for Sunday, 6 for Saturday
             if (dayIndex >= 0 && dayIndex < 7) {
               // Convert to liters with proper rounding to 1 decimal place
               data[dayIndex] = parseFloat((Number(amount) / 1000).toFixed(1));
+              }
             }
           } catch (err) {
             console.error('Error parsing date:', dateStr, err);
@@ -240,529 +249,243 @@ const WaterTrackingProgress: React.FC<WaterTrackingProgressProps> = ({
     return { labels, data };
   };
   
-  // Calculate average water intake
-  const calculateAverageIntake = (): number => {
-    if (!waterData) return 0;
-    
-    let totalIntake = 0;
-    let daysWithData = 0;
-    
-    if (waterData.dailyIntake) {
-      Object.values(waterData.dailyIntake).forEach(amount => {
-        totalIntake += Number(amount);
-        daysWithData++;
-      });
-    }
-    
-    if (daysWithData === 0) return 0;
-    
-    // Return average in liters, rounded to 1 decimal place
-    return parseFloat((totalIntake / daysWithData / 1000).toFixed(1));
-  };
+  // Chart data and config
+  const { labels, data } = formatWaterData();
   
-  // Calculate completion percentage against daily goal
-  const calculateCompletionPercentage = (): number => {
-    if (!waterData || !waterData.dailyGoal || waterData.dailyGoal <= 0) {
-      return 0;
-    }
-    
-    const avgIntake = calculateAverageIntake() * 1000; // Convert back to ml
-    const percentage = (avgIntake / waterData.dailyGoal) * 100;
-    
-    // Cap at 100% for display purposes
-    return Math.min(Math.round(percentage), 100);
-  };
-  
-  // Calculate the streak of meeting water goals
-  const calculateWaterStreak = (): number => {
-    if (!waterData || !waterData.dailyIntake || !waterData.dailyGoal) {
-      return 0;
-    }
-    
-    // Default to the API value if available
-    if (waterData.currentStreak !== undefined) {
-      return waterData.currentStreak;
-    }
-    
-    // Otherwise calculate it manually
-    let streak = 0;
-    const sortedDates = Object.entries(waterData.dailyIntake)
-      .sort(([dateA], [dateB]) => new Date(dateB).getTime() - new Date(dateA).getTime());
-    
-    for (const [date, amount] of sortedDates) {
-      if (Number(amount) >= waterData.dailyGoal) {
-        streak++;
-      } else {
-        break; // Stop counting once we hit a day where goal wasn't met
-      }
-    }
-    
-    return streak;
-  };
-  
-  // Best and worst days for 30-day view
-  const findBestAndWorstDays = () => {
-    if (!waterData || !waterData.dailyIntake) {
-      return { best: null, worst: null };
-    }
-    
-    // Get today's date to calculate dates from past 30 days
-    const today = new Date();
-    const thirtyDaysAgo = new Date();
-    thirtyDaysAgo.setDate(today.getDate() - 30);
-    
-    let bestDay = { date: '', amount: 0 };
-    let worstDay = { date: '', amount: Infinity };
-    let hasData = false;
-    
-    Object.entries(waterData.dailyIntake).forEach(([dateStr, amount]) => {
-      try {
-        const date = new Date(dateStr);
-        
-        // Only consider data from the last 30 days
-        if (date >= thirtyDaysAgo && date <= today) {
-          const numAmount = Number(amount);
-          hasData = true;
-          
-          if (numAmount > bestDay.amount) {
-            bestDay = { date: dateStr, amount: numAmount };
-          }
-          
-          // Only consider days with actual water data (> 0) for worst day
-          if (numAmount < worstDay.amount && numAmount > 0) {
-            worstDay = { date: dateStr, amount: numAmount };
-          }
-        }
-      } catch (err) {
-        console.error('Error parsing date:', dateStr, err);
-      }
-    });
-    
-    // If no actual data was found in the last 30 days, return null
-    if (!hasData) {
-      return { best: null, worst: null };
-    }
-    
-    // Format the results, ensuring proper rounding to 1 decimal place
-    return {
-      best: bestDay.amount > 0 ? {
-        day: getDayOfWeek(new Date(bestDay.date)),
-        date: formatDate(new Date(bestDay.date), 'MMM d'),
-        amount: parseFloat((bestDay.amount / 1000).toFixed(1)).toString()
-      } : null,
-      worst: worstDay.amount < Infinity ? {
-        day: getDayOfWeek(new Date(worstDay.date)),
-        date: formatDate(new Date(worstDay.date), 'MMM d'),
-        amount: parseFloat((worstDay.amount / 1000).toFixed(1)).toString()
-      } : null
-    };
-  };
-  
-  // Achievement badges for 90-day view
-  const calculateAchievements = () => {
-    if (!waterData) return [];
-    
-    const achievements = [];
-    
-    // Streak achievement
-    const streak = calculateWaterStreak();
-    if (streak >= 3) {
-      achievements.push({
-        type: 'streak',
-        title: `${streak} Day Streak`,
-        description: 'Consecutive days meeting your water goal',
-        icon: BADGE_ICONS.streak as BadgeIconType,
-        color: '#FF9500'
-      });
-    }
-    
-    // Goal achievement
-    const completionPercentage = calculateCompletionPercentage();
-    if (completionPercentage >= 80) {
-      achievements.push({
-        type: 'goal',
-        title: 'Goal Crusher',
-        description: `Averaging ${completionPercentage}% of your daily goal`,
-        icon: BADGE_ICONS.goal as BadgeIconType,
-        color: '#30D158'
-      });
-    }
-    
-    // Consistency achievement (dummy for now)
-    if (waterData.dailyIntake && Object.keys(waterData.dailyIntake).length > 20) {
-      achievements.push({
-        type: 'consistency',
-        title: 'Consistency King',
-        description: 'Tracked water for 20+ days',
-        icon: BADGE_ICONS.consistency as BadgeIconType,
-        color: '#5E5CE6'
-      });
-    }
-    
-    return achievements;
-  };
-  
-  // Chart configuration
+  // Enhanced chart configuration with better styling
   const chartConfig = {
-    backgroundGradientFrom: WATER_COLOR_DARK,
-    backgroundGradientTo: WATER_COLOR_LIGHT,
-    decimalPlaces: 1, // Ensure only 1 decimal place is shown
-    color: (opacity = 1) => `rgba(255, 255, 255, ${opacity})`,
+    backgroundColor: 'transparent',
+    backgroundGradientFrom: 'rgba(30, 42, 72, 0.5)',
+    backgroundGradientTo: 'rgba(30, 42, 72, 0.8)',
+    color: (opacity = 1) => `rgba(0, 224, 255, ${opacity})`,
     labelColor: (opacity = 1) => `rgba(255, 255, 255, ${opacity})`,
     style: {
       borderRadius: 16,
     },
     barPercentage: 0.7,
+    propsForDots: {
+      r: '4',
+      stroke: WATER_COLOR_HIGHLIGHT,
+      strokeWidth: '1',
+    },
     propsForBackgroundLines: {
       strokeDasharray: "", 
+      strokeWidth: 1,
+      stroke: "rgba(255, 255, 255, 0.1)",
     },
-    propsForLabels: {
-      fontSize: 10,
-      fontWeight: '600',
-    },
-    // Format y-axis values to prevent strange numbers
-    formatYLabel: (yValue: string) => {
-      const value = parseFloat(yValue);
-      return value.toFixed(1);
-    },
-    // Format top of bar values
-    formatTopValue: (value: number) => {
-      return value.toFixed(1);
-    }
-  };
-  
-  // Format title based on time range
-  const renderTitle = () => {
-    let title = 'Daily Water Intake';
-    let icon: WaterIcon = 'water';
-    
-    if (timeRange === '30days') {
-      title = 'Weekly Water Intake';
-      icon = 'calendar-week';
-    } else if (timeRange === '90days') {
-      title = 'Monthly Water Intake';
-      icon = 'calendar-month';
-    }
-    
-    return (
-      <View style={styles.titleContainer}>
-        <MaterialCommunityIcons name={icon} size={22} color="#5CE1E6" />
-        <StyledText style={styles.cardTitle}>{title}</StyledText>
-      </View>
-    );
+    fillShadowGradient: WATER_COLOR_HIGHLIGHT,
+    fillShadowGradientOpacity: 0.9,
+    decimalPlaces: 1,
   };
 
-  // Render water statistics
-  const renderWaterStats = () => {
-    const formattedData = formatWaterData();
-    
-    // For 7-day view, show average and streak
-    if (timeRange === '7days') {
-      const avgIntake = calculateAverageIntake();
-      const goalCompletion = calculateCompletionPercentage();
-      const streak = calculateWaterStreak();
-      
-      return (
-        <Animated.View style={[styles.statsContainer, statsAnimStyle]}>
-          <View style={styles.statItem}>
-            <StyledText style={styles.statValue}>
-              {avgIntake.toFixed(1)}L
-            </StyledText>
-            <StyledText style={styles.statLabel}>Daily Average</StyledText>
-          </View>
-          
-          <View style={styles.statDivider} />
-          
-          <View style={styles.statItem}>
-            <StyledText style={styles.statValue}>
-              {goalCompletion}%
-            </StyledText>
-            <StyledText style={styles.statLabel}>Goal Completion</StyledText>
-          </View>
-          
-          <View style={styles.statDivider} />
-          
-          <View style={styles.statItem}>
-            <StyledText style={styles.statValue}>
-              {streak}
-            </StyledText>
-            <StyledText style={styles.statLabel}>Day Streak</StyledText>
-          </View>
-        </Animated.View>
-      );
-    }
-    
-    // For 30-day view, show best and worst days
-    else if (timeRange === '30days') {
-      const { best, worst } = findBestAndWorstDays();
-      
-      return (
-        <Animated.View style={[styles.statsContainer, statsAnimStyle]}>
-          {best && (
-            <View style={styles.dayStatItem}>
-              <View style={styles.dayStatHeader}>
-                <MaterialCommunityIcons name="thumb-up" size={16} color="#30D158" />
-                <StyledText style={styles.dayStatTitle}>
-                  Best Day
-                </StyledText>
-              </View>
-              <StyledText style={styles.dayStatDay}>{best.day}</StyledText>
-              <StyledText style={styles.dayStatDate}>{best.date}</StyledText>
-              <StyledText style={styles.dayStatAmount}>{best.amount}L</StyledText>
-            </View>
-          )}
-          
-          <View style={styles.statDivider} />
-          
-          {worst && (
-            <View style={styles.dayStatItem}>
-              <View style={styles.dayStatHeader}>
-                <MaterialCommunityIcons name="thumb-down" size={16} color="#FF453A" />
-                <StyledText style={styles.dayStatTitle}>
-                  Needs Improvement
-                </StyledText>
-              </View>
-              <StyledText style={styles.dayStatDay}>{worst.day}</StyledText>
-              <StyledText style={styles.dayStatDate}>{worst.date}</StyledText>
-              <StyledText style={styles.dayStatAmount}>{worst.amount}L</StyledText>
-            </View>
-          )}
-        </Animated.View>
-      );
-    } 
-    
-    // For 90-day view, show achievements
-    else {
-      const achievements = calculateAchievements();
-      
-      return (
-        <Animated.View style={[styles.achievementsContainer, statsAnimStyle]}>
-          {achievements.map((achievement, index) => (
-            <View key={index} style={styles.achievementBadge}>
-              <View 
-                style={[styles.badgeIconContainer, { backgroundColor: achievement.color }]}
-              >
-                <MaterialCommunityIcons 
-                  name={achievement.icon}
-                  size={20} 
-                  color="white" 
-                />
-              </View>
-              <View style={styles.badgeContent}>
-                <StyledText style={styles.badgeTitle}>
-                  {achievement.title}
-                </StyledText>
-                <StyledText style={styles.badgeDescription}>
-                  {achievement.description}
-                </StyledText>
-              </View>
-            </View>
-          ))}
-          
-          {achievements.length === 0 && (
-            <View style={styles.noAchievementsContainer}>
-              <MaterialCommunityIcons 
-                name="trophy-outline"
-                size={40} 
-                color="rgba(255, 255, 255, 0.3)" 
-              />
-              <StyledText style={styles.noAchievementsText}>
-                Keep tracking your water intake to earn achievements!
-              </StyledText>
-            </View>
-          )}
-        </Animated.View>
-      );
-    }
+  // Chart data formatted for react-native-chart-kit
+  const chartData = {
+    labels,
+    datasets: [
+      {
+        data,
+        color: (opacity = 1) => `rgba(0, 224, 255, ${opacity})`,
+        strokeWidth: 2,
+      },
+    ],
   };
   
-  // Main render
+  // Determine if the water data is empty (to show appropriate message)
+  const isEmptyData = !waterData || !waterData.dailyIntake || Object.keys(waterData.dailyIntake).length === 0;
+  
+  // Calculate average consumption and daily goal
+  const averageConsumption = waterData?.averageIntake ? (waterData.averageIntake / 1000).toFixed(1) : '0';
+  const dailyGoal = waterData?.dailyGoal ? (waterData.dailyGoal / 1000).toFixed(1) : '3.5';
+  const goalPercentage = waterData?.goalCompletionRate ? Math.round(waterData.goalCompletionRate) : 0;
+  const waterStreak = waterData?.currentStreak || 0;
+  
   return (
     <View style={styles.container}>
       <LinearGradient
-        colors={['rgba(22, 40, 60, 0.98)', 'rgba(16, 30, 50, 0.95)']}
-        start={{ x: 0, y: 0 }}
-        end={{ x: 1, y: 1 }}
+        colors={['rgba(30, 42, 72, 0.8)', 'rgba(35, 37, 64, 0.95)']}
         style={[StyleSheet.absoluteFill, { borderRadius: borderRadius.lg }]}
       />
       
+      {/* Header */}
       <View style={styles.header}>
-        {renderTitle()}
+        <MaterialCommunityIcons 
+          name="water" 
+          size={20} 
+          color={WATER_COLOR_HIGHLIGHT} 
+          style={styles.headerIcon}
+        />
+        <StyledText style={styles.title}>Water Intake</StyledText>
+        
+        {/* Streak badge */}
+        {waterStreak > 0 && (
+          <View style={styles.streakContainer}>
+            <MaterialCommunityIcons name="fire" size={16} color="#FFA500" />
+            <StyledText style={styles.streakText}>{waterStreak} Day Streak</StyledText>
+          </View>
+        )}
       </View>
       
+      {/* Stats */}
+      <Animated.View style={[styles.statsContainer, statsAnimStyle]}>
+        <View style={styles.statItem}>
+          <StyledText style={styles.statValue}>{averageConsumption}L</StyledText>
+          <StyledText style={styles.statLabel}>Daily Average</StyledText>
+        </View>
+        
+        <View style={styles.divider} />
+        
+        <View style={styles.statItem}>
+          <StyledText style={styles.statValue}>{dailyGoal}L</StyledText>
+          <StyledText style={styles.statLabel}>Daily Goal</StyledText>
+        </View>
+        
+        <View style={styles.divider} />
+        
+        <View style={styles.statItem}>
+          <StyledText style={styles.statValue}>{goalPercentage}%</StyledText>
+          <StyledText style={styles.statLabel}>Goal Completion</StyledText>
+        </View>
+      </Animated.View>
+      
+      {/* Chart */}
       <Animated.View style={[styles.chartContainer, chartAnimStyle]}>
+        {isLoading ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="small" color={WATER_COLOR_HIGHLIGHT} />
+            <StyledText style={styles.loadingText}>Loading water data...</StyledText>
+          </View>
+        ) : isEmptyData ? (
+          <View style={styles.emptyContainer}>
+            <MaterialCommunityIcons 
+              name="water-off" 
+              size={24} 
+              color="rgba(255, 255, 255, 0.5)" 
+            />
+            <StyledText style={styles.emptyText}>No water tracking data available</StyledText>
+            <StyledText style={styles.emptySubtext}>
+              Track your daily water intake to see data here
+            </StyledText>
+          </View>
+        ) : (
         <BarChart
-          data={{
-            labels: formatWaterData().labels,
-            datasets: [
-              {
-                data: formatWaterData().data,
-              },
-            ],
-          }}
+            data={chartData}
           width={chartWidth}
           height={180}
           chartConfig={chartConfig}
+            style={styles.chart}
+            showValuesOnTopOfBars={true}
+            withInnerLines={false}
           fromZero
-          showValuesOnTopOfBars
-          withInnerLines={false}
-          showBarTops={false}
-          withHorizontalLabels={true}
-          segments={4}
+            yAxisSuffix="L"
           yAxisLabel=""
-          yAxisSuffix="L"
-          style={{ 
-            borderRadius: borderRadius.md,
-            marginVertical: spacing.xs,
-          }}
         />
+        )}
       </Animated.View>
-      
-      {renderWaterStats()}
     </View>
   );
 };
 
-// Component styles
 const styles = StyleSheet.create({
   container: {
-    marginBottom: spacing.md,
     borderRadius: borderRadius.lg,
     overflow: 'hidden',
-    position: 'relative',
+    marginBottom: spacing.md,
     ...shadows.large,
     borderWidth: 1,
-    borderColor: 'rgba(255, 255, 255, 0.1)',
+    borderColor: 'rgba(255, 255, 255, 0.08)',
   },
   header: {
-    paddingHorizontal: spacing.md,
-    paddingVertical: spacing.sm,
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
-  },
-  titleContainer: {
     flexDirection: 'row',
     alignItems: 'center',
+    padding: spacing.md,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.08)',
   },
-  cardTitle: {
-    color: 'white',
+  headerIcon: {
+    marginRight: 8,
+  },
+  title: {
     fontSize: 16,
     fontWeight: '700',
-    marginLeft: spacing.sm,
-    textShadowColor: 'rgba(0, 0, 0, 0.3)',
-    textShadowOffset: { width: 0, height: 1 },
-    textShadowRadius: 2,
+    color: 'white',
+    flex: 1,
   },
-  chartContainer: {
+  streakContainer: {
+    flexDirection: 'row',
     alignItems: 'center',
-    paddingBottom: spacing.sm,
+    backgroundColor: 'rgba(255, 165, 0, 0.15)',
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+  },
+  streakText: {
+    fontSize: 12,
+    fontWeight: '600',
+    color: '#FFA500',
+    marginLeft: 4,
   },
   statsContainer: {
     flexDirection: 'row',
     justifyContent: 'space-around',
-    paddingVertical: spacing.sm,
-    paddingHorizontal: spacing.md,
-    backgroundColor: 'rgba(0, 0, 0, 0.2)',
-    marginTop: spacing.xs,
+    paddingVertical: spacing.md,
+    paddingHorizontal: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: 'rgba(255, 255, 255, 0.08)',
   },
   statItem: {
     alignItems: 'center',
-    flex: 1,
   },
   statValue: {
-    color: WATER_COLOR_HIGHLIGHT,
-    fontSize: 20,
+    fontSize: 18,
     fontWeight: '700',
-    marginBottom: EXTRA_SMALL_SPACING,
+    color: 'white',
+    marginBottom: 4,
   },
   statLabel: {
-    color: 'rgba(255, 255, 255, 0.7)',
     fontSize: 12,
-    fontWeight: '500',
-    textAlign: 'center',
+    color: 'rgba(255, 255, 255, 0.7)',
   },
-  statDivider: {
+  divider: {
     width: 1,
-    height: '80%',
+    height: '70%',
     backgroundColor: 'rgba(255, 255, 255, 0.1)',
     alignSelf: 'center',
   },
-  dayStatItem: {
-    flex: 1,
+  chartContainer: {
+    paddingVertical: spacing.md,
     alignItems: 'center',
-    padding: spacing.sm,
   },
-  dayStatHeader: {
-    flexDirection: 'row',
+  chart: {
+    marginVertical: 8,
+    borderRadius: 16,
+  },
+  loadingContainer: {
+    height: 180,
+    justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: spacing.xs,
   },
-  dayStatTitle: {
-    fontSize: 14,
-    fontWeight: '700',
-    marginLeft: EXTRA_SMALL_SPACING,
-    color: '#30D158',
-  },
-  dayStatDay: {
-    color: 'white',
-    fontSize: 16,
-    fontWeight: '700',
-  },
-  dayStatDate: {
+  loadingText: {
     color: 'rgba(255, 255, 255, 0.7)',
-    fontSize: 12,
-    marginVertical: EXTRA_SMALL_SPACING,
+    marginTop: 8,
+    fontSize: 14,
   },
-  dayStatAmount: {
-    color: WATER_COLOR_HIGHLIGHT,
-    fontSize: 18,
-    fontWeight: '700',
-    marginTop: spacing.xs,
-  },
-  achievementsContainer: {
+  emptyContainer: {
+    height: 180,
+    justifyContent: 'center',
+    alignItems: 'center',
     padding: spacing.md,
   },
-  achievementBadge: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    backgroundColor: 'rgba(0, 0, 0, 0.2)',
-    borderRadius: borderRadius.md,
-    padding: spacing.sm,
-    marginBottom: spacing.sm,
-  },
-  badgeIconContainer: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    justifyContent: 'center',
-    alignItems: 'center',
-    ...shadows.small,
-  },
-  badgeContent: {
-    marginLeft: spacing.sm,
-    flex: 1,
-  },
-  badgeTitle: {
-    color: 'white',
-    fontSize: 14,
-    fontWeight: '700',
-    marginBottom: EXTRA_SMALL_SPACING,
-  },
-  badgeDescription: {
+  emptyText: {
     color: 'rgba(255, 255, 255, 0.7)',
-    fontSize: 12,
-  },
-  noAchievementsContainer: {
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: spacing.lg,
-  },
-  noAchievementsText: {
-    color: 'rgba(255, 255, 255, 0.5)',
-    textAlign: 'center',
-    marginTop: spacing.sm,
+    marginTop: 8,
     fontSize: 14,
+    fontWeight: '600',
+  },
+  emptySubtext: {
+    color: 'rgba(255, 255, 255, 0.5)',
+    marginTop: 4,
+    fontSize: 12,
+    textAlign: 'center',
   },
 });
 

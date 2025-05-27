@@ -6,7 +6,8 @@ import {
   Dimensions, 
   TouchableOpacity, 
   Platform,
-  ImageBackground 
+  ImageBackground,
+  ActivityIndicator
 } from 'react-native';
 import { 
   Button, 
@@ -194,6 +195,7 @@ export default function WorkoutPreferencesScreen() {
   const [recommendedAreas, setRecommendedAreas] = useState<string[]>([]);
   const [currentWorkoutLocation, setCurrentWorkoutLocation] = useState<string>('home');
   const [availableEquipment, setAvailableEquipment] = useState<string[]>(homeEquipmentOptions);
+  const [loading, setLoading] = useState(false);
   
   // Animation values
   const buttonScale = useSharedValue(1);
@@ -319,6 +321,7 @@ export default function WorkoutPreferencesScreen() {
 
   const onSubmit = (data: WorkoutPreferencesFormData) => {
     console.log('Workout preferences form data:', data);
+    setLoading(true);
     
     // Create a workout preferences object for the JSONB column
     const workoutPreferences: Partial<WorkoutPreferences> & { days_per_week?: number } = {
@@ -356,6 +359,7 @@ export default function WorkoutPreferencesScreen() {
     } as any).then(() => {
       console.log('Profile updated with workout preferences');
       setSubmittedData(data);
+      setLoading(false);
       
       // Navigate to the review page as the next step
       if (params?.returnToReview === 'true') {
@@ -367,6 +371,7 @@ export default function WorkoutPreferencesScreen() {
     }).catch(error => {
       console.error('Error updating profile with workout preferences:', error);
       alert('There was an error saving your preferences. Please try again.');
+      setLoading(false);
     });
   };
 
@@ -782,21 +787,28 @@ export default function WorkoutPreferencesScreen() {
                 Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                 handleSubmit(onSubmit)();
               }}
+              disabled={loading}
             >
               <View style={{
                 flexDirection: 'row',
                 alignItems: 'center',
                 justifyContent: 'center',
               }}>
-                <StyledText variant="headingSmall" color="#FFFFFF">
-                  Save & Continue
-                </StyledText>
-                <MaterialCommunityIcons
-                  name="arrow-right"
-                  size={24}
-                  color="white"
-                  style={{ marginLeft: 8 }}
-                />
+                {loading ? (
+                  <ActivityIndicator color="white" size="small" />
+                ) : (
+                  <>
+                    <StyledText variant="headingSmall" color="#FFFFFF">
+                      Save & Continue
+                    </StyledText>
+                    <MaterialCommunityIcons
+                      name="arrow-right"
+                      size={24}
+                      color="white"
+                      style={{ marginLeft: 8 }}
+                    />
+                  </>
+                )}
               </View>
             </TouchableOpacity>
           </View>

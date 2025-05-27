@@ -55,9 +55,10 @@ interface EnhancedHomeScreenProps {
   nextWorkout: NextWorkout | null;
   motivationalQuote: string;
   onRefreshQuote: () => void;
+  isRefreshingQuote?: boolean;
   bodyAnalysis?: any; // Body analysis data
   activitySummary?: {
-    workouts: { count: number, percentage: number },
+    workouts: { count: number, percentage: number, isRestDay?: boolean },
     meals: { count: number, percentage: number },
     progress: { percentage: number }
   };
@@ -75,6 +76,7 @@ const EnhancedHomeScreen: React.FC<EnhancedHomeScreenProps> = ({
   nextWorkout,
   motivationalQuote,
   onRefreshQuote,
+  isRefreshingQuote = false,
   bodyAnalysis,
   activitySummary
 }) => {
@@ -183,6 +185,7 @@ const EnhancedHomeScreen: React.FC<EnhancedHomeScreenProps> = ({
         label: 'Workouts', 
         percent: activitySummary?.workouts.percentage ?? 
           (workoutStats.dayStreak > 0 ? 80 : 0), 
+        isRestDay: activitySummary?.workouts.isRestDay ?? false,
         color: colors.primary.main 
       },
       { 
@@ -209,6 +212,35 @@ const EnhancedHomeScreen: React.FC<EnhancedHomeScreenProps> = ({
           {activities.map((activity, index) => (
             <View key={index} style={styles.activityItem}>
               <View style={styles.activityCircleContainer}>
+                {activity.isRestDay ? (
+                  // Display Rest Day indicator for workout rest days
+                  <>
+                    <Svg width={60} height={60}>
+                      {/* Background Circle */}
+                      <Circle
+                        stroke="rgba(255, 255, 255, 0.1)"
+                        fill="none"
+                        cx={30}
+                        cy={30}
+                        r={25}
+                        strokeWidth={4}
+                      />
+                      {/* Dashed Circle for Rest Day */}
+                      <Circle
+                        stroke={activity.color}
+                        fill="none"
+                        cx={30}
+                        cy={30}
+                        r={25}
+                        strokeWidth={4}
+                        strokeDasharray="5,5"
+                      />
+                    </Svg>
+                    <Text style={styles.activityRestText}>Rest</Text>
+                  </>
+                ) : (
+                  // Normal percentage circle
+                  <>
                 <Svg width={60} height={60}>
                   {/* Background Circle */}
                   <Circle
@@ -233,6 +265,8 @@ const EnhancedHomeScreen: React.FC<EnhancedHomeScreenProps> = ({
                   />
                 </Svg>
                 <Text style={styles.activityPercentText}>{activity.percent}%</Text>
+                  </>
+                )}
               </View>
               <Text style={styles.activityLabel}>{activity.label}</Text>
             </View>
@@ -244,8 +278,25 @@ const EnhancedHomeScreen: React.FC<EnhancedHomeScreenProps> = ({
 
   // Render body analysis summary card
   const renderBodyAnalysisSummary = () => {
-    // If no body analysis data available, show prompt card
-    if (!bodyAnalysis) {
+    // Helper function to check if body analysis is actually complete
+    const isBodyAnalysisComplete = () => {
+      if (!bodyAnalysis) return false;
+      
+      // We need at least body_fat_percentage or body_type to consider it complete
+      const hasRequiredData = 
+        (bodyAnalysis.body_fat_percentage || (bodyAnalysis as any).bodyFatEstimate) && 
+        (bodyAnalysis.body_type || (bodyAnalysis as any).bodyType);
+      
+      // Check if the data is legitimate or just defaults
+      const height = bodyAnalysis.height_cm || (bodyAnalysis as any).height;
+      const weight = bodyAnalysis.weight_kg || (bodyAnalysis as any).weight;
+      
+      // Need both height and weight PLUS at least one more measurement
+      return !!height && !!weight && hasRequiredData;
+    };
+    
+    // If no body analysis data available or it's incomplete, show prompt card
+    if (!isBodyAnalysisComplete()) {
       return (
         <TouchableOpacity 
           style={styles.bodyAnalysisCard}
@@ -300,13 +351,13 @@ const EnhancedHomeScreen: React.FC<EnhancedHomeScreenProps> = ({
           <View style={styles.bodyMetricItem}>
             <MaterialCommunityIcons name="human-male-height" size={22} color="#FFFFFF" />
             <Text style={styles.bodyMetricLabel}>Height</Text>
-            <Text style={styles.bodyMetricValue}>{Math.round(bodyAnalysis.height_cm || 0)} cm</Text>
+            <Text style={styles.bodyMetricValue}>{Math.round(bodyAnalysis.height_cm || (bodyAnalysis as any).height || 0)} cm</Text>
           </View>
           
           <View style={styles.bodyMetricItem}>
             <MaterialCommunityIcons name="scale" size={22} color="#FFFFFF" />
             <Text style={styles.bodyMetricLabel}>Weight</Text>
-            <Text style={styles.bodyMetricValue}>{Math.round(bodyAnalysis.weight_kg || 0)} kg</Text>
+            <Text style={styles.bodyMetricValue}>{Math.round(bodyAnalysis.weight_kg || (bodyAnalysis as any).weight || 0)} kg</Text>
           </View>
           
           <View style={styles.bodyMetricItem}>
@@ -318,11 +369,14 @@ const EnhancedHomeScreen: React.FC<EnhancedHomeScreenProps> = ({
           <View style={styles.bodyMetricItem}>
             <MaterialCommunityIcons name="human" size={22} color="#FFFFFF" />
             <Text style={styles.bodyMetricLabel}>Type</Text>
-            <Text style={styles.bodyMetricValue}>{bodyAnalysis.bodyType || "N/A"}</Text>
+            <Text style={styles.bodyMetricValue}>{bodyAnalysis.body_type || (bodyAnalysis as any).bodyType || "N/A"}</Text>
           </View>
         </View>
         
-        <TouchableOpacity style={styles.bodyDetailsButton}>
+        <TouchableOpacity 
+          style={styles.bodyDetailsButton}
+          onPress={() => router.push('/(tabs)/progress/body-details')}
+        >
           <Text style={styles.bodyDetailsButtonText}>View Full Details</Text>
           <Ionicons name="chevron-forward" size={16} color="white" />
         </TouchableOpacity>
@@ -672,8 +726,20 @@ const EnhancedHomeScreen: React.FC<EnhancedHomeScreenProps> = ({
               <Ionicons name="chatbubble-ellipses-outline" size={40} color="rgba(255,255,255,0.3)" />
             </View>
             <Text style={styles.quoteText}>"{motivationalQuote}"</Text>
-            <TouchableOpacity style={styles.refreshButton} onPress={onRefreshQuote}>
-              <Ionicons name="refresh-outline" size={20} color={colors.text.primary} />
+            <TouchableOpacity 
+              style={styles.refreshButton} 
+              onPress={onRefreshQuote}
+              disabled={isRefreshingQuote}
+            >
+              <Ionicons 
+                name="refresh-outline" 
+                size={20} 
+                color="white"
+                style={{
+                  opacity: isRefreshingQuote ? 0.5 : 1,
+                  transform: [{ rotate: isRefreshingQuote ? '45deg' : '0deg' }]
+                }}
+              />
             </TouchableOpacity>
           </View>
         </View>
@@ -1159,9 +1225,10 @@ const styles = StyleSheet.create({
     width: 32,
     height: 32,
     borderRadius: borderRadius.round,
-    backgroundColor: 'rgba(255,255,255,0.1)',
+    backgroundColor: 'rgba(255,255,255,0.2)',
     justifyContent: 'center',
     alignItems: 'center',
+    elevation: 2,
   },
   workoutFocus: {
     fontSize: 14,
@@ -1326,6 +1393,12 @@ const styles = StyleSheet.create({
   workoutButtonText: {
     color: 'white',
     fontWeight: '600',
+  },
+  activityRestText: {
+    position: 'absolute',
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: colors.text.primary,
   },
 });
 

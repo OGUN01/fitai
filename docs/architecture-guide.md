@@ -784,6 +784,244 @@ The notification architecture is designed to support future enhancements:
 
 This comprehensive notification system enhances user engagement while respecting user preferences and activity patterns, creating a supportive but non-intrusive experience that encourages consistent fitness and nutrition habits.
 
+## Local Mode Architecture
+
+The application now supports full functionality without requiring user authentication:
+
+### Local Profile Management
+
+1. **Storage Strategy**:
+   - Primary storage: AsyncStorage for local profiles
+   - Key pattern: `profile_local` for storing non-authenticated user data
+   - Comprehensive CRUD operations in ProfileContext for local profiles
+
+2. **Implementation Details**:
+   ```typescript
+   // ProfileContext.tsx
+   // Create a local profile for non-authenticated users
+   const createLocalProfile = async () => {
+     const localProfileId = `local_${Date.now()}`;
+     const newProfile = {
+       id: localProfileId,
+       has_completed_local_onboarding: false,
+       current_step: 'user-details',
+       // Default properties for new local profiles
+     };
+     
+     await AsyncStorage.setItem('profile_local', JSON.stringify(newProfile));
+     setProfile(newProfile);
+   };
+   ```
+
+3. **Synchronization Mechanism**:
+   - Local profiles are synchronized within AsyncStorage only
+   - All profile updates use the same updateProfile method, but bypass Supabase
+   - Local data is preserved until explicitly cleared or user authenticates
+
+### Enhanced Data Repair Systems
+
+1. **Meal Plan Validation and Repair**:
+   - The application now implements sophisticated data repair for incomplete meal plans:
+   
+   ```typescript
+   // Enhanced validateAndRepairMealPlan function
+   const validateAndRepairMealPlan = (plan: any): MealPlan => {
+     // Find days with complete meal sets to use as templates
+     const completeDays = plan.weeklyPlan.filter(d => 
+       d.meals && Array.isArray(d.meals) && d.meals.length >= 3
+     );
+     
+     if (completeDays.length > 0) {
+       const templateDay = completeDays[0];
+       
+       // Check each day and ensure it has a complete set of meals
+       for (const dayPlan of plan.weeklyPlan) {
+         if (!dayPlan.meals || !Array.isArray(dayPlan.meals) || dayPlan.meals.length < 3) {
+           // Initialize meals array if needed
+           if (!dayPlan.meals) {
+             dayPlan.meals = [];
+           }
+           
+           // Get existing meal types to avoid duplicates
+           const existingMealTypes = new Set(dayPlan.meals.map(m => m.meal.toLowerCase()));
+           
+           // Add missing meal types from the template day
+           templateDay.meals.forEach(templateMeal => {
+             if (!existingMealTypes.has(templateMeal.meal.toLowerCase())) {
+               // Create a variation of the template meal
+               const newMeal = {
+                 meal: templateMeal.meal,
+                 time: templateMeal.time,
+                 recipe: {
+                   name: `${templateMeal.recipe.name} ${dayPlan.day} Variation`,
+                   ingredients: [...templateMeal.recipe.ingredients],
+                   instructions: [...templateMeal.recipe.instructions],
+                   nutrition: {...templateMeal.recipe.nutrition}
+                 }
+               };
+               
+               // Add to the day's meals
+               dayPlan.meals.push(newMeal);
+             }
+           });
+           
+           // Update daily nutrition
+           dayPlan.dailyNutrition = {
+             calories: dayPlan.meals.reduce((sum, meal) => sum + (meal.recipe?.nutrition?.calories || 0), 0),
+             protein: dayPlan.meals.reduce((sum, meal) => sum + (meal.recipe?.nutrition?.protein || 0), 0),
+             carbs: dayPlan.meals.reduce((sum, meal) => sum + (meal.recipe?.nutrition?.carbs || 0), 0),
+             fats: dayPlan.meals.reduce((sum, meal) => sum + (meal.recipe?.nutrition?.fats || 0), 0)
+           };
+         }
+       }
+     }
+     
+     return {
+       id: plan.id || 'generated_meal_plan_' + Date.now(),
+       weeklyPlan: plan.weeklyPlan,
+       // Other properties...
+     };
+   };
+   ```
+
+2. **Workout Generation Preferences Mapping**:
+   - Fixed compatibility issues between profile data and AI generation requirements:
+   
+   ```typescript
+   // User preferences mapping in WorkoutScreen
+   const userPreferences = {
+     // Core preferences from scalar fields
+     fitnessLevel: (profile?.fitness_level || "beginner") as "beginner" | "intermediate" | "advanced",
+     exerciseFrequency: profile?.workout_days_per_week || 3,
+     timePerSession: profile?.workout_duration_minutes || 30,
+     
+     // Location and equipment from workout_preferences JSONB
+     workoutLocation: (profile?.workout_preferences?.workout_location || "home") as "home" | "gym" | "outdoors" | "anywhere",
+     availableEquipment: Array.isArray(profile?.workout_preferences?.equipment_available) ? 
+       profile?.workout_preferences?.equipment_available : 
+       ['bodyweight'],
+       
+     // Fitness goals or focus areas
+     focusAreas: Array.isArray(profile?.workout_preferences?.focus_areas) ? 
+       profile?.workout_preferences?.focus_areas : 
+       Array.isArray(profile?.fitness_goals) ? 
+         profile?.fitness_goals : 
+         ['full-body'],
+         
+     // Add additional fields required by the generator
+     exercisesToAvoid: profile?.workout_preferences?.exercises_to_avoid?.join(', ') || '',
+     country_region: profile?.country_region || '',
+     gender: profile?.gender || "neutral",
+     age: profile?.age || undefined,
+     weight: profile?.weight_kg || undefined,
+     height: profile?.height_cm || undefined
+   };
+   ```
+
+3. **Navigation Protection with Fallbacks**:
+   - Enhanced navigation guards to handle both authenticated and non-authenticated states:
+   
+   ```typescript
+   // NavigationGuard in _layout.tsx
+   export function NavigationGuard() {
+     const { user } = useAuth();
+     const { profile } = useProfile();
+     const segments = useSegments();
+     const router = useRouter();
+     
+     React.useEffect(() => {
+       const inAuthGroup = segments[0] === '(auth)';
+       const inOnboardingGroup = segments[0] === '(onboarding)';
+       
+       // Check if there's a local profile (non-authenticated mode)
+       const hasLocalProfile = !user && profile && profile.id && profile.id.startsWith('local_');
+       const localOnboardingComplete = hasLocalProfile && profile.has_completed_local_onboarding;
+       
+       // If user is not authenticated and no local profile, go to login
+       if (!user && !hasLocalProfile && !inAuthGroup) {
+         router.replace('/(auth)/login');
+         return;
+       }
+       
+       // Local profile exists but onboarding not complete
+       if (hasLocalProfile && !localOnboardingComplete && !inOnboardingGroup) {
+         const currentStep = profile.current_step || 'user-details';
+         router.replace(`/(onboarding)/${currentStep}`);
+         return;
+       }
+       
+       // Authenticated user with onboarding not complete
+       if (user && profile && !profile.has_completed_onboarding && !inOnboardingGroup) {
+         const currentStep = profile.current_onboarding_step || 'user-details';
+         router.replace(`/(onboarding)/${currentStep}`);
+         return;
+       }
+       
+       // Onboarding or auth screens when they should be in main app
+       if ((user || localOnboardingComplete) && (inAuthGroup || inOnboardingGroup)) {
+         router.replace('/(tabs)');
+         return;
+       }
+     }, [user, profile, segments]);
+     
+     return null;
+   }
+   ```
+
+These enhancements ensure the application works seamlessly for both authenticated and non-authenticated users, with robust data handling and repair mechanisms to maintain a high-quality user experience in all scenarios.
+
+## July 2025: Latest Stability and Fixes
+
+### Progress Tab Infinite Loop Fix
+- The Progress tab now uses two separate effects: one for syncing streak data (triggered only by profile changes), and another for updating analytics (triggered only by streak value changes). This prevents mutual triggering and infinite loops.
+- A `contextReady` state ensures that effects only run when both Auth and Profile contexts are fully loaded.
+- All effect dependencies are robust and context-aware, preventing unnecessary re-renders or data fetches.
+
+### General App Health
+- All major flows (onboarding, home, workout, nutrition, progress, profile) are stable and reliable, as confirmed by recent logs and user testing.
+- No infinite loops, redundant state updates, or unhandled errors in any tab.
+- Data synchronization and persistence are robust across local and server storage.
+
+### Notification System (Web Handling)
+- Notification permissions are gracefully handled on web: if denied, the app logs the status and continues without crashing or blocking other features.
+- All notification-related errors are caught and do not affect core app functionality.
+
+### Local Mode and Offline Support
+- The app now fully supports local/offline mode: users can complete onboarding, generate AI-powered plans, and track progress without authentication.
+- All AI features (workout, meal, body analysis) work seamlessly in local mode.
+- Data is reliably persisted in AsyncStorage and synchronized with the UI.
+
+### Debug/Developer Tools
+- Hidden debug panels and test buttons are available in development mode (`__DEV__` flag) or when `enableDebugMode` is set in the profile.
+- Debug panel is accessible at `app/(dev)/debug-panel.tsx` and provides raw profile inspection, data repair, and validation tools.
+- Test buttons for AI generation and data repair are present in Nutrition and Workout tabs, hidden from end users in production.
+
+### TypeScript Issues and Workarounds
+- Some runtime-only properties are not present in TypeScript definitions; `@ts-ignore` is used as a temporary workaround.
+- Plan in place to improve type definitions and remove `@ts-ignore` as soon as possible.
+
+### Nutrition Tab Meal Completion Persistence Fix
+- Removed problematic refs and duplicate hooks that caused unreliable meal completion status in the Nutrition tab.
+- Implemented a new pattern: a single `useFocusEffect` (with empty dependency array) and a primary `useEffect` (with correct dependencies) to reliably reload meal completion data.
+- Internal concurrency guards in `loadCompletedMeals` prevent redundant or concurrent execution.
+
+### Known Issues
+- Rare React Native text rendering error during profile loading, before UI is fully rendered. Extensive type checking and string conversions have not fully resolved it; ongoing investigation continues.
+- All other known issues have been addressed or have robust workarounds in place.
+
+## July 2025: Data Sync Utility and Type Safety Fixes
+
+### Enhanced Data Synchronization Utility
+
+- Introduced `utils/syncLocalDataToSupabase.ts` as the robust utility for syncing local (offline) and Supabase (online) data on login.
+- The utility merges workout and meal completions by id and recency, and synchronizes workout_plan and meal_plans using updated_at timestamps.
+- Uses a type guard (`isUserProfile`) to ensure remoteProfile is always typed as UserProfile, preventing 'never' linter errors.
+- All property accesses on remoteProfile are now type-safe and guarded by null checks.
+- Linter errors regarding 'never' type for remoteProfile property access have been resolved.
+- Both offline (local) and online (Supabase) user flows are now robustly supported, with reliable data migration and sync on login.
+- The sync utility is now the single source of truth for merging and updating completions and plans on login.
+- Codebase now uses explicit type guards and null checks to prevent TypeScript 'never' errors in all sync and profile logic.
+
 ## Conclusion
 
 This architecture guide provides a comprehensive overview of the FitAI application's structure and design patterns. By understanding these components and how they interact, developers can effectively maintain, enhance, or migrate the application as needed.

@@ -48,7 +48,7 @@ const visionModel = genAI.getGenerativeModel({
 }, { apiVersion: GEMINI_API_VERSION });
 
 // Helper function to sanitize text before JSON parsing
-const extractAndParseJSON = (text: string) => {
+export const extractAndParseJSON = (text: string) => {
   // First try to extract JSON with a code block pattern
   let match = text.match(/```(?:json)?\s*([\s\S]*?)\s*```/);
   if (!match) {
@@ -325,6 +325,14 @@ const fallbackMealPlan = {
   batchCookingRecommendations: ["Recommendation 1", "Recommendation 2"]
 };
 
+// Add this helper function at the top of the file
+function getErrorMessage(error: unknown): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+  return String(error);
+}
+
 // Gemini API functions
 const gemini = {
   /**
@@ -364,7 +372,7 @@ const gemini = {
       );
       return workoutPlan;
     } catch (error) {
-      console.error("❌ [GEMINI] All workout plan generation methods failed:", error.message);
+      console.error("❌ [GEMINI] All workout plan generation methods failed:", getErrorMessage(error));
       
       // Use the fallback plan if all generator attempts fail
       console.log("⚠️ [GEMINI] Using default fallback workout plan");
@@ -466,7 +474,7 @@ const gemini = {
       console.log("✅ [GEMINI] Workout-style meal plan generation successful");
       return workoutStyleResult;
     } catch (error) {
-      console.error("❌ [GEMINI] Workout-style meal plan generation failed:", error.message);
+      console.error("❌ [GEMINI] Workout-style meal plan generation failed:", getErrorMessage(error));
       
       // Second attempt with primary prompt
       try {
@@ -475,7 +483,7 @@ const gemini = {
         console.log("✅ [GEMINI] Primary meal plan generation successful");
         return primaryResult;
       } catch (primaryError) {
-        console.error("❌ [GEMINI] Primary meal plan generation failed:", primaryError.message);
+        console.error("❌ [GEMINI] Primary meal plan generation failed:", getErrorMessage(primaryError));
         
         // Third attempt with alternative prompt
         try {
@@ -484,7 +492,7 @@ const gemini = {
           console.log("✅ [GEMINI] Alternative meal plan generation successful");
           return alternativeResult;
         } catch (alternativeError) {
-          console.error("❌ [GEMINI] Alternative meal plan generation failed:", alternativeError.message);
+          console.error("❌ [GEMINI] Alternative meal plan generation failed:", getErrorMessage(alternativeError));
           
           // Continue with existing fallback chain
           try {
@@ -493,7 +501,7 @@ const gemini = {
             console.log("✅ [GEMINI] Simplified meal plan generation successful");
             return simplifiedResult;
           } catch (simplifiedError) {
-            console.error("❌ [GEMINI] Simplified meal plan generation failed:", simplifiedError.message);
+            console.error("❌ [GEMINI] Simplified meal plan generation failed:", getErrorMessage(simplifiedError));
             
             // Final attempt with minimal prompt
             try {

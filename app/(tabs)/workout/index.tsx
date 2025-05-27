@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { View, StyleSheet, ScrollView, ActivityIndicator, TouchableOpacity, Dimensions, Modal, Alert } from 'react-native';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
+import { View, StyleSheet, ScrollView, ActivityIndicator, TouchableOpacity, Dimensions, Modal, Alert, AppState } from 'react-native';
 import { Text, Card, Button, useTheme, Divider, List, IconButton, Checkbox, Snackbar, Avatar } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { StatusBar } from 'expo-status-bar';
@@ -19,6 +19,8 @@ import { UserFitnessPreferences } from '../../../services/ai/workoutGenerator';
 import { reliableWorkoutGenerator } from '../../../services/ai';
 import { EventRegister } from 'react-native-event-listeners';
 import { useFocusEffect, useRouter } from 'expo-router';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { useStorageInitialization } from '../../../utils/storageInitializer';
 
 // Define workout plan interface based on Gemini response
 interface Exercise {
@@ -150,6 +152,7 @@ const fallbackWorkoutPlan: WorkoutPlan = {
 export default function WorkoutScreen() {
   const theme = useTheme();
   const { user } = useAuth();
+  const isStorageInitialized = useStorageInitialization();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<WorkoutError | null>(null);
   const [workoutPlan, setWorkoutPlan] = useState<WorkoutPlan | null>(null);
@@ -160,7 +163,7 @@ export default function WorkoutScreen() {
   const [snackbarVisible, setSnackbarVisible] = useState(false);
   const [snackbarMessage, setSnackbarMessage] = useState('');
   // Add new state for selected day
-  const [selectedDay, setSelectedDay] = useState<string | number>("");
+  const [selectedDay, setSelectedDay] = useState<string | number>(format(new Date(), 'EEEE'));
   // Add state for expanded sections in the exercise detail modal
   const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({});
   // Add state for selected exercise and modal visibility
@@ -173,21 +176,6 @@ export default function WorkoutScreen() {
   const [celebrationVisible, setCelebrationVisible] = useState(false);
   const [celebrationType, setCelebrationType] = useState<'success' | 'achievement' | 'streak' | 'confetti'>('success');
   const [celebrationMessage, setCelebrationMessage] = useState('');
-
-  // Remove this useEffect for debugging the modal
-  /* useEffect(() => {
-    if (exerciseModalVisible) {
-      console.log("EFFECT: Modal became visible");
-      console.log("EFFECT: selectedExercise state:", selectedExercise ? {
-        name: selectedExercise.name,
-        sets: selectedExercise.sets,
-        reps: selectedExercise.reps,
-        rest: selectedExercise.rest,
-        description: selectedExercise.description ? "Has description" : "No description",
-        alternatives: selectedExercise.alternatives ? `Has ${selectedExercise.alternatives.length} alternatives` : "No alternatives"
-      } : "null");
-    }
-  }, [exerciseModalVisible]); */
 
   // User preferences from profile data for workout generation
   const userPreferences = {
@@ -297,7 +285,7 @@ export default function WorkoutScreen() {
         setSelectedDay(typedPlan.weeklySchedule[0].day);
       }
       
-    } catch (err) {
+    } catch (err: any) {
       console.error('❌ [WORKOUT] Error generating workout plan:', err);
       
       setError({
@@ -314,8 +302,8 @@ export default function WorkoutScreen() {
   // Load or generate a workout plan on initial load
   useEffect(() => {
     const loadWorkoutPlan = async () => {
-      // Skip if we're already loading
-      if (loading) return;
+      // Skip if we're already loading OR if storage isn't ready
+      if (loading || !isStorageInitialized) return;
 
       try {
         setLoading(true);
@@ -350,8 +338,10 @@ export default function WorkoutScreen() {
             // instead of trying to save to a non-existent column
             updateProfile({
               workout_preferences: {
-                ...profile.workout_preferences,
-                workout_summary: summary
+                ...(profile?.workout_preferences || {}),
+                workout_summary: summary,
+                preferred_days: profile?.workout_preferences?.preferred_days || [],
+                workout_duration: profile?.workout_preferences?.workout_duration || 30
               }
             });
           }
@@ -366,11 +356,11 @@ export default function WorkoutScreen() {
       }
     };
     
-    // Only run if we have a profile
-    if (profile && profile.id) {
+    // Only run if we have a profile AND storage is initialized
+    if (profile && profile.id && isStorageInitialized) {
       loadWorkoutPlan();
     }
-  }, [profile?.id]); // Only depend on profile.id, not the entire profile object
+  }, [profile?.id, isStorageInitialized]);
   
   // Add effect to redirect to workout generator if no workouts are generated
   useEffect(() => {
@@ -380,58 +370,131 @@ export default function WorkoutScreen() {
     }
   }, [workoutsGenerated, loading]);
 
-  // Load workout completion data from the database
-  const loadWorkoutCompletionData = async () => {
-    if (!user || !workoutPlan) return;
-    
+  // Get workout days safely
+  const getWorkoutDays = useCallback(() => {
+    if (!workoutPlan) return [];
+    // Access the correct property based on the WorkoutPlan interface
+    // Make sure each item has a properly typed 'day' property
+    return (workoutPlan.weeklySchedule || []).map(day => ({
+      ...day,
+      day: String(day.day) // Ensure day is always a string
+    }));
+  }, [workoutPlan]);
+
+  // Function to load workout completion data
+  const loadWorkoutCompletionData = useCallback(async () => {
+    if (!isStorageInitialized || !workoutPlan) {
+      console.log('[loadWorkoutCompletionData] Aborted: Storage not init or no workout plan.');
+      setLoadingTrackingData(false);
+      return;
+    }
     setLoadingTrackingData(true);
-    
+    const userId = user?.id || 'local_user';
     try {
-      const today = new Date(); // Use Date object for isWorkoutCompleted
+      const today = new Date();
+      const formattedDate = format(today, 'yyyy-MM-dd');
       const completionStatus: Record<string, boolean> = {};
+      // Use the existing getWorkoutDays which now returns items with string day properties
+      const daysToQuery = getWorkoutDays();
       
-      console.log('Loading workout completion data for:', format(today, 'yyyy-MM-dd'));
-      
-      // Initialize structure for all workout days
-      for (const day of getWorkoutDays()) {
-        completionStatus[day.day] = false;
-      }
-      
-      // Check completions by day name
-      for (const day of getWorkoutDays()) {
-        // Convert day.day to string for consistency and pass it as day name
-        const dayName = String(day.day);
-        
+      for (const daySchedule of daysToQuery) {
+        // day is now guaranteed to be a string
+        const dayName = daySchedule.day;
         try {
-          console.log(`Checking completion status for workout day: ${dayName}`);
-          const isCompleted = await isWorkoutCompleted(user.id, today, dayName);
-          console.log(`Day ${dayName} completion status:`, isCompleted);
-          completionStatus[day.day] = isCompleted;
+          completionStatus[dayName] = await isWorkoutCompleted(userId, formattedDate, dayName);
         } catch (err) {
-          console.error(`Error checking completion for day ${dayName}:`, err);
-          // Continue with other days even if one fails
+          console.error(`Error checking completion for ${dayName}:`, err);
+          completionStatus[dayName] = false;
         }
       }
       
-      console.log('Final workout completion status:', completionStatus);
       setCompletedWorkouts(completionStatus);
-      
-      // If we have a selected day, check if it's already completed to update UI
-      if (selectedDay && completionStatus[selectedDay]) {
-        console.log(`Selected day ${selectedDay} is already completed`);
-      }
-    } catch (err) {
-      console.error('Error loading workout completion data:', err);
+    } catch (error) {
+      console.error('Failed to load workout completion data:', error);
     } finally {
       setLoadingTrackingData(false);
     }
-  };
+  }, [isStorageInitialized, workoutPlan, user?.id, getWorkoutDays]);
+
+  // Track if the component is currently mounted to prevent state updates after unmount
+  const isMountedRef = useRef(true);
   
-  // Mark a workout as complete
+  // Track if we're currently in the middle of loading completion data to prevent duplicate calls
+  const isLoadingRef = useRef(false);
+  
+  // Track the last time we loaded completion data to implement debounce
+  const lastLoadTimeRef = useRef(0);
+  
+  // Minimum time in ms between focus-triggered data loads
+  const DEBOUNCE_INTERVAL = 1000;
+
+  // Use useEffect for initial load
+  useEffect(() => {
+    if (workoutPlan && isStorageInitialized && !isLoadingRef.current) {
+      console.log('Workout plan available and storage initialized, loading completion data (useEffect)');
+      loadWorkoutCompletionData();
+    }
+    
+    return () => {
+      isMountedRef.current = false;
+    };
+  }, [workoutPlan, isStorageInitialized, loadWorkoutCompletionData]);
+
+  // Use useFocusEffect to reload when the screen comes into focus
+  useFocusEffect(
+    useCallback(() => {
+      isMountedRef.current = true;
+      
+      // Debounced loading of completion data on focus
+      const now = Date.now();
+      const timeSinceLastLoad = now - lastLoadTimeRef.current;
+      
+      // Only load if:
+      // 1. We're not already loading
+      // 2. Enough time has passed since last load
+      // 3. Component is mounted
+      if (!isLoadingRef.current && 
+          timeSinceLastLoad > DEBOUNCE_INTERVAL && 
+          isMountedRef.current) {
+          
+        console.log('Workout screen focused, attempting to load completion data (useFocusEffect).');
+        
+        // Set loading flag to prevent concurrent calls
+        isLoadingRef.current = true;
+        
+        // Update last load time
+        lastLoadTimeRef.current = now;
+        
+        // Load data
+        loadWorkoutCompletionData().finally(() => {
+          if (isMountedRef.current) {
+            isLoadingRef.current = false;
+          }
+        });
+      } else if (isLoadingRef.current) {
+        console.log('Skipping duplicate workout completion data load - already loading.');
+      } else if (timeSinceLastLoad <= DEBOUNCE_INTERVAL) {
+        console.log(`Debouncing workout completion data load (last load was ${timeSinceLastLoad}ms ago).`);
+      }
+      
+      return () => {
+        console.log('Workout screen unfocused.');
+      };
+    }, [loadWorkoutCompletionData])
+  );
+
+  // Handle completing a workout
   const handleCompleteWorkout = async (dayName: string) => {
-    if (!user || !workoutPlan) return;
+    // Ensure storage is ready before attempting to write
+    if (!isStorageInitialized || !workoutPlan) {
+      console.warn('[handleCompleteWorkout] Aborted: Storage not initialized or no workout plan.');
+      setSnackbarMessage('Storage not ready, please wait and try again.');
+      setSnackbarVisible(true);
+      return;
+    }
     
     setCompletingWorkout(true);
+    console.log('📈 Starting workout completion for day:', dayName);
     
     try {
       const today = format(new Date(), 'yyyy-MM-dd');
@@ -471,13 +534,17 @@ export default function WorkoutScreen() {
         completed: true
       };
       
+      // Use local_user ID if user is not logged in
+      const userId = user?.id || 'local_user';
+      
       // Mark workout as complete in the database
       const result = await markWorkoutComplete(
-        user.id,
+        userId,
         today,
-        dayNum, // Use numeric day index
+        dayNum, // Keep passing dayNum for now, as the function still accepts it
         workoutPlan.id || 'workout_plan_1',
-        completionData // Pass workout details
+        completionData, // Pass workout details
+        dayName // Pass the actual day name
       );
       
       if (result) {
@@ -494,8 +561,8 @@ export default function WorkoutScreen() {
         });
         
         // Emit event to notify other components (like Home tab) that a workout was completed
-        EventRegister.emit('workoutCompleted', {
-          userId: user.id,
+        const eventData = {
+          userId: userId, // Use the local_user if needed
           date: today,
           workoutName: day.day,
           dayNumber: dayNum,
@@ -503,7 +570,10 @@ export default function WorkoutScreen() {
           focusArea: getWorkoutFocus(day),
           completed: true,
           workoutPlanId: workoutPlan.id || 'workout_plan_1'
-        });
+        };
+        
+        console.log('📢 Emitting workoutCompleted event with data:', eventData);
+        EventRegister.emit('workoutCompleted', eventData);
         
         // Determine celebration type based on streak or achievements
         let celebrationType: 'success' | 'achievement' | 'streak' | 'confetti' = 'success';
@@ -534,34 +604,21 @@ export default function WorkoutScreen() {
       }
     } catch (err) {
       console.error('Error completing workout:', err);
-      setSnackbarMessage('Failed to mark workout as complete. Please try again.');
+      
+      // Even if there's an error, still mark as complete locally
+      // This ensures a good user experience even if backend persistence fails
+      setCompletedWorkouts(prev => ({
+        ...prev,
+        [dayName]: true
+      }));
+      
+      setSnackbarMessage('Workout marked as complete locally, but there was an issue saving to server. Your progress is still tracked.');
       setSnackbarVisible(true);
     } finally {
+      console.log('✨ Workout completion process finished');
       setCompletingWorkout(false);
     }
   };
-
-  // Load completion data when workout plan changes
-  useEffect(() => {
-    if (workoutPlan) {
-      console.log('Workout plan changed, loading completion data');
-      // Load immediately for better UX
-      loadWorkoutCompletionData();
-    }
-  }, [workoutPlan?.id]); // Only depend on workoutPlan.id, not the entire object
-  
-  // Add an additional effect to refresh completion data when completingWorkout changes to false
-  useEffect(() => {
-    if (!completingWorkout && workoutPlan) {
-      console.log('Workout completion state changed, reloading completion data');
-      // Short delay to ensure database has been updated
-      const timer = setTimeout(() => {
-        loadWorkoutCompletionData();
-      }, 300);
-      
-      return () => clearTimeout(timer);
-    }
-  }, [completingWorkout]);
 
   // Safely access nested properties
   const safelyAccess = <T extends unknown>(obj: any, path: string, defaultValue: T): T => {
@@ -642,13 +699,6 @@ export default function WorkoutScreen() {
     }
   };
 
-  // Get workout days safely
-  const getWorkoutDays = () => {
-    if (!workoutPlan) return [];
-    // Access the correct property based on the WorkoutPlan interface
-    return workoutPlan.weeklySchedule || [];
-  };
-
   // Helper to safely get the workout day's target focus, handling inconsistent property names
   const getWorkoutFocus = (day: any): string => {
     // Handle both 'target' and 'focus' property names for backward compatibility
@@ -710,6 +760,9 @@ export default function WorkoutScreen() {
     return days.find(day => day.day === selectedDay) || days[0];
   }, [workoutPlan, selectedDay]);
 
+  // Determine the plan to display, prioritizing local state after generation
+  const displayPlan = workoutPlan || profile?.workout_plan;
+
   return (
     <SafeAreaView style={styles.container} edges={['right', 'left']}>
       <StatusBar style="light" />
@@ -721,6 +774,14 @@ export default function WorkoutScreen() {
         start={{ x: 0, y: 0 }}
         end={{ x: 0, y: 0.3 }}
       />
+      
+      {/* Optionally show a loading overlay while storage initializes */} 
+      {!isStorageInitialized && (
+        <View style={styles.initializationOverlay}>
+          <ActivityIndicator size="large" color={colors.primary.main} />
+          <StyledText style={styles.initializationText}>Initializing Storage...</StyledText>
+        </View>
+      )}
       
       {/* Header */}
       <View style={styles.header}>
@@ -746,573 +807,581 @@ export default function WorkoutScreen() {
               </TouchableOpacity>
       </View>
 
-      {/* Main Content */}
-      <ScrollView 
-        style={styles.scrollView}
-        contentContainerStyle={styles.scrollContent}
-        showsVerticalScrollIndicator={false}
-      >
-        {loading ? (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="large" color={colors.primary.main} />
-            <StyledText variant="bodyMedium" style={styles.loadingText}>Loading your workout plan...</StyledText>
-          </View>
-        ) : error ? (
-          <View style={styles.errorContainer}>
-            <LinearGradient
-              colors={[colors.surface.light, colors.surface.main]}
-              style={styles.errorCard}
-              start={{ x: 0, y: 0 }}
-              end={{ x: 1, y: 1 }}
-            >
-              <MaterialCommunityIcons name="alert-circle" size={40} color={colors.feedback.error} />
-              <StyledText variant="bodyLarge" style={styles.errorTitle}>{error.title || 'Error'}</StyledText>
-              <StyledText variant="bodyMedium" style={styles.errorMessage}>{error.message || 'Failed to load workout plan'}</StyledText>
-              {error.isRetryable && (
-                <TouchableOpacity 
-                  style={styles.retryButton}
-                  onPress={handleGeneratePlan}
-                >
-              <LinearGradient
-                    colors={[colors.primary.main, colors.primary.dark]}
-                    style={styles.gradientButton}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 0 }}
-              >
-                    <StyledText variant="bodyMedium" style={styles.buttonText}>Try Again</StyledText>
-              </LinearGradient>
-                </TouchableOpacity>
-              )}
-            </LinearGradient>
-          </View>
-        ) : workoutsGenerated === false ? (
-          // Workout Generator UI when no workouts are available
-          <View style={styles.generateWorkoutContainer}>
-            <FadeIn from={0} duration={800}>
-              <LinearGradient
-                colors={[colors.surface.light, colors.surface.main]}
-                style={styles.programCard}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-              >
-                <StyledText variant="headingMedium" style={styles.sectionTitle}>
-                  Generate Your Workout Plan
-                </StyledText>
-                
-                <View style={styles.programDetailsContainer}>
-                  <StyledText variant="bodyLarge" style={styles.programDescription}>
-                    Create a personalized workout plan based on your preferences and fitness level.
-                  </StyledText>
-                  
-                  <View style={styles.generateIllustrationContainer}>
-                    <MaterialCommunityIcons 
-                      name="dumbbell" 
-                      size={80} 
-                      color={colors.primary.main} 
-                      style={styles.generateIcon}
-                    />
-                  </View>
-                  
-                  <StyledText variant="bodyMedium" style={styles.generateText}>
-                    We'll create a custom workout plan tailored to your:
-                  </StyledText>
-                  
-                  <View style={styles.benefitsList}>
-                    <View style={styles.benefitItem}>
-                      <MaterialCommunityIcons name="check-circle" size={24} color={colors.accent.green} />
-                      <StyledText variant="bodyMedium" style={styles.benefitText}>Fitness level: {profile?.fitness_level || 'Beginner'}</StyledText>
-                    </View>
-                    <View style={styles.benefitItem}>
-                      <MaterialCommunityIcons name="check-circle" size={24} color={colors.accent.green} />
-                      <StyledText variant="bodyMedium" style={styles.benefitText}>Location: {profile?.workout_preferences?.workout_location || 'Home'}</StyledText>
-                    </View>
-                    <View style={styles.benefitItem}>
-                      <MaterialCommunityIcons name="check-circle" size={24} color={colors.accent.green} />
-                      <StyledText variant="bodyMedium" style={styles.benefitText}>
-                        Equipment: {Array.isArray(profile?.workout_preferences?.equipment || profile?.workout_preferences?.equipment_available) 
-                          ? (profile?.workout_preferences?.equipment || profile?.workout_preferences?.equipment_available).join(', ') 
-                          : 'Bodyweight'}
-                      </StyledText>
-                    </View>
-                    <View style={styles.benefitItem}>
-                      <MaterialCommunityIcons name="check-circle" size={24} color={colors.accent.green} />
-                      <StyledText variant="bodyMedium" style={styles.benefitText}>Focus Areas: {(profile?.fitness_goals || ['Full Body']).join(', ')}</StyledText>
-                    </View>
-                  </View>
-                  
-                  <TouchableOpacity 
-                    style={styles.generateButton}
-                    onPress={handleGeneratePlan}
+      {/* Main Content - Conditionally render based on storage init? */} 
+       <ScrollView 
+         style={styles.scrollView}
+         contentContainerStyle={styles.scrollContent}
+         showsVerticalScrollIndicator={false}
+       >
+         {/* Only render main content AFTER storage is initialized */} 
+         {isStorageInitialized ? (
+            <> 
+              {loading ? (
+                <View style={styles.loadingContainer}>
+                  <ActivityIndicator size="large" color={colors.primary.main} />
+                  <StyledText variant="bodyMedium" style={styles.loadingText}>Loading your workout plan...</StyledText>
+                </View>
+              ) : error ? (
+                <View style={styles.errorContainer}>
+                  <LinearGradient
+                    colors={[colors.surface.light, colors.surface.main]}
+                    style={styles.errorCard}
+                    start={{ x: 0, y: 0 }}
+                    end={{ x: 1, y: 1 }}
                   >
+                    <MaterialCommunityIcons name="alert-circle" size={40} color={colors.feedback.error} />
+                    <StyledText variant="bodyLarge" style={styles.errorTitle}>{error.title || 'Error'}</StyledText>
+                    <StyledText variant="bodyMedium" style={styles.errorMessage}>{error.message || 'Failed to load workout plan'}</StyledText>
+                    {error.isRetryable && (
+                      <TouchableOpacity 
+                        style={styles.retryButton}
+                        onPress={handleGeneratePlan}
+                      >
                     <LinearGradient
-                      colors={[colors.primary.main, colors.primary.dark]}
-                      style={styles.gradientButton}
+                          colors={[colors.primary.main, colors.primary.dark]}
+                          style={styles.gradientButton}
                       start={{ x: 0, y: 0 }}
                       end={{ x: 1, y: 0 }}
                     >
-                      <StyledText variant="bodyLarge" style={styles.buttonText}>
-                        Generate My Workout Plan
-                      </StyledText>
+                          <StyledText variant="bodyMedium" style={styles.buttonText}>Try Again</StyledText>
                     </LinearGradient>
-                  </TouchableOpacity>
-                </View>
-              </LinearGradient>
-            </FadeIn>
-          </View>
-        ) : (
-          <>
-            {/* Program Info Card */}
-            <FadeIn from={0} duration={800}>
-              <LinearGradient
-                colors={[colors.surface.light, colors.surface.main]}
-                style={styles.programCard}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-              >
-                <StyledText variant="headingMedium" style={styles.sectionTitle}>
-                  Your Workout Program
-                </StyledText>
-                
-                <View style={styles.programDetailsContainer}>
-                  <StyledText variant="bodyLarge" style={styles.programDescription}>
-                    Here's your personalized workout plan based on your preferences:
-                  </StyledText>
-                  
-                  <View style={styles.detailItem}>
-                    <View style={styles.iconContainer}>
-                      <MaterialCommunityIcons name="trophy" size={24} color={colors.accent.gold} />
-                  </View>
-                    <StyledText variant="bodyLarge" style={styles.detailText}>
-                      Level: {profile?.fitness_level || 'beginner'}
-                    </StyledText>
-                  </View>
-                  
-                  <View style={styles.detailItem}>
-                    <View style={styles.iconContainer}>
-                      <MaterialCommunityIcons name="map-marker" size={24} color={colors.accent.lavender} />
-                  </View>
-                    <StyledText variant="bodyLarge" style={styles.detailText}>
-                      Location: {profile?.workout_preferences?.workout_location || 'home'}
-                    </StyledText>
-                  </View>
-                  
-                  <View style={styles.detailItem}>
-                    <View style={styles.iconContainer}>
-                      <MaterialCommunityIcons name="target" size={24} color={colors.accent.green} />
-                </View>
-                    <StyledText variant="bodyLarge" style={styles.detailText}>
-                      Focus: {profile?.fitness_goals?.[0] || 'weight-loss'}
-                    </StyledText>
-                  </View>
-                  
-                  <View style={styles.detailItem}>
-                    <View style={styles.iconContainer}>
-                      <MaterialCommunityIcons name="calendar-week" size={24} color={colors.secondary.main} />
-                    </View>
-                    <StyledText variant="bodyLarge" style={styles.detailText}>
-                      Sessions per week: {profile?.workout_days_per_week || 3}
-                    </StyledText>
-                  </View>
-                </View>
-                
-                <TouchableOpacity 
-                  style={styles.regenerateButton}
-                  onPress={handleGeneratePlan}
-                >
-                  <LinearGradient 
-                    colors={[colors.primary.main, colors.primary.dark]}
-                    style={styles.gradientButton}
-                    start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 0 }}
-                  >
-                    <MaterialCommunityIcons name="refresh" size={20} color="#fff" style={{marginRight: 8}} />
-                    <StyledText variant="bodyMedium" style={styles.buttonText}>Regenerate Plan</StyledText>
+                      </TouchableOpacity>
+                    )}
                   </LinearGradient>
-                </TouchableOpacity>
-              </LinearGradient>
-            </FadeIn>
-            
-            {/* Day Selector - Horizontal Scrollbar */}
-            <FadeIn from={0} duration={500}>
-              <LinearGradient
-                colors={[colors.surface.light, colors.surface.main]}
-                style={styles.daySelectorCard}
-                start={{ x: 0, y: 0 }}
-                end={{ x: 1, y: 1 }}
-              >
-                <ScrollView 
-                  horizontal 
-                  showsHorizontalScrollIndicator={false}
-                  contentContainerStyle={styles.dayScrollContent}
-                >
-                  {getWorkoutDays().map((day, index) => (
-                    <TouchableOpacity
-                      key={`day-${index}`}
-                      style={[
-                        styles.dayButton,
-                        selectedDay === day.day && styles.selectedDayButton
-                      ]}
-                      onPress={() => setSelectedDay(day.day)}
+                </View>
+              ) : !displayPlan ? (
+                // Workout Generator UI when no workouts are available
+                <View style={styles.generateWorkoutContainer}>
+                  <FadeIn from={0} duration={800}>
+                    <LinearGradient
+                      colors={[colors.surface.light, colors.surface.main]}
+                      style={styles.programCard}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
                     >
-                      {selectedDay === day.day ? (
-                        <LinearGradient
+                      <StyledText variant="headingMedium" style={styles.sectionTitle}>
+                        Generate Your Workout Plan
+                      </StyledText>
+                      
+                      <View style={styles.programDetailsContainer}>
+                        <StyledText variant="bodyLarge" style={styles.programDescription}>
+                          Create a personalized workout plan based on your preferences and fitness level.
+                        </StyledText>
+                        
+                        <View style={styles.generateIllustrationContainer}>
+                          <MaterialCommunityIcons 
+                            name="dumbbell" 
+                            size={80} 
+                            color={colors.primary.main} 
+                            style={styles.generateIcon}
+                          />
+                        </View>
+                        
+                        <StyledText variant="bodyMedium" style={styles.generateText}>
+                          We'll create a custom workout plan tailored to your:
+                        </StyledText>
+                        
+                        <View style={styles.benefitsList}>
+                          <View style={styles.benefitItem}>
+                            <MaterialCommunityIcons name="check-circle" size={24} color={colors.accent.green} />
+                            <StyledText variant="bodyMedium" style={styles.benefitText}>Fitness level: {profile?.fitness_level || 'Beginner'}</StyledText>
+                          </View>
+                          <View style={styles.benefitItem}>
+                            <MaterialCommunityIcons name="check-circle" size={24} color={colors.accent.green} />
+                            <StyledText variant="bodyMedium" style={styles.benefitText}>Location: {profile?.workout_preferences?.workout_location || 'Home'}</StyledText>
+                          </View>
+                          <View style={styles.benefitItem}>
+                            <MaterialCommunityIcons name="check-circle" size={24} color={colors.accent.green} />
+                            <StyledText variant="bodyMedium" style={styles.benefitText}>
+                              Equipment: {(profile?.workout_preferences?.equipment || profile?.workout_preferences?.equipment_available || []).join(', ')}
+                            </StyledText>
+                          </View>
+                          <View style={styles.benefitItem}>
+                            <MaterialCommunityIcons name="check-circle" size={24} color={colors.accent.green} />
+                            <StyledText variant="bodyMedium" style={styles.benefitText}>Focus Areas: {(profile?.fitness_goals || ['Full Body']).join(', ')}</StyledText>
+                          </View>
+                        </View>
+                        
+                        <TouchableOpacity 
+                          style={styles.generateButton}
+                          onPress={handleGeneratePlan}
+                        >
+                          <LinearGradient
+                            colors={[colors.primary.main, colors.primary.dark]}
+                            style={styles.gradientButton}
+                            start={{ x: 0, y: 0 }}
+                            end={{ x: 1, y: 0 }}
+                          >
+                            <StyledText variant="bodyLarge" style={styles.buttonText}>
+                              Generate My Workout Plan
+                            </StyledText>
+                          </LinearGradient>
+                        </TouchableOpacity>
+                      </View>
+                    </LinearGradient>
+                  </FadeIn>
+                </View>
+              ) : (
+                <>
+                  {/* Program Info Card */}
+                  <FadeIn from={0} duration={800}>
+                    <LinearGradient
+                      colors={[colors.surface.light, colors.surface.main]}
+                      style={styles.programCard}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                    >
+                      <StyledText variant="headingMedium" style={styles.sectionTitle}>
+                        Your Workout Program
+                      </StyledText>
+                      
+                      <View style={styles.programDetailsContainer}>
+                        <StyledText variant="bodyLarge" style={styles.programDescription}>
+                          Here's your personalized workout plan based on your preferences:
+                        </StyledText>
+                        
+                        <View style={styles.detailItem}>
+                          <View style={styles.iconContainer}>
+                            <MaterialCommunityIcons name="trophy" size={24} color={colors.accent.gold} />
+                        </View>
+                          <StyledText variant="bodyLarge" style={styles.detailText}>
+                            Level: {profile?.fitness_level || 'beginner'}
+                          </StyledText>
+                        </View>
+                        
+                        <View style={styles.detailItem}>
+                          <View style={styles.iconContainer}>
+                            <MaterialCommunityIcons name="map-marker" size={24} color={colors.accent.lavender} />
+                        </View>
+                          <StyledText variant="bodyLarge" style={styles.detailText}>
+                            Location: {profile?.workout_preferences?.workout_location || 'home'}
+                          </StyledText>
+                        </View>
+                        
+                        <View style={styles.detailItem}>
+                          <View style={styles.iconContainer}>
+                            <MaterialCommunityIcons name="target" size={24} color={colors.accent.green} />
+                      </View>
+                          <StyledText variant="bodyLarge" style={styles.detailText}>
+                            Focus: {profile?.fitness_goals?.[0] || 'weight-loss'}
+                          </StyledText>
+                        </View>
+                        
+                        <View style={styles.detailItem}>
+                          <View style={styles.iconContainer}>
+                            <MaterialCommunityIcons name="calendar-week" size={24} color={colors.secondary.main} />
+                          </View>
+                          <StyledText variant="bodyLarge" style={styles.detailText}>
+                            Sessions per week: {profile?.workout_days_per_week || 3}
+                          </StyledText>
+                        </View>
+                      </View>
+                      
+                      <TouchableOpacity 
+                        style={styles.regenerateButton}
+                        onPress={handleGeneratePlan}
+                      >
+                        <LinearGradient 
                           colors={[colors.primary.main, colors.primary.dark]}
-                          style={styles.dayGradient}
+                          style={styles.gradientButton}
                           start={{ x: 0, y: 0 }}
+                          end={{ x: 1, y: 0 }}
+                        >
+                          <MaterialCommunityIcons name="refresh" size={20} color="#fff" style={{marginRight: 8}} />
+                          <StyledText variant="bodyMedium" style={styles.buttonText}>Regenerate Plan</StyledText>
+                        </LinearGradient>
+                      </TouchableOpacity>
+                    </LinearGradient>
+                  </FadeIn>
+                  
+                  {/* Day Selector - Horizontal Scrollbar */}
+                  <FadeIn from={0} duration={500}>
+                    <LinearGradient
+                      colors={[colors.surface.light, colors.surface.main]}
+                      style={styles.daySelectorCard}
+                      start={{ x: 0, y: 0 }}
+                      end={{ x: 1, y: 1 }}
+                    >
+                      <ScrollView 
+                        horizontal 
+                        showsHorizontalScrollIndicator={false}
+                        contentContainerStyle={styles.dayScrollContent}
+                      >
+                        {getWorkoutDays().map((day, index) => (
+                          <TouchableOpacity
+                            key={`day-${index}`}
+                            style={[
+                              styles.dayButton,
+                              selectedDay === day.day && styles.selectedDayButton
+                            ]}
+                            onPress={() => setSelectedDay(day.day)}
+                          >
+                            {selectedDay === day.day ? (
+                              <LinearGradient
+                                colors={[colors.primary.main, colors.primary.dark]}
+                                style={styles.dayGradient}
+                                start={{ x: 0, y: 0 }}
+                                end={{ x: 1, y: 1 }}
+                              >
+                                <StyledText 
+                                  variant="bodyMedium" 
+                                  style={{color: colors.text.primary}}
+                                >
+                                  {typeof day.day === 'string' ? day.day : `Day ${day.day}`}
+                                </StyledText>
+                      </LinearGradient>
+                            ) : (
+                              <StyledText 
+                                variant="bodyMedium" 
+                                style={styles.dayText}
+                              >
+                                {typeof day.day === 'string' ? day.day : `Day ${day.day}`}
+                              </StyledText>
+                            )}
+                          </TouchableOpacity>
+                        ))}
+                      </ScrollView>
+                    </LinearGradient>
+                  </FadeIn>
+                  
+                  {/* Selected Day's Target */}
+                  {selectedWorkoutDay && (
+                    <ScaleIn duration={600} delay={200}>
+                      <LinearGradient
+                        colors={[colors.primary.main, colors.secondary.main]}
+                        style={styles.targetCard}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
+                      >
+                        <StyledText variant="headingSmall" style={styles.targetTitle}>
+                          {getWorkoutFocus(selectedWorkoutDay)} Workout
+                        </StyledText>
+                        
+                        <View style={styles.targetDetails}>
+                          <View style={styles.targetDetail}>
+                            <MaterialCommunityIcons name="dumbbell" size={24} color={colors.text.primary} />
+                            <StyledText variant="headingMedium" style={styles.detailValue}>
+                              {selectedWorkoutDay.exercises?.length || 0}
+                            </StyledText>
+                            <StyledText variant="bodySmall" style={styles.detailLabel}>
+                              exercises
+                            </StyledText>
+                          </View>
+                          
+                          <View style={styles.targetDetail}>
+                            <MaterialCommunityIcons name="clock-outline" size={24} color={colors.text.primary} />
+                            <StyledText variant="headingMedium" style={styles.detailValue}>
+                              {userPreferences.timePerSession}
+                            </StyledText>
+                            <StyledText variant="bodySmall" style={styles.detailLabel}>
+                              minutes
+                            </StyledText>
+                          </View>
+                          
+                          <View style={styles.targetDetail}>
+                            <MaterialCommunityIcons 
+                              name={completedWorkouts[String(selectedWorkoutDay.day)] ? "check-circle" : "timer-sand"} 
+                              size={24} 
+                              color={completedWorkouts[String(selectedWorkoutDay.day)] ? colors.accent.green : colors.text.primary} 
+                            />
+                            <StyledText 
+                              variant="bodyMedium" 
+                              style={{
+                                ...styles.statusLabel,
+                                color: completedWorkouts[String(selectedWorkoutDay.day)] ? colors.accent.green : colors.text.primary
+                              }}
+                            >
+                              {completedWorkouts[String(selectedWorkoutDay.day)] ? "Completed" : "In Progress"}
+                            </StyledText>
+                          </View>
+                        </View>
+                      </LinearGradient>
+                    </ScaleIn>
+                  )}
+                  
+                  {/* Warm-up Section */}
+                  {workoutPlan?.warmUp && workoutPlan.warmUp.length > 0 && (
+                    <ScaleIn duration={500} delay={250}>
+                    <LinearGradient
+                        colors={[colors.surface.light, colors.surface.main]}
+                        style={{
+                          borderRadius: borderRadius.lg,
+                          marginBottom: spacing.lg,
+                          overflow: 'hidden',
+                          elevation: 3,
+                          shadowColor: "#000",
+                          shadowOffset: { width: 0, height: 2 },
+                          shadowOpacity: 0.1,
+                          shadowRadius: 4
+                        }}
+                      start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
+                      >
+                        <View style={{
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          padding: spacing.md,
+                          borderBottomWidth: 1,
+                          borderBottomColor: 'rgba(255, 255, 255, 0.1)',
+                        }}>
+                          <MaterialCommunityIcons name="fire" size={24} color={colors.accent.gold} style={{ marginRight: spacing.sm }} />
+                          <StyledText variant="headingSmall" style={{
+                            color: colors.text.primary,
+                            fontWeight: 'bold',
+                          }}>
+                            Warm-up
+                          </StyledText>
+                      </View>
+                        
+                        <View style={{ padding: spacing.md }}>
+                          {workoutPlan.warmUp.map((item, index) => (
+                            <View key={`warmup-${index}`} style={{
+                              flexDirection: 'row',
+                              alignItems: 'flex-start',
+                              marginBottom: spacing.sm,
+                            }}>
+                              <View style={{
+                                width: 6,
+                                height: 6,
+                                borderRadius: 3,
+                                backgroundColor: colors.accent.gold,
+                                marginRight: spacing.sm,
+                                marginTop: 8,
+                              }} />
+                              <StyledText variant="bodyMedium" style={{
+                                color: colors.text.secondary,
+                                flex: 1,
+                              }}>
+                                {item}
+                              </StyledText>
+                          </View>
+                          ))}
+                        </View>
+                      </LinearGradient>
+                    </ScaleIn>
+                  )}
+                  
+                  {/* Exercise Cards with Popup Functionality */}
+                  {selectedWorkoutDay?.exercises?.map((exercise, index) => (
+                    <ScaleIn key={`exercise-${index}`} duration={500} delay={300 + (index * 100)}>
+                      <TouchableOpacity
+                        style={{
+                          marginBottom: spacing.sm,
+                          borderRadius: borderRadius.lg,
+                          overflow: 'hidden',
+                          elevation: 3,
+                          shadowColor: "#000",
+                          shadowOffset: { width: 0, height: 2 },
+                          shadowOpacity: 0.1,
+                          shadowRadius: 4
+                        }}
+                        onPress={() => openExerciseDetail(exercise)}
+                      >
+                    <LinearGradient
+                          colors={[colors.surface.light, colors.surface.main]}
+                          style={{
+                            borderRadius: borderRadius.lg,
+                          }}
+                      start={{ x: 0, y: 0 }}
                           end={{ x: 1, y: 1 }}
                         >
-                          <StyledText 
-                            variant="bodyMedium" 
-                            style={{color: colors.text.primary}}
-                          >
-                            {typeof day.day === 'string' ? day.day : `Day ${day.day}`}
-                          </StyledText>
-              </LinearGradient>
-                      ) : (
-                        <StyledText 
-                          variant="bodyMedium" 
-                          style={styles.dayText}
-                        >
-                          {typeof day.day === 'string' ? day.day : `Day ${day.day}`}
-                        </StyledText>
-                      )}
-                    </TouchableOpacity>
+                          <View style={{
+                            flexDirection: 'row',
+                            justifyContent: 'space-between',
+                            alignItems: 'center',
+                            paddingHorizontal: spacing.md,
+                            paddingVertical: spacing.sm,
+                            borderBottomWidth: 1,
+                            borderBottomColor: 'rgba(255, 255, 255, 0.1)',
+                          }}>
+                            <StyledText variant="bodyLarge" style={{
+                              color: colors.text.primary,
+                              fontWeight: '600',
+                              flex: 1,
+                            }}>
+                              {exercise.name}
+                            </StyledText>
+                            <MaterialCommunityIcons 
+                              name="chevron-right" 
+                              size={20} 
+                              color={colors.primary.main} 
+                            />
+                          </View>
+                          
+                          <View style={{
+                            flexDirection: 'row',
+                            justifyContent: 'space-between',
+                            paddingHorizontal: spacing.md,
+                            paddingVertical: spacing.sm,
+                          }}>
+                            <View style={{
+                              alignItems: 'center',
+                              paddingHorizontal: spacing.sm,
+                            }}>
+                              <StyledText variant="bodyMedium" style={{
+                                color: colors.primary.main,
+                                fontWeight: 'bold',
+                              }}>
+                                {exercise.sets}
+                              </StyledText>
+                              <StyledText variant="bodySmall" style={{
+                                color: colors.text.muted,
+                                fontSize: 12,
+                              }}>
+                                sets
+                              </StyledText>
+                            </View>
+                            
+                            <View style={{
+                              alignItems: 'center',
+                              paddingHorizontal: spacing.sm,
+                            }}>
+                              <StyledText variant="bodyMedium" style={{
+                                color: colors.primary.main,
+                                fontWeight: 'bold',
+                                fontSize: typeof exercise.reps === 'string' && String(exercise.reps).length > 5 ? 12 : 16
+                              }}>
+                                {typeof exercise.reps === 'string' ? exercise.reps : `${exercise.reps}`}
+                              </StyledText>
+                              <StyledText variant="bodySmall" style={{
+                                color: colors.text.muted,
+                                fontSize: 12,
+                              }}>
+                                reps
+                              </StyledText>
+                            </View>
+                            
+                            <View style={{
+                              alignItems: 'center',
+                              paddingHorizontal: spacing.sm,
+                            }}>
+                              <StyledText variant="bodySmall" style={{
+                                color: colors.text.primary,
+                              }}>
+                                {exercise.rest}
+                              </StyledText>
+                              <StyledText variant="bodySmall" style={{
+                                color: colors.text.muted,
+                                fontSize: 12,
+                              }}>
+                                rest
+                              </StyledText>
+                            </View>
+                      </View>
+                    </LinearGradient>
+                      </TouchableOpacity>
+                    </ScaleIn>
                   ))}
-                </ScrollView>
-              </LinearGradient>
-            </FadeIn>
-            
-            {/* Selected Day's Target */}
-            {selectedWorkoutDay && (
-              <ScaleIn duration={600} delay={200}>
-                <LinearGradient
-                  colors={[colors.primary.main, colors.secondary.main]}
-                  style={styles.targetCard}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                >
-                  <StyledText variant="headingSmall" style={styles.targetTitle}>
-                    {getWorkoutFocus(selectedWorkoutDay)} Workout
-                  </StyledText>
                   
-                  <View style={styles.targetDetails}>
-                    <View style={styles.targetDetail}>
-                      <MaterialCommunityIcons name="dumbbell" size={24} color={colors.text.primary} />
-                      <StyledText variant="headingMedium" style={styles.detailValue}>
-                        {selectedWorkoutDay.exercises?.length || 0}
-                      </StyledText>
-                      <StyledText variant="bodySmall" style={styles.detailLabel}>
-                        exercises
-                      </StyledText>
-                    </View>
-                    
-                    <View style={styles.targetDetail}>
-                      <MaterialCommunityIcons name="clock-outline" size={24} color={colors.text.primary} />
-                      <StyledText variant="headingMedium" style={styles.detailValue}>
-                        {userPreferences.timePerSession}
-                      </StyledText>
-                      <StyledText variant="bodySmall" style={styles.detailLabel}>
-                        minutes
-                      </StyledText>
-                    </View>
-                    
-                    <View style={styles.targetDetail}>
-                      <MaterialCommunityIcons 
-                        name={completedWorkouts[String(selectedWorkoutDay.day)] ? "check-circle" : "timer-sand"} 
-                        size={24} 
-                        color={completedWorkouts[String(selectedWorkoutDay.day)] ? colors.accent.green : colors.text.primary} 
-                      />
-                      <StyledText 
-                        variant="bodyMedium" 
+                  {/* Cool-down Section */}
+                  {workoutPlan?.coolDown && workoutPlan.coolDown.length > 0 && (
+                    <ScaleIn duration={500} delay={600}>
+                      <LinearGradient
+                        colors={[colors.surface.light, colors.surface.main]}
                         style={{
-                          ...styles.statusLabel,
-                          color: completedWorkouts[String(selectedWorkoutDay.day)] ? colors.accent.green : colors.text.primary
+                          borderRadius: borderRadius.lg,
+                          marginBottom: spacing.lg,
+                          overflow: 'hidden',
+                          elevation: 3,
+                          shadowColor: "#000",
+                          shadowOffset: { width: 0, height: 2 },
+                          shadowOpacity: 0.1,
+                          shadowRadius: 4
                         }}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
                       >
-                        {completedWorkouts[String(selectedWorkoutDay.day)] ? "Completed" : "In Progress"}
-                      </StyledText>
-                    </View>
-                  </View>
-                </LinearGradient>
-              </ScaleIn>
-            )}
-            
-            {/* Warm-up Section */}
-            {workoutPlan?.warmUp && workoutPlan.warmUp.length > 0 && (
-              <ScaleIn duration={500} delay={250}>
-              <LinearGradient
-                  colors={[colors.surface.light, colors.surface.main]}
-                  style={{
-                    borderRadius: borderRadius.lg,
-                    marginBottom: spacing.lg,
-                    overflow: 'hidden',
-                    elevation: 3,
-                    shadowColor: "#000",
-                    shadowOffset: { width: 0, height: 2 },
-                    shadowOpacity: 0.1,
-                    shadowRadius: 4
-                  }}
-                start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                >
-                  <View style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    padding: spacing.md,
-                    borderBottomWidth: 1,
-                    borderBottomColor: 'rgba(255, 255, 255, 0.1)',
-                  }}>
-                    <MaterialCommunityIcons name="fire" size={24} color={colors.accent.gold} style={{ marginRight: spacing.sm }} />
-                    <StyledText variant="headingSmall" style={{
-                      color: colors.text.primary,
-                      fontWeight: 'bold',
-                    }}>
-                      Warm-up
-                    </StyledText>
-                </View>
-                  
-                  <View style={{ padding: spacing.md }}>
-                    {workoutPlan.warmUp.map((item, index) => (
-                      <View key={`warmup-${index}`} style={{
-                        flexDirection: 'row',
-                        alignItems: 'flex-start',
-                        marginBottom: spacing.sm,
-                      }}>
                         <View style={{
-                          width: 6,
-                          height: 6,
-                          borderRadius: 3,
-                          backgroundColor: colors.accent.gold,
-                          marginRight: spacing.sm,
-                          marginTop: 8,
-                        }} />
-                        <StyledText variant="bodyMedium" style={{
-                          color: colors.text.secondary,
-                          flex: 1,
+                          flexDirection: 'row',
+                          alignItems: 'center',
+                          padding: spacing.md,
+                          borderBottomWidth: 1,
+                          borderBottomColor: 'rgba(255, 255, 255, 0.1)',
                         }}>
-                          {item}
-                        </StyledText>
-                    </View>
-                    ))}
-                  </View>
-                </LinearGradient>
-              </ScaleIn>
-            )}
-            
-            {/* Exercise Cards with Popup Functionality */}
-            {selectedWorkoutDay?.exercises?.map((exercise, index) => (
-              <ScaleIn key={`exercise-${index}`} duration={500} delay={300 + (index * 100)}>
-                <TouchableOpacity
-                  style={{
-                    marginBottom: spacing.sm,
-                    borderRadius: borderRadius.lg,
-                    overflow: 'hidden',
-                    elevation: 3,
-                    shadowColor: "#000",
-                    shadowOffset: { width: 0, height: 2 },
-                    shadowOpacity: 0.1,
-                    shadowRadius: 4
-                  }}
-                  onPress={() => openExerciseDetail(exercise)}
-                >
-              <LinearGradient
-                    colors={[colors.surface.light, colors.surface.main]}
-                    style={{
-                      borderRadius: borderRadius.lg,
-                    }}
-                start={{ x: 0, y: 0 }}
-                    end={{ x: 1, y: 1 }}
-                  >
-                    <View style={{
-                      flexDirection: 'row',
-                      justifyContent: 'space-between',
-                      alignItems: 'center',
-                      paddingHorizontal: spacing.md,
-                      paddingVertical: spacing.sm,
-                      borderBottomWidth: 1,
-                      borderBottomColor: 'rgba(255, 255, 255, 0.1)',
-                    }}>
-                      <StyledText variant="bodyLarge" style={{
-                        color: colors.text.primary,
-                        fontWeight: '600',
-                        flex: 1,
-                      }}>
-                        {exercise.name}
-                      </StyledText>
-                      <MaterialCommunityIcons 
-                        name="chevron-right" 
-                        size={20} 
-                        color={colors.primary.main} 
-                      />
-                    </View>
-                    
-                    <View style={{
-                      flexDirection: 'row',
-                      justifyContent: 'space-between',
-                      paddingHorizontal: spacing.md,
-                      paddingVertical: spacing.sm,
-                    }}>
-                      <View style={{
-                        alignItems: 'center',
-                        paddingHorizontal: spacing.sm,
-                      }}>
-                        <StyledText variant="bodyMedium" style={{
-                          color: colors.primary.main,
-                          fontWeight: 'bold',
-                        }}>
-                          {exercise.sets}
-                        </StyledText>
-                        <StyledText variant="bodySmall" style={{
-                          color: colors.text.muted,
-                          fontSize: 12,
-                        }}>
-                          sets
-                        </StyledText>
-                      </View>
-                      
-                      <View style={{
-                        alignItems: 'center',
-                        paddingHorizontal: spacing.sm,
-                      }}>
-                        <StyledText variant="bodyMedium" style={{
-                          color: colors.primary.main,
-                          fontWeight: 'bold',
-                          fontSize: typeof exercise.reps === 'string' && String(exercise.reps).length > 5 ? 12 : 16
-                        }}>
-                          {typeof exercise.reps === 'string' ? exercise.reps : `${exercise.reps}`}
-                        </StyledText>
-                        <StyledText variant="bodySmall" style={{
-                          color: colors.text.muted,
-                          fontSize: 12,
-                        }}>
-                          reps
-                        </StyledText>
-                      </View>
-                      
-                      <View style={{
-                        alignItems: 'center',
-                        paddingHorizontal: spacing.sm,
-                      }}>
-                        <StyledText variant="bodySmall" style={{
-                          color: colors.text.primary,
-                        }}>
-                          {exercise.rest}
-                        </StyledText>
-                        <StyledText variant="bodySmall" style={{
-                          color: colors.text.muted,
-                          fontSize: 12,
-                        }}>
-                          rest
-                        </StyledText>
-                      </View>
-                </View>
-              </LinearGradient>
-                </TouchableOpacity>
-              </ScaleIn>
-            ))}
-            
-            {/* Cool-down Section */}
-            {workoutPlan?.coolDown && workoutPlan.coolDown.length > 0 && (
-              <ScaleIn duration={500} delay={600}>
-                <LinearGradient
-                  colors={[colors.surface.light, colors.surface.main]}
-                  style={{
-                    borderRadius: borderRadius.lg,
-                    marginBottom: spacing.lg,
-                    overflow: 'hidden',
-                    elevation: 3,
-                    shadowColor: "#000",
-                    shadowOffset: { width: 0, height: 2 },
-                    shadowOpacity: 0.1,
-                    shadowRadius: 4
-                  }}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                >
-                  <View style={{
-                    flexDirection: 'row',
-                    alignItems: 'center',
-                    padding: spacing.md,
-                    borderBottomWidth: 1,
-                    borderBottomColor: 'rgba(255, 255, 255, 0.1)',
-                  }}>
-                    <MaterialCommunityIcons name="snowflake" size={24} color={colors.accent.lavender} style={{ marginRight: spacing.sm }} />
-                    <StyledText variant="headingSmall" style={{
-                      color: colors.text.primary,
-                      fontWeight: 'bold',
-                    }}>
-                      Cool-down
-                    </StyledText>
-                      </View>
+                          <MaterialCommunityIcons name="snowflake" size={24} color={colors.accent.lavender} style={{ marginRight: spacing.sm }} />
+                          <StyledText variant="headingSmall" style={{
+                            color: colors.text.primary,
+                            fontWeight: 'bold',
+                          }}>
+                            Cool-down
+                          </StyledText>
+                            </View>
+                        
+                        <View style={{ padding: spacing.md }}>
+                          {workoutPlan.coolDown.map((item, index) => (
+                            <View key={`cooldown-${index}`} style={{
+                              flexDirection: 'row',
+                              alignItems: 'flex-start',
+                              marginBottom: spacing.sm,
+                            }}>
+                              <View style={{
+                                width: 6,
+                                height: 6,
+                                borderRadius: 3,
+                                backgroundColor: colors.accent.lavender,
+                                marginRight: spacing.sm,
+                                marginTop: 8,
+                              }} />
+                              <StyledText variant="bodyMedium" style={{
+                                color: colors.text.secondary,
+                                flex: 1,
+                              }}>
+                                {item}
+                              </StyledText>
+                            </View>
+                            ))}
+                        </View>
+                      </LinearGradient>
+                    </ScaleIn>
+                  )}
                   
-                  <View style={{ padding: spacing.md }}>
-                    {workoutPlan.coolDown.map((item, index) => (
-                      <View key={`cooldown-${index}`} style={{
-                        flexDirection: 'row',
-                        alignItems: 'flex-start',
-                        marginBottom: spacing.sm,
-                      }}>
-                        <View style={{
-                          width: 6,
-                          height: 6,
-                          borderRadius: 3,
-                          backgroundColor: colors.accent.lavender,
-                          marginRight: spacing.sm,
-                          marginTop: 8,
-                        }} />
-                        <StyledText variant="bodyMedium" style={{
-                          color: colors.text.secondary,
-                          flex: 1,
-                        }}>
-                          {item}
+                  {/* Complete Workout Button */}
+                  {selectedWorkoutDay && (
+                    <TouchableOpacity
+                      style={[
+                        styles.completeWorkoutButton,
+                        completedWorkouts[String(selectedWorkoutDay.day)] ? 
+                          styles.completedWorkoutButton : {}
+                      ]}
+                      onPress={() => handleCompleteWorkout(String(selectedWorkoutDay.day))}
+                      disabled={completingWorkout || completedWorkouts[String(selectedWorkoutDay.day)]}
+                    >
+                      <LinearGradient
+                        colors={completedWorkouts[String(selectedWorkoutDay.day)]
+                          ? [colors.accent.green, '#4CAF50']
+                          : [colors.primary.main, colors.primary.dark]}
+                        style={styles.gradientButton}
+                        start={{ x: 0, y: 0 }}
+                        end={{ x: 1, y: 1 }}
+                      >
+                        <MaterialCommunityIcons 
+                          name={completedWorkouts[String(selectedWorkoutDay.day)] ? "check-circle" : "checkbox-marked-circle-outline"} 
+                          size={24} 
+                          color={completedWorkouts[String(selectedWorkoutDay.day)] ? '#FFFFFF' : colors.text.primary} 
+                        />
+                        <StyledText 
+                          variant="bodyLarge" 
+                          style={completedWorkouts[String(selectedWorkoutDay.day)] 
+                            ? {...styles.buttonText, ...styles.completedButtonText}
+                            : styles.buttonText}
+                        >
+                          {completedWorkouts[String(selectedWorkoutDay.day)] 
+                            ? "Workout Completed" 
+                            : completingWorkout ? "Marking..." : "Complete Workout"}
                         </StyledText>
-                    </View>
-                    ))}
-                  </View>
-                </LinearGradient>
-              </ScaleIn>
-            )}
-            
-            {/* Complete Workout Button */}
-            {selectedWorkoutDay && (
-              <TouchableOpacity
-                style={[
-                  styles.completeWorkoutButton,
-                  completedWorkouts[String(selectedWorkoutDay.day)] ? 
-                    styles.completedWorkoutButton : {}
-                ]}
-                onPress={() => handleCompleteWorkout(String(selectedWorkoutDay.day))}
-                disabled={completingWorkout || completedWorkouts[String(selectedWorkoutDay.day)]}
-              >
-                <LinearGradient
-                  colors={completedWorkouts[String(selectedWorkoutDay.day)]
-                    ? [colors.accent.green, '#4CAF50']
-                    : [colors.primary.main, colors.primary.dark]}
-                  style={styles.gradientButton}
-                  start={{ x: 0, y: 0 }}
-                  end={{ x: 1, y: 1 }}
-                >
-                  <MaterialCommunityIcons 
-                    name={completedWorkouts[String(selectedWorkoutDay.day)] ? "check-circle" : "checkbox-marked-circle-outline"} 
-                    size={24} 
-                    color={completedWorkouts[String(selectedWorkoutDay.day)] ? '#FFFFFF' : colors.text.primary} 
-                  />
-                  <StyledText 
-                    variant="bodyLarge" 
-                    style={completedWorkouts[String(selectedWorkoutDay.day)] 
-                      ? {...styles.buttonText, ...styles.completedButtonText}
-                      : styles.buttonText}
-                  >
-                    {completedWorkouts[String(selectedWorkoutDay.day)] 
-                      ? "Workout Completed" 
-                      : completingWorkout ? "Marking..." : "Complete Workout"}
-                  </StyledText>
-                </LinearGradient>
-              </TouchableOpacity>
-            )}
-          </>
-        )}
-      </ScrollView>
+                      </LinearGradient>
+                    </TouchableOpacity>
+                  )}
+                </>
+              )}
+            </> 
+         ) : ( 
+            // Optional: Keep showing loading indicator here too, or leave blank 
+            <View style={styles.loadingContainer}> 
+               <ActivityIndicator size="large" color={colors.primary.main} /> 
+             </View> 
+         )} 
+       </ScrollView>
       
       {/* Exercise Detail Modal - Final Optimized Version */}
       <Modal
@@ -1871,5 +1940,16 @@ const styles = StyleSheet.create({
   completedButtonText: {
     color: '#FFFFFF',
     fontWeight: 'bold',
+  },
+  initializationOverlay: {
+    ...StyleSheet.absoluteFillObject, // Cover the whole screen
+    backgroundColor: 'rgba(0, 0, 0, 0.7)', // Semi-transparent background
+    justifyContent: 'center',
+    alignItems: 'center',
+    zIndex: 9999, // Ensure it's on top
+  },
+  initializationText: {
+    marginTop: spacing.md,
+    color: colors.text.primary,
   },
 });

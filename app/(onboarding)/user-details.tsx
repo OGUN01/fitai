@@ -10,16 +10,16 @@ import {
   ImageBackground,
   Image,
   Animated,
-  Alert
+  Alert,
+  ActivityIndicator
 } from 'react-native';
 import { TextInput, Button, SegmentedButtons, useTheme, IconButton } from 'react-native-paper';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useForm, Controller } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
-import { userDetailsSchema } from '../../constants/validation';
+import { z } from 'zod';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { z } from 'zod';
 import { useProfile } from '../../contexts/ProfileContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -27,9 +27,27 @@ import StyledText from '../../components/ui/StyledText';
 import { colors, spacing, borderRadius, shadows } from '../../theme/theme';
 import MaterialCommunityIcons from 'react-native-vector-icons/MaterialCommunityIcons';
 import * as Haptics from 'expo-haptics';
+import { feetToCm, lbsToKg } from '../../utils/profileUtils';
+import { UserProfile } from '../../types/profile';
+import { ProgressBar } from '../../components/ProgressBar';
+import { convertHeight, convertWeight } from '../../utils/unitConversion';
 
 // Get screen dimensions for responsive sizing
 const { width, height } = Dimensions.get('window');
+
+// Modified schema to properly handle both string and number inputs for numeric fields
+const userDetailsSchema = z.object({
+  fullName: z.string().min(1, 'Full name is required'),
+  age: z.coerce.string().min(1, 'Age is required'),
+  height: z.coerce.string().min(1, 'Height is required'),
+  currentWeight: z.coerce.string().min(1, 'Current weight is required'),
+  targetWeight: z.coerce.string().min(1, 'Target weight is required'),
+  gender: z.enum(['male', 'female', 'non-binary', 'prefer-not-to-say']),
+  fitnessGoal: z.enum(['weight-loss', 'muscle-gain', 'improved-fitness']),
+  activityLevel: z.enum(['sedentary', 'lightly-active', 'moderately-active', 'very-active', 'extra-active']),
+  heightUnit: z.enum(['cm', 'ft']),
+  weightUnit: z.enum(['kg', 'lbs'])
+});
 
 type UserDetailsFormData = z.infer<typeof userDetailsSchema>;
 
@@ -38,6 +56,8 @@ export default function UserDetailsScreen() {
   const router = useRouter();
   const { updateProfile, profile } = useProfile();
   const { user } = useAuth();
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
   
   // Animation values
   const [animatedScale] = useState(new Animated.Value(0.95));
@@ -61,22 +81,19 @@ export default function UserDetailsScreen() {
     }).start();
   }, [params]);
   
-  const { control, handleSubmit, formState: { errors }, setValue, watch } = useForm<UserDetailsFormData>({
+  const { control, handleSubmit, setValue, watch, formState: { errors } } = useForm<UserDetailsFormData>({
     resolver: zodResolver(userDetailsSchema),
     defaultValues: {
-      fullName: profile?.full_name || '',
-      age: undefined,
+      fullName: '',
+      age: '',
+      height: '',
+      currentWeight: '',
+      targetWeight: '',
       gender: 'prefer-not-to-say',
-      // @ts-ignore - Property exists at runtime but not in TypeScript definition
-      height: profile?.height || undefined,
-      heightUnit: 'cm',
-      // @ts-ignore - Property exists at runtime but not in TypeScript definition
-      currentWeight: profile?.current_weight || undefined,
-      // @ts-ignore - Property exists at runtime but not in TypeScript definition
-      targetWeight: profile?.target_weight || undefined,
-      weightUnit: 'kg',
       fitnessGoal: 'improved-fitness',
       activityLevel: 'moderately-active',
+      heightUnit: 'cm',
+      weightUnit: 'kg'
     }
   });
 
@@ -85,18 +102,34 @@ export default function UserDetailsScreen() {
     if (profile) {
       console.log("Updating user details form with latest profile values");
       
-      // Extract values from profile with appropriate fallbacks
+      // Extract values from profile with appropriate fallbacks and type conversions
       const fullName = profile.full_name || '';
-      const age = profile.age || undefined;
-      // @ts-ignore - Property issues, but they exist at runtime
-      const height = profile.height_cm || profile.height || undefined;
-      // @ts-ignore - Property issues, but they exist at runtime
-      const currentWeight = profile.weight_kg || profile.current_weight || undefined;
-      // @ts-ignore - Property issues, but they exist at runtime
-      const targetWeight = profile.target_weight_kg || profile.target_weight || undefined;
+      
+      // Convert all numeric values to strings for the form fields
+      const age = profile.age !== undefined && profile.age !== null 
+        ? String(profile.age) 
+        : '';
+        
+      const height = profile.height_cm !== undefined && profile.height_cm !== null 
+        ? String(profile.height_cm) 
+        : (profile.body_analysis?.height_cm !== undefined && profile.body_analysis?.height_cm !== null 
+          ? String(profile.body_analysis.height_cm) 
+          : '');
+          
+      const currentWeight = profile.weight_kg !== undefined && profile.weight_kg !== null 
+        ? String(profile.weight_kg) 
+        : (profile.body_analysis?.weight_kg !== undefined && profile.body_analysis?.weight_kg !== null 
+          ? String(profile.body_analysis.weight_kg) 
+          : '');
+          
+      const targetWeight = profile.target_weight_kg !== undefined && profile.target_weight_kg !== null 
+        ? String(profile.target_weight_kg) 
+        : (profile.body_analysis?.target_weight_kg !== undefined && profile.body_analysis?.target_weight_kg !== null 
+          ? String(profile.body_analysis.target_weight_kg) 
+          : '');
+      
       const gender = profile.gender || 'prefer-not-to-say';
-      // @ts-ignore - Property exists at runtime but not in TypeScript definition
-      const fitnessGoal = profile.fitness_goal || 'improved-fitness';
+      const fitnessGoal = profile.weight_goal || 'improved-fitness';
       const activityLevel = profile.activity_level || 'moderately-active';
       
       // Log the values we're setting
@@ -111,12 +144,12 @@ export default function UserDetailsScreen() {
         activityLevel
       });
       
-      // Set form values
+      // Set form values with explicitly converted string values
       setValue('fullName', fullName);
-      if (age) setValue('age', age);
-      if (height) setValue('height', height);
-      if (currentWeight) setValue('currentWeight', currentWeight);
-      if (targetWeight) setValue('targetWeight', targetWeight);
+      setValue('age', age);
+      setValue('height', height);
+      setValue('currentWeight', currentWeight);
+      setValue('targetWeight', targetWeight);
       setValue('gender', gender as any);
       setValue('fitnessGoal', fitnessGoal as any);
       setValue('activityLevel', activityLevel as any);
@@ -133,80 +166,75 @@ export default function UserDetailsScreen() {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
   };
 
-  const onSubmit = (data: UserDetailsFormData) => {
-    console.log('Form submitted:', data);
-    
-    // Convert height from feet to cm if needed
-    let heightInCm = data.height;
-    let originalHeight = data.height;
-    let heightUnit = data.heightUnit;
-    if (data.heightUnit === 'ft') {
-      // Convert feet to cm (1 foot = 30.48 cm)
-      heightInCm = data.height * 30.48;
-    }
-    
-    // Convert weight from lb to kg if needed
-    let weightInKg = data.currentWeight;
-    let originalWeight = data.currentWeight;
-    let targetWeightInKg = data.targetWeight;
-    let originalTargetWeight = data.targetWeight;
-    let weightUnit = data.weightUnit;
-    if (data.weightUnit === 'lbs') {
-      // Convert pounds to kg (1 lb = 0.45359237 kg)
-      weightInKg = data.currentWeight * 0.45359237;
-      targetWeightInKg = data.targetWeight * 0.45359237;
-    }
-    
-    // Transform the form data to match the profile database schema
-    const profileData = {
-      // Basic profile information
-      full_name: data.fullName,
-      age: data.age,
-      gender: data.gender,
+  const onSubmit = async (data: UserDetailsFormData) => {
+    try {
+      setLoading(true);
+      setError('');
       
-      // Always store standardized metric values in the primary columns
-      height_cm: heightInCm,      // Store in cm for consistency
-      weight_kg: weightInKg,      // Store in kg for consistency
-      target_weight_kg: targetWeightInKg, // Store in kg for consistency
-      
-      // Store units and other details in the body_analysis JSONB column
-      body_analysis: {
-        // Include values in both original and converted formats
-        original_height: originalHeight,
-        original_weight: originalWeight,
-        original_target_weight: originalTargetWeight,
+      console.log("Form data before processing:", data);
+
+      // Ensure values are treated as numbers during conversion
+      // If parsing fails, default to 0 to prevent NaN
+      const ageValue = parseInt(data.age, 10) || 0;
+      const heightValue = parseFloat(data.height) || 0;
+      const currentWeightValue = parseFloat(data.currentWeight) || 0;
+      const targetWeightValue = parseFloat(data.targetWeight) || 0;
+
+      // Convert string measurements to numbers with proper unit conversion
+      const heightInCm = data.heightUnit === 'ft' 
+        ? feetToCm(heightValue) 
+        : heightValue;
+        
+      const weightInKg = data.weightUnit === 'lbs' 
+        ? lbsToKg(currentWeightValue) 
+        : currentWeightValue;
+        
+      const targetWeightInKg = data.weightUnit === 'lbs' 
+        ? lbsToKg(targetWeightValue) 
+        : targetWeightValue;
+
+      // Map form data to profile data with proper type conversions
+      const profileData = {
+        full_name: data.fullName,
+        age: ageValue,
+        gender: data.gender,
         height_cm: heightInCm,
         weight_kg: weightInKg,
         target_weight_kg: targetWeightInKg,
-        height_unit: heightUnit,
-        weight_unit: weightUnit
-      } as any, // Use type assertion to bypass TypeScript check since Supabase will accept this JSON
+        activity_level: data.activityLevel,
+        weight_goal: data.fitnessGoal,
+        current_onboarding_step: 'diet-preferences',
+        // Also store in body_analysis for backward compatibility
+        body_analysis: {
+          ...(profile?.body_analysis || {}),
+          height_cm: heightInCm,
+          weight_kg: weightInKg,
+          target_weight_kg: targetWeightInKg
+        }
+      };
       
-      // Fitness goals - use the columns that actually exist in the database
-      weight_goal: data.fitnessGoal, // This is the correct column in the database
-      fitness_goals: [data.fitnessGoal], // This is also a valid column as array type
+      console.log("Processed profile data to save:", profileData);
+
+      // Update profile and wait for it to complete
+      await updateProfile(profileData);
       
-      // Activity level - stored as a direct column
-      activity_level: data.activityLevel,
-      
-      // Track onboarding progress
-      current_onboarding_step: 'diet-preferences'
-    };
-    
-    try {
-      // Update the profile context with the properly mapped data
-      updateProfile(profileData);
+      // Small delay to ensure state is updated
+      await new Promise(resolve => setTimeout(resolve, 100));
       
       // Navigate based on return param or to the next screen
       if (params?.returnToReview === 'true') {
         console.log("Returning to review page as requested");
-        router.push('/review');
+        await router.push('/review');
       } else {
-        router.push('/diet-preferences');
+        await router.push('/diet-preferences');
       }
     } catch (error) {
       console.error('Error updating profile:', error);
+      setError('Failed to update your profile. Please try again.');
       Alert.alert('Error', 'Failed to update your profile. Please try again.');
+    } finally {
+      // Only reset loading state after everything is complete
+      setLoading(false);
     }
   };
 
@@ -236,8 +264,8 @@ export default function UserDetailsScreen() {
       icon: 'run' 
     },
     { 
-      value: 'extremely-active', 
-      title: 'Extremely Active', 
+      value: 'extra-active', 
+      title: 'Extra Active', 
       description: 'Very hard exercise & physical job',
       icon: 'weight-lifter' 
     },
@@ -454,7 +482,7 @@ export default function UserDetailsScreen() {
                               style={styles.measurementInput}
                               mode="outlined"
                               placeholder={heightUnit === 'cm' ? '175' : '5.9'}
-                              value={value ? value.toString() : ''}
+                              value={value ? String(value) : ''}
                               onChangeText={(text) => onChange(parseFloat(text) || '')}
                               onBlur={onBlur}
                               keyboardType="numeric"
@@ -503,10 +531,10 @@ export default function UserDetailsScreen() {
                       )}
                     </View>
 
-                    {/* Current Weight */}
+                    {/* Weight */}
                     <View style={styles.inputContainer}>
                       <StyledText variant="bodyLarge" color={colors.text.primary} style={styles.inputLabel}>
-                        Current Weight
+                        Weight
                       </StyledText>
                       <View style={styles.measurementContainer}>
                         <Controller
@@ -517,7 +545,7 @@ export default function UserDetailsScreen() {
                               style={styles.measurementInput}
                               mode="outlined"
                               placeholder={weightUnit === 'kg' ? '70' : '154'}
-                              value={value ? value.toString() : ''}
+                              value={value ? String(value) : ''}
                               onChangeText={(text) => onChange(parseFloat(text) || '')}
                               onBlur={onBlur}
                               keyboardType="numeric"
@@ -545,7 +573,7 @@ export default function UserDetailsScreen() {
                               onValueChange={onChange}
                               buttons={[
                                 { value: 'kg', label: 'kg' },
-                                { value: 'lb', label: 'lb' },
+                                { value: 'lbs', label: 'lbs' },
                               ]}
                               style={styles.unitSelector}
                               theme={{ 
@@ -580,7 +608,7 @@ export default function UserDetailsScreen() {
                               style={styles.measurementInput}
                               mode="outlined"
                               placeholder={weightUnit === 'kg' ? '65' : '143'}
-                              value={value ? value.toString() : ''}
+                              value={value ? String(value) : ''}
                               onChangeText={(text) => onChange(parseFloat(text) || '')}
                               onBlur={onBlur}
                               keyboardType="numeric"
@@ -608,7 +636,7 @@ export default function UserDetailsScreen() {
                               onValueChange={onChange}
                               buttons={[
                                 { value: 'kg', label: 'kg' },
-                                { value: 'lb', label: 'lb' },
+                                { value: 'lbs', label: 'lbs' },
                               ]}
                               style={styles.unitSelector}
                               theme={{ 
@@ -736,6 +764,7 @@ export default function UserDetailsScreen() {
                       onPress={handleSubmit(onSubmit)}
                       activeOpacity={0.8}
                       style={styles.submitButtonContainer}
+                      disabled={loading}
                     >
                       <LinearGradient
                         colors={[colors.primary.main, colors.secondary.main]}
@@ -743,15 +772,21 @@ export default function UserDetailsScreen() {
                         end={{ x: 1, y: 0 }}
                         style={styles.submitButton}
                       >
-                        <StyledText variant="bodyLarge" color="white" style={styles.buttonLabel}>
-                          Save and Continue
-                        </StyledText>
-                        <MaterialCommunityIcons 
-                          name="arrow-right" 
-                          size={20} 
-                          color="white" 
-                          style={styles.buttonIcon}
-                        />
+                        {loading ? (
+                          <ActivityIndicator color="white" size="small" />
+                        ) : (
+                          <>
+                            <StyledText variant="bodyLarge" color="white" style={styles.buttonLabel}>
+                              Save and Continue
+                            </StyledText>
+                            <MaterialCommunityIcons 
+                              name="arrow-right" 
+                              size={20} 
+                              color="white" 
+                              style={styles.buttonIcon}
+                            />
+                          </>
+                        )}
                       </LinearGradient>
                     </TouchableOpacity>
                   </View>
@@ -1023,14 +1058,17 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: 'white',
   },
-  submitButton: {
+  submitButtonContainer: {
     marginTop: spacing.xl,
     borderRadius: borderRadius.lg,
     height: 56,
     ...shadows.medium,
   },
-  submitButtonContainer: {
-    paddingHorizontal: spacing.md,
+  submitButton: {
+    flex: 1,
+    borderRadius: borderRadius.lg,
+    alignItems: 'center',
+    justifyContent: 'center',
   },
   buttonLabel: {
     fontSize: 16,

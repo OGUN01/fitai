@@ -1,10 +1,10 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { View, StyleSheet, TouchableOpacity } from 'react-native';
 import { Card, Text, Divider, Button, useTheme } from 'react-native-paper';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { LinearGradient } from 'expo-linear-gradient';
 import { BodyAnalysis } from '../../types/profile';
-import { router } from 'expo-router';
+import { router, usePathname } from 'expo-router';
 import StyledText from '../ui/StyledText';
 import { colors, spacing, borderRadius, shadows } from '../../theme/theme';
 
@@ -18,14 +18,42 @@ interface BodyAnalysisCardProps {
  */
 export default function BodyAnalysisCard({ bodyAnalysis, showFullDetails = false }: BodyAnalysisCardProps) {
   const theme = useTheme();
+  const pathname = usePathname();
+  
+  // Check if we're on the body details page to hide the button
+  const isOnDetailsPage = pathname?.includes('body-details');
+  
+  // Debug log the analysis data and current path
+  useEffect(() => {
+    console.log('BodyAnalysisCard received data:', JSON.stringify(bodyAnalysis || {}, null, 2));
+    console.log('Current pathname:', pathname);
+  }, [bodyAnalysis, pathname]);
 
   // Helper function to get the correct value with units
   const getValueWithUnit = (value: number | undefined, unit: string, defaultText: string = 'Not provided') => {
     return value ? `${value} ${unit}` : defaultText;
   };
 
-  // If no body analysis data exists
-  if (!bodyAnalysis) {
+  // Check if body analysis data is actually complete
+  const isBodyAnalysisComplete = () => {
+    if (!bodyAnalysis) return false;
+    
+    // Check if essential properties exist and are not just default values
+    // We need at least body_fat_percentage or a complete analysis_text to consider it complete
+    const hasRequiredData = 
+      (bodyAnalysis.body_fat_percentage || (bodyAnalysis as any).bodyFatEstimate) && 
+      (bodyAnalysis.body_type || (bodyAnalysis as any).bodyType);
+    
+    // Check if the data is legitimate or just defaults
+    const height = bodyAnalysis.height_cm || (bodyAnalysis as any).height;
+    const weight = bodyAnalysis.weight_kg || (bodyAnalysis as any).weight;
+    
+    // Need both height and weight PLUS at least one more measurement
+    return !!height && !!weight && hasRequiredData;
+  };
+
+  // If no body analysis data exists or it's incomplete
+  if (!isBodyAnalysisComplete()) {
     return (
       <View style={styles.card}>
         <View style={styles.cardHeader}>
@@ -35,9 +63,18 @@ export default function BodyAnalysisCard({ bodyAnalysis, showFullDetails = false
           </StyledText>
         </View>
         
-        <StyledText variant="bodyMedium" color={colors.text.secondary} style={styles.noDataText}>
-          No body analysis data available. Complete the body analysis during onboarding to see your results here.
-        </StyledText>
+        <LinearGradient
+          colors={[colors.surface.light, colors.surface.dark]}
+          start={{ x: 0, y: 0 }}
+          end={{ x: 1, y: 0 }}
+          style={styles.emptyDataContainer}
+        >
+          <MaterialCommunityIcons name="scale-bathroom" size={48} color={colors.primary.light} style={styles.emptyIcon} />
+          
+          <StyledText variant="bodyMedium" color={colors.text.secondary} style={styles.noDataText}>
+            Complete your body analysis to get personalized fitness insights and track your progress.
+          </StyledText>
+        </LinearGradient>
         
         <TouchableOpacity 
           style={styles.buttonContainer}
@@ -58,14 +95,15 @@ export default function BodyAnalysisCard({ bodyAnalysis, showFullDetails = false
     );
   }
 
-  // Extract relevant body data
-  const height = bodyAnalysis.height_cm || bodyAnalysis.height || 173;
-  const weight = bodyAnalysis.weight_kg || bodyAnalysis.weight || 85;
-  const bodyFat = bodyAnalysis.body_fat_percentage || 28;
-  const bodyType = bodyAnalysis.body_type || bodyAnalysis.bodyType || 'Endomorph with mesomorph tendencies';
+  // Extract relevant body data - check both camelCase and snake_case properties
+  // But DON'T use hard-coded fallbacks anymore
+  const height = bodyAnalysis.height_cm || (bodyAnalysis as any).height;
+  const weight = bodyAnalysis.weight_kg || (bodyAnalysis as any).weight;
+  const bodyFat = bodyAnalysis.body_fat_percentage || (bodyAnalysis as any).bodyFatEstimate;
+  const bodyType = bodyAnalysis.body_type || (bodyAnalysis as any).bodyType || 'Not specified';
   
-  // Get the analysis text if available
-  const analysisText = bodyAnalysis.analysis_text || bodyAnalysis.analysisText;
+  // Get the analysis text if available - check both formats
+  const analysisText = bodyAnalysis.analysis_text || (bodyAnalysis as any).analysisText;
 
   return (
     <View style={styles.card}>
@@ -147,7 +185,8 @@ export default function BodyAnalysisCard({ bodyAnalysis, showFullDetails = false
         </LinearGradient>
       )}
       
-      {!showFullDetails && (
+      {/* Only show View Full Details button if not already on the details page */}
+      {!showFullDetails && !isOnDetailsPage && (
         <View style={styles.viewDetailsButtonWrapper}>
           <TouchableOpacity 
             style={styles.buttonContainer}
@@ -191,6 +230,18 @@ const styles = StyleSheet.create({
   noDataText: {
     textAlign: 'center',
     marginVertical: spacing.md,
+    color: colors.text.secondary,
+    paddingHorizontal: spacing.md,
+  },
+  emptyDataContainer: {
+    padding: spacing.lg,
+    borderRadius: borderRadius.md,
+    marginBottom: spacing.md,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  emptyIcon: {
+    marginBottom: spacing.md,
   },
   buttonContainer: {
     borderRadius: borderRadius.md,
@@ -243,34 +294,21 @@ const styles = StyleSheet.create({
   },
   viewDetailsButtonWrapper: {
     marginTop: spacing.md,
-    marginBottom: spacing.md,
   },
   analysisSection: {
     padding: spacing.md,
     borderRadius: borderRadius.md,
-    marginVertical: spacing.md,
-    borderLeftWidth: 4,
-    borderLeftColor: colors.primary.main,
+    marginBottom: spacing.md,
   },
   analysisTitleRow: {
     flexDirection: 'row',
     alignItems: 'center',
-    marginBottom: spacing.lg,
+    marginBottom: spacing.sm,
   },
   analysisTextContainer: {
-    paddingHorizontal: spacing.md,
+    marginTop: spacing.xs,
   },
   analysisText: {
-    lineHeight: 26,
-    textAlign: 'left',
-    letterSpacing: 0.5,
-    color: colors.text.primary,
-    fontSize: 15,
-  },
-  quoteIcon: {
-    display: 'none',
-  },
-  endQuote: {
-    display: 'none',
-  },
+    lineHeight: 20,
+  }
 });

@@ -439,6 +439,7 @@ export default function DietPreferencesScreen() {
   const onSubmit = async (data: DietPreferencesFormData) => {
     try {
       setSubmitting(true);
+      console.log("Starting diet preferences form submission");
       
       // Log the country region value
       console.log("Country region value:", data.country_region);
@@ -483,12 +484,14 @@ export default function DietPreferencesScreen() {
         current_onboarding_step: 'body-analysis'
       };
       
+      console.log("About to update profile with diet preferences");
       console.log("FULL PROFILE UPDATE:", profileToUpdate);
       console.log("COUNTRY_REGION in root:", profileToUpdate.country_region);
       console.log("COUNTRY_REGION in diet_preferences:", profileToUpdate.diet_preferences.country_region);
       
       // Update the profile with the combined data
       await updateProfile(profileToUpdate);
+      console.log("Profile successfully updated with diet preferences");
       
       // Check if we should return to the review page or continue to the next step
       const isReturningToReview = params?.returnToReview === 'true';
@@ -501,6 +504,7 @@ export default function DietPreferencesScreen() {
       }
     } catch (error) {
       console.error('Error submitting diet preferences:', error);
+      Alert.alert('Error', 'There was a problem saving your diet preferences. Please try again.');
     } finally {
       setSubmitting(false);
     }

@@ -23,9 +23,9 @@ const tabConfig = {
 
 // Define quick actions for the FAB
 const fabActions = [
-  { icon: 'stats-chart-outline' as IconName, label: 'Progress', action: () => router.push('/progress') },
-  { icon: 'barbell-outline' as IconName, label: 'Log Workout', action: () => router.push('/workout') },
-  { icon: 'restaurant-outline' as IconName, label: 'Log Meal', action: () => router.push('/nutrition') },
+  { icon: 'stats-chart-outline' as IconName, label: 'Progress', action: () => router.push('/(tabs)/progress') },
+  { icon: 'barbell-outline' as IconName, label: 'Log Workout', action: () => router.push('/(tabs)/workout') },
+  { icon: 'restaurant-outline' as IconName, label: 'Log Meal', action: () => router.push('/(tabs)/nutrition') },
   { icon: 'camera-outline' as IconName, label: 'Body Analysis', action: () => router.push('/(tabs)/progress/body-details') },
 ];
 
@@ -283,7 +283,7 @@ const CustomTabBar = ({ state, descriptors, navigation }: BottomTabBarProps) => 
             {/* Home Tab */}
             <TouchableOpacity 
               style={styles.tab}
-              onPress={() => router.push('/home')}
+              onPress={() => router.push('/(tabs)/home')}
             >
               <Ionicons 
                 name={state.routes.some(r => r.name === 'home' && state.routes.indexOf(r) === state.index) ? 'home' : 'home-outline'} 
@@ -298,7 +298,7 @@ const CustomTabBar = ({ state, descriptors, navigation }: BottomTabBarProps) => 
             {/* Workout Tab */}
             <TouchableOpacity 
               style={styles.tab}
-              onPress={() => router.push('/workout')}
+              onPress={() => router.push('/(tabs)/workout')}
             >
               <Ionicons 
                 name={state.routes.some(r => r.name === 'workout' && state.routes.indexOf(r) === state.index) ? 'fitness' : 'fitness-outline'} 
@@ -316,7 +316,7 @@ const CustomTabBar = ({ state, descriptors, navigation }: BottomTabBarProps) => 
             {/* Diet Tab */}
             <TouchableOpacity 
               style={styles.tab}
-              onPress={() => router.push('/nutrition')}
+              onPress={() => router.push('/(tabs)/nutrition')}
             >
               <Ionicons 
                 name={state.routes.some(r => r.name === 'nutrition' && state.routes.indexOf(r) === state.index) ? 'restaurant' : 'restaurant-outline'} 
@@ -331,7 +331,7 @@ const CustomTabBar = ({ state, descriptors, navigation }: BottomTabBarProps) => 
             {/* Profile Tab */}
             <TouchableOpacity 
               style={styles.tab}
-              onPress={() => router.push('/profile')}
+              onPress={() => router.push('/(tabs)/profile')}
             >
               <Ionicons 
                 name={state.routes.some(r => r.name === 'profile' && state.routes.indexOf(r) === state.index) ? 'person' : 'person-outline'} 
