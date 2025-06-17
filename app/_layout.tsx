@@ -31,6 +31,8 @@ import persistenceAdapter from '../utils/persistenceAdapter';
 import { isOnboardingComplete, repairOnboardingStatus } from '../utils/onboardingStatusChecker';
 import useStorageInitialization from '../utils/storageInitializer';
 import { initializeOfflineQueue } from '../utils/offlineQueue'; // Added for offline queue
+import { SkiaProvider } from '../contexts/SkiaContext'; // Import SkiaProvider
+import SkiaContextInitializer from '../components/utility/SkiaContextInitializer'; // Import the new initializer
 
 // Import initialization to ensure notifications are set up
 import '../services/notifications/init';
@@ -194,7 +196,22 @@ function NavigationGuard({ children }: { children: React.ReactNode }) {
             } else if (profile.current_onboarding_step === 'review') {
               // Fixed: Allow viewing the review screen first instead of skipping directly to completed
               console.log("Current step is review, ensuring user sees the review screen");
-              
+
+              // Check if user is on an edit screen (workout-preferences, diet-preferences, etc.)
+              const isOnEditScreen = segments.length > 1 && (
+                segments[1] === 'workout-preferences' ||
+                segments[1] === 'diet-preferences' ||
+                segments[1] === 'body-analysis' ||
+                segments[1] === 'user-details'
+              );
+
+              // Don't redirect if user is on an edit screen - let them complete their edits
+              if (isOnEditScreen) {
+                console.log("User is on edit screen, allowing them to stay");
+                setIsNavigating(false);
+                return;
+              }
+
               // If we're not already on the review screen AND not on the completed screen, go to review
               if (segments.length > 1 && segments[1] !== 'review' && segments[1] !== 'completed') {
                 await router.replace('/(onboarding)/review');
@@ -273,7 +290,22 @@ function NavigationGuard({ children }: { children: React.ReactNode }) {
             if (profile.current_onboarding_step === 'review') {
               // Fixed: Allow viewing the review screen first instead of skipping to completed
               console.log("Current step is review, ensuring authenticated user sees the review screen");
-              
+
+              // Check if user is on an edit screen (workout-preferences, diet-preferences, etc.)
+              const isOnEditScreen = segments.length > 1 && (
+                segments[1] === 'workout-preferences' ||
+                segments[1] === 'diet-preferences' ||
+                segments[1] === 'body-analysis' ||
+                segments[1] === 'user-details'
+              );
+
+              // Don't redirect if user is on an edit screen - let them complete their edits
+              if (isOnEditScreen) {
+                console.log("Authenticated user is on edit screen, allowing them to stay");
+                setIsNavigating(false);
+                return;
+              }
+
               // If we're not already on the review screen AND not on the completed screen, go to review
               if (segments.length > 1 && segments[1] !== 'review' && segments[1] !== 'completed') {
                 await router.replace('/(onboarding)/review');
@@ -317,7 +349,12 @@ function NavigationGuard({ children }: { children: React.ReactNode }) {
       }
     };
     
-    handleNavigation();
+    // Debounce navigation to prevent rapid route changes
+    const navigationTimeout = setTimeout(() => {
+      handleNavigation();
+    }, 300);
+
+    return () => clearTimeout(navigationTimeout);
   }, [user, profile, segments, authLoading, profileLoading, router, isNavigating, initialCheckComplete]);
 
   return <>{children}</>;
@@ -335,184 +372,110 @@ function AppLoadingFallback() {
 // Define RootStackParamList type
 type RootStackParamList = AppRoutes;
 
+// Root layout combining all providers and navigation logic
 export default function RootLayout() {
-  const colorScheme = useColorScheme();
   const [appIsReady, setAppIsReady] = useState(false);
-  const [loaded, error] = useFonts({
-    ...FontAwesome.font,
-  });
-  
-  // Initialize storage system - this ensures data persists across session restarts
-  const isStorageInitialized = useStorageInitialization();
+  const [initialRouteChecked, setInitialRouteChecked] = useState(false);
+  const [fontsLoaded, setFontsLoaded] = useState(false);
+  const navigationRef = useRef<NavigationContainerRef<RootStackParamList>>(null);
+  const colorScheme = useColorScheme();
 
-  // Use to persist navigation state
-  const [initialNavigationState, setInitialNavigationState] = useState<InitialState | undefined>(
-    undefined
-  );
-  const navigationRef = useRef<NavigationContainerRef<RootStackParamList>>();
-  
-  // Initialize notification service when app starts
+  // Initialize offline queue on app start
   useEffect(() => {
-    async function initializeNotifications() {
-      try {
-        await NotificationService.setupNotifications();
-        console.log('Notification service initialized');
-      } catch (error) {
-        console.error('Failed to initialize notification service:', error);
-      }
-    }
-    
-    initializeNotifications();
-
-    // Initialize offline queue
-    const unsubscribeOfflineQueue = initializeOfflineQueue();
-
-    return () => {
-      // Cleanup listeners
-      if (unsubscribeOfflineQueue) {
-        unsubscribeOfflineQueue();
-      }
-    };
+    initializeOfflineQueue();
   }, []);
 
+  // Initialize custom storage solution
+  useStorageInitialization();
+
+  // Note: Notification initialization is handled by services/notifications/init.ts
+  // which is imported at the top of this file and runs automatically
+
+  // Initialize app resources
   useEffect(() => {
     async function prepare() {
       try {
-        console.log('Loading app resources...');
-        
-        // Pre-load fonts with timeout handling
+        console.log('Starting app initialization...');
+
+        // Load fonts
         await cacheFonts();
-        
-        // Add any other asset loading here
-        // For example: images, audio files, etc.
-        
-        console.log('Resources loaded successfully');
-      } catch (e) {
-        // Log any errors during initialization but proceed with app launch
-        console.warn('Error loading resources:', e);
-      } finally {
-        // Mark app as ready and hide splash screen
+        setFontsLoaded(true);
+
+        // Notifications are automatically initialized by services/notifications/init.ts
+
+        console.log('App initialization complete');
         setAppIsReady(true);
-        await SplashScreen.hideAsync().catch(error => 
-          console.warn('Error hiding splash screen:', error)
-        );
+      } catch (e) {
+        console.warn('App initialization error:', e);
+        // Continue with app launch even if some initialization fails
+        setAppIsReady(true);
+      } finally {
+        // Hide splash screen
+        await SplashScreen.hideAsync();
       }
     }
 
     prepare();
   }, []);
 
-  // Prevent the splash screen from auto-hiding
-  useEffect(() => {
-    if (error) throw error;
-  }, [error]);
-
-  useEffect(() => {
-    if (loaded) {
-      SplashScreen.hideAsync();
-    }
-  }, [loaded]);
-
-  // Initialization for the app (before the Stack is rendered)
-  useEffect(() => {
-    // Clean up any stale API rate limit flags
-    resetApiRateLimitFlags();
-  }, []);
-
-  // Reset any stale API rate limit flags
-  const resetApiRateLimitFlags = async () => {
-    try {
-      // Always clear meal plan generation progress flag on app start
-      await AsyncStorage.setItem('meal_plan_generation_in_progress', 'false');
-      await AsyncStorage.removeItem('mealplan_loading_lock');
-      await AsyncStorage.removeItem('mealplan_loading_timestamp');
-      
-      // Check for rate limit flags
-      const rateLimitTimestamp = await AsyncStorage.getItem('meal_plan_rate_limit_timestamp');
-      if (rateLimitTimestamp) {
-        const timestamp = parseInt(rateLimitTimestamp);
-        // If the rate limit was set more than 2 hours ago, clear it
-        if (Date.now() - timestamp > 2 * 60 * 60 * 1000) {
-          console.log("Clearing stale API rate limit flags");
-          await AsyncStorage.setItem('skipApiCalls', 'false');
-          await AsyncStorage.setItem('meal_plan_rate_limited', 'false');
-        } else {
-          // If rate limit is less than 2 hours old, make sure we know about it
-          console.log("API rate limit detected (still active), will use fallback plans");
-          await AsyncStorage.setItem('skipApiCalls', 'true');
-          await AsyncStorage.setItem('meal_plan_rate_limited', 'true');
-        }
-      }
-    } catch (error) {
-      console.error("Error resetting API rate limit flags:", error);
-    }
-  };
-
-  // <<< START AsyncStorage Persistence Test >>>
-  useEffect(() => {
-    const testPersistence = async () => {
-      const key = 'fitai_core_persist_test'; // Unique key
-      console.log(`[PERSIST TEST] Checking key: ${key}`);
-      try {
-        const storedValue = await AsyncStorage.getItem(key);
-        console.log(`[PERSIST TEST] Value on start/reload: ${storedValue}`);
-        
-        if (!storedValue) {
-          const newValue = `TestValue_${Date.now()}`;
-          console.log(`[PERSIST TEST] Value not found. Writing new value: ${newValue}`);
-          await AsyncStorage.setItem(key, newValue);
-          const writtenValue = await AsyncStorage.getItem(key);
-          console.log(`[PERSIST TEST] Verified write, read back: ${writtenValue}`);
-        } else {
-          console.log('[PERSIST TEST] Value found from previous session/reload.');
-        }
-      } catch (error) {
-        console.error('[PERSIST TEST] Error during test:', error);
-      }
-    };
-    
-    // Run the test shortly after mount to allow initial render
-    const timerId = setTimeout(testPersistence, 100);
-    
-    return () => clearTimeout(timerId); // Cleanup timer
-  }, []);
-  // <<< END AsyncStorage Persistence Test >>>
-
-  // Show loading indicator while app is preparing or storage is initializing
-  if (!appIsReady || !isStorageInitialized) {
+  // If the app is not ready (fonts not loaded, initial route not checked), show a fallback or splash screen
+  if (!appIsReady) {
     return <AppLoadingFallback />;
   }
 
   return (
-    <GestureHandlerRootView style={{ flex: 1 }}>
-      <AuthProvider>
-        <ProfileProvider>
-          <StreakProvider>
-            <NotificationProvider>
-              <SafeAreaProvider>
-                <NavigationGuard>
-                  <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-                    <PaperProvider theme={lightTheme}>
-                      <StatusBar translucent />
-                      <Stack screenOptions={{ headerShown: false, animation: 'fade' }}>
-                        <Stack.Screen name="(auth)" options={{ headerShown: false }} />
-                        <Stack.Screen name="(onboarding)" options={{ headerShown: false }} />
-                        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-                        <Stack.Screen name="(dev)" options={{ headerShown: false }} />
-                        <Stack.Screen name="(settings)" options={{ headerShown: false }} />
-                        <Stack.Screen name="(modal)" options={{ presentation: 'modal', headerShown: false }} />
-                      </Stack>
+    <SkiaProvider>
+      <SkiaContextInitializer />
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <SafeAreaProvider>
+          <PaperProvider theme={lightTheme}>
+            <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+              <NotificationProvider>
+                <AuthProvider> { /* AuthProvider is already here, good */ }
+                  <ProfileProvider>
+                    <StreakProvider>
+                      <NavigationGuard>
+                        <Stack 
+                          screenOptions={{
+                            headerShown: false,
+                            animation: 'slide_from_right',
+                            gestureEnabled: true,
+                          }}
+                        >
+                          <Stack.Screen name="index" redirect={true} />
+                          <Stack.Screen name="(tabs)" />
+                          <Stack.Screen name="(auth)" />
+                          <Stack.Screen name="(onboarding)" />
+                          <Stack.Screen name="(settings)" />
+                           {/* Development/Testing Routes */}
+                          <Stack.Screen name="(dev)/test-onboarding" />
+                          <Stack.Screen name="(dev)/test-notifications" />
+                          <Stack.Screen name="(dev)/test-modal" />
+                          <Stack.Screen name="(dev)/test-camera" />
+                          <Stack.Screen name="(dev)/test-image-picker" />
+                          <Stack.Screen name="(dev)/test-sync" />
+                          <Stack.Screen name="(dev)/test-skia" />
+                          {/* Add other modal routes here if necessary */}
+                          <Stack.Screen name="modal/cameraModal" options={{ presentation: 'modal' }} />
+                          <Stack.Screen name="modal/imagePickerModal" options={{ presentation: 'modal' }} />
+                          <Stack.Screen name="modal/confirmationModal" options={{ presentation: 'modal' }} />
+                          <Stack.Screen name="modal/notificationSettingsModal" options={{ presentation: 'modal'}}/>
+                          <Stack.Screen name="modal/feedbackModal" options={{ presentation: 'modal' }} />
+                          <Stack.Screen name="modal/errorModal" options={{ presentation: 'modal' }} />
+                          <Stack.Screen name="modal/premiumUpsellModal" options={{ presentation: 'modal' }} />
+                        </Stack>
+                      </NavigationGuard>
                       <WorkoutCompletionHandler />
                       <MealCompletionHandler />
                       <SyncStatusIndicator />
-                    </PaperProvider>
-                  </ThemeProvider>
-                </NavigationGuard>
-              </SafeAreaProvider>
-            </NotificationProvider>
-          </StreakProvider>
-        </ProfileProvider>
-      </AuthProvider>
-    </GestureHandlerRootView>
+                    </StreakProvider>
+                  </ProfileProvider>
+                </AuthProvider>
+              </NotificationProvider>
+            </ThemeProvider>
+          </PaperProvider>
+        </SafeAreaProvider>
+      </GestureHandlerRootView>
+    </SkiaProvider>
   );
 }

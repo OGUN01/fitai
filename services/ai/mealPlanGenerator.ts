@@ -10,7 +10,7 @@ import { promptManager } from './promptManager';
 import { API_TIMEOUTS } from '../../constants/api';
 import { parseJsonFromLLM } from './jsonUtils';
 
-// Type definitions
+// Type definitions - ENHANCED with all onboarding parameters
 export interface UserDietPreferences {
   dietType: 'vegetarian' | 'vegan' | 'non-vegetarian' | 'pescatarian' | 'flexitarian';
   dietPlanPreference: 'balanced' | 'high-protein' | 'low-carb' | 'keto' | 'mediterranean';
@@ -19,17 +19,31 @@ export interface UserDietPreferences {
   countryRegion: string;
   fitnessGoal?: 'weight loss' | 'muscle gain' | 'improved fitness' | 'maintenance';
   calorieTarget?: number;
+
   // Additional preferences
   restrictions?: string[];
   excludedFoods?: string[];
-  // Make these optional since we won't pass them to the AI
-  preferredMealTimes?: string[];
+  favoriteFoods?: string[];
+
+  // MISSING CRITICAL PARAMETERS - NOW ADDED:
+  // Meal timing preferences from onboarding
+  preferredMealTimes?: string[] | any[];
+
+  // Water intake goal from onboarding
   waterIntakeGoal?: number;
-  // Demographic data
+
+  // Demographic data for personalized nutrition
   age?: number;
   gender?: string;
   weight?: number;
   height?: number;
+
+  // Activity and weight goals affect nutritional needs
+  activityLevel?: string;
+  weightGoal?: string;
+  currentWeight?: number;
+  targetWeight?: number;
+  bodyFatPercentage?: number;
 }
 
 export interface MealIngredient {
@@ -95,7 +109,7 @@ export class MealPlanGenerator {
    * Generate a personalized meal plan for a user
    */
   async generateMealPlan(preferences: UserDietPreferences): Promise<MealPlan | FallbackMealPlan> {
-    // Prepare prompt parameters from user preferences
+    // Prepare prompt parameters from user preferences - ENHANCED with all parameters
     const promptParams = {
       dietType: preferences.dietType,
       dietPlanPreference: preferences.dietPlanPreference,
@@ -104,11 +118,39 @@ export class MealPlanGenerator {
       region: preferences.countryRegion,
       fitnessGoal: preferences.fitnessGoal || 'balanced nutrition',
       calorieTarget: preferences.calorieTarget || 'appropriate for goals',
-      // Add demographic information for more personalized meal plans
+
+      // Demographics for personalized nutrition
       age: preferences.age || 'Not specified',
       gender: preferences.gender || 'Not specified',
       weight: preferences.weight || 'Not specified',
-      height: preferences.height || 'Not specified'
+      height: preferences.height || 'Not specified',
+
+      // MISSING CRITICAL PARAMETERS - NOW INCLUDED:
+      // Dietary restrictions and preferences
+      restrictions: preferences.restrictions?.join(', ') || 'None',
+      excludedFoods: preferences.excludedFoods?.join(', ') || 'None',
+      favoriteFoods: preferences.favoriteFoods?.join(', ') || 'None',
+
+      // Meal timing preferences for scheduling
+      preferredMealTimes: Array.isArray(preferences.preferredMealTimes)
+        ? preferences.preferredMealTimes.map(time =>
+            typeof time === 'string' ? time : `${time.name}: ${time.time}`
+          ).join(', ')
+        : 'Standard meal times',
+
+      // Water intake goal for hydration planning
+      waterIntakeGoal: preferences.waterIntakeGoal || '2000ml',
+
+      // Activity level affects caloric and macro needs
+      activityLevel: preferences.activityLevel || 'Moderate',
+
+      // Weight goals affect meal planning approach
+      weightGoal: preferences.weightGoal || 'Maintenance',
+      currentWeight: preferences.currentWeight || 'Not specified',
+      targetWeight: preferences.targetWeight || 'Not specified',
+
+      // Body composition for advanced nutrition planning
+      bodyFatPercentage: preferences.bodyFatPercentage || 'Not specified'
     };
     
     // Get the formatted prompt with parameters

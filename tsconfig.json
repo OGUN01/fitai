@@ -10,7 +10,16 @@
     "module": "esnext",
     "moduleResolution": "node",
     "isolatedModules": true,
-    "noEmit": true
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "victory-native": [
+        "node_modules/victory-native/dist/index.d.ts"
+      ],
+      "victory-native/*": [
+        "node_modules/victory-native/dist/*"
+      ]
+    }
   },
   "include": [
     "**/*.ts",

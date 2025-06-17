@@ -3,6 +3,7 @@ import * as Notifications from 'expo-notifications';
 import { Platform } from 'react-native';
 import { useProfile } from './ProfileContext';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import NotificationService, { ReminderType } from '../services/notifications';
 
 // Define types for notification preferences
 export interface NotificationPreferences {
@@ -134,23 +135,39 @@ export const NotificationProvider: React.FC<{ children: React.ReactNode }> = ({ 
   };
 
   const updateNotificationSchedules = async (prefs: NotificationPreferences) => {
-    // Cancel all existing notifications first
-    await Notifications.cancelAllScheduledNotificationsAsync();
+    try {
+      console.log('Updating notification schedules with preferences:', prefs);
 
-    // Schedule new notifications based on preferences
-    if (prefs.workout_notifications) {
-      // Schedule workout notifications based on workout_preferences
-      // This will be implemented in the next step
-    }
+      // Update the notification service settings based on preferences
+      if (profile) {
+        // Update workout reminders
+        await NotificationService.updateReminderSettings(
+          ReminderType.WORKOUT,
+          prefs.workout_notifications,
+          profile
+        );
 
-    if (prefs.meal_reminders) {
-      // Schedule meal reminders based on diet_preferences
-      // This will be implemented in the next step
-    }
+        // Update meal reminders
+        await NotificationService.updateReminderSettings(
+          ReminderType.MEAL,
+          prefs.meal_reminders,
+          profile
+        );
 
-    if (prefs.water_reminders) {
-      // Schedule water reminders
-      // This will be implemented in the next step
+        // Update water reminders
+        await NotificationService.updateReminderSettings(
+          ReminderType.WATER,
+          prefs.water_reminders,
+          profile
+        );
+
+        console.log('Notification schedules updated successfully');
+      } else {
+        console.warn('No profile available for notification scheduling');
+      }
+    } catch (error) {
+      console.error('Error updating notification schedules:', error);
+      throw error;
     }
   };
 

@@ -23,13 +23,13 @@ export interface MealCompletion {
 // Workout analytics types
 export interface WorkoutStats {
   totalWorkouts: number;
-  completedWorkouts: number;
+  completedWorkouts?: number; // Made optional as it might not always be relevant depending on usage
   completionRate: number;
   currentStreak: number;
-  longestStreak: number;
-  totalCaloriesBurned: number;
-  lastWorkoutDate: string | null;
-  workoutsPerDay?: Record<string, number>; // Add this field to track workouts per day
+  longestStreak: number; // Changed from bestStreak to longestStreak
+  totalCaloriesBurned?: number;
+  lastWorkoutDate?: string | null;
+  workoutsPerDay?: Record<string, number>; // e.g. { 'Monday': 1, 'Tuesday': 0, ... }
 }
 
 // Meal analytics types
@@ -60,7 +60,7 @@ export interface TrackingAnalytics {
     totalWorkouts: number;
     completionRate: number;
     currentStreak: number;
-    bestStreak: number;
+    longestStreak: number;
   };
   
   // Add water tracking stats

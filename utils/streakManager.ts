@@ -1,5 +1,5 @@
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { format, isYesterday, isToday, differenceInDays, parseISO } from 'date-fns';
+import { format, differenceInDays, parseISO } from 'date-fns';
 import supabase from '../lib/supabase';
 
 // Cache keys
@@ -12,7 +12,11 @@ interface StreakData {
   activityHistory: {
     [date: string]: {
       workouts: boolean;
-      meals: boolean;
+      meals: {
+        breakfast: boolean;
+        lunch: boolean;
+        dinner: boolean;
+      };
       water: boolean;
     }
   };
@@ -27,11 +31,35 @@ export async function getStreakData(): Promise<StreakData> {
     const dataString = await AsyncStorage.getItem(STREAK_CACHE_KEY);
     if (dataString) {
       const parsedData = JSON.parse(dataString);
-      // Ensure activityHistory is always an object, even if it was saved as a minimal version
+
+      // Migrate old data format to new format
+      const migratedActivityHistory: StreakData['activityHistory'] = {};
+      if (parsedData.activityHistory) {
+        for (const [date, activities] of Object.entries(parsedData.activityHistory)) {
+          const oldActivities = activities as any;
+          migratedActivityHistory[date] = {
+            workouts: oldActivities.workouts || false,
+            meals: typeof oldActivities.meals === 'boolean'
+              ? {
+                  // If old format had meals: true, assume all meals were completed
+                  breakfast: oldActivities.meals,
+                  lunch: oldActivities.meals,
+                  dinner: oldActivities.meals
+                }
+              : {
+                  breakfast: oldActivities.meals?.breakfast || false,
+                  lunch: oldActivities.meals?.lunch || false,
+                  dinner: oldActivities.meals?.dinner || false
+                },
+            water: oldActivities.water || false
+          };
+        }
+      }
+
       return {
         currentStreak: parsedData.currentStreak || 0,
         lastCompletionDate: parsedData.lastCompletionDate || null,
-        activityHistory: parsedData.activityHistory || {},
+        activityHistory: migratedActivityHistory,
         lastUpdated: parsedData.lastUpdated || new Date().toISOString(),
       };
     }
@@ -69,29 +97,40 @@ async function saveStreakData(streakData: StreakData): Promise<void> {
 }
 
 /**
+ * Check if all meals for a day are completed
+ * @param meals Meals object with breakfast, lunch, dinner flags
+ */
+function areAllMealsCompleted(meals: { breakfast: boolean; lunch: boolean; dinner: boolean; }): boolean {
+  return meals.breakfast && meals.lunch && meals.dinner;
+}
+
+/**
  * Check if all daily activities are completed for a given date
  * @param history Activity history from streak data
  * @param dateString Date string in format 'yyyy-MM-dd'
  * @param isRestDay Whether the day is a rest day with no scheduled workout
  */
 function areDailyActivitiesCompleted(
-  history: StreakData['activityHistory'], 
+  history: StreakData['activityHistory'],
   dateString: string,
   isRestDay: boolean = false
 ): boolean {
   const dayData = history[dateString];
   if (!dayData) return false;
-  
+
+  // Check if all meals are completed
+  const allMealsCompleted = areAllMealsCompleted(dayData.meals);
+
   // For rest days, we only consider meals
   if (isRestDay) {
-    // On rest days, consider the day complete if meals are completed
-    return dayData.meals;
+    // On rest days, consider the day complete if all meals are completed
+    return allMealsCompleted;
   }
-  
-  // For workout days, consider a day complete if either:
-  // 1. The workout is completed (for workout days)
-  // 2. At least one meal is completed (for all days including rest days)
-  return dayData.workouts || dayData.meals;
+
+  // For workout days, consider a day complete if BOTH:
+  // 1. The workout is completed AND
+  // 2. All meals are completed
+  return dayData.workouts && allMealsCompleted;
 }
 
 /**
@@ -100,30 +139,40 @@ function areDailyActivitiesCompleted(
  * @param activityType Type of activity completed
  * @param completed Whether the activity was completed
  * @param isRestDay Whether the current day is a rest day (no workout scheduled)
+ * @param mealType Specific meal type if activityType is 'meals'
  * @returns The updated streak count
  */
 export async function processActivityCompletion(
   userId: string | null,
   activityType: 'workouts' | 'meals' | 'water',
   completed: boolean,
-  isRestDay: boolean = false
+  isRestDay: boolean = false,
+  mealType?: 'breakfast' | 'lunch' | 'dinner'
 ): Promise<number> {
   const today = format(new Date(), 'yyyy-MM-dd');
-  
+
   // Get current streak data
   const streakData = await getStreakData();
-  
+
   // Initialize today's record if it doesn't exist
   if (!streakData.activityHistory[today]) {
     streakData.activityHistory[today] = {
       workouts: false,
-      meals: false,
+      meals: {
+        breakfast: false,
+        lunch: false,
+        dinner: false
+      },
       water: false
     };
   }
-  
+
   // Update the activity completion
-  streakData.activityHistory[today][activityType] = completed;
+  if (activityType === 'meals' && mealType) {
+    streakData.activityHistory[today].meals[mealType] = completed;
+  } else if (activityType !== 'meals') {
+    streakData.activityHistory[today][activityType] = completed;
+  }
   
   // Check if all required activities for today are now completed
   const todayCompleted = areDailyActivitiesCompleted(streakData.activityHistory, today, isRestDay);
@@ -233,11 +282,10 @@ export async function repairStreakData(userId: string | null): Promise<void> {
       const { data: profileData, error } = await supabase
         .from('profiles')
         .select('workout_tracking')
-        .eq('id', userId)
-        .single();
-        
-      if (!error && profileData?.workout_tracking) {
-        const serverData = profileData.workout_tracking;
+        .eq('id', userId);
+
+      if (!error && profileData && profileData.length > 0 && profileData[0]?.workout_tracking) {
+        const serverData = profileData[0].workout_tracking;
         
         // Take the highest streak between local and server
         const repairedStreak = Math.max(
@@ -321,19 +369,22 @@ export async function getCurrentStreak(isRestDay: boolean = false): Promise<numb
 export async function hasCompletedToday(): Promise<boolean> {
   const streakData = await getStreakData();
   const today = format(new Date(), 'yyyy-MM-dd');
-  
+
   const todayHistory = streakData.activityHistory[today];
   const result = areDailyActivitiesCompleted(streakData.activityHistory, today);
-  
-  console.log(`[Streak] Checking today's activities: 
+
+  console.log(`[Streak] Checking today's activities:
     Date: ${today}
     Activity data exists: ${Boolean(todayHistory)}
     Workouts completed: ${todayHistory?.workouts || false}
-    Meals completed: ${todayHistory?.meals || false}
+    Breakfast completed: ${todayHistory?.meals?.breakfast || false}
+    Lunch completed: ${todayHistory?.meals?.lunch || false}
+    Dinner completed: ${todayHistory?.meals?.dinner || false}
+    All meals completed: ${todayHistory ? areAllMealsCompleted(todayHistory.meals) : false}
     Daily activities completed: ${result}
     Current streak: ${streakData.currentStreak}
     Last completion date: ${streakData.lastCompletionDate || 'none'}`);
-  
+
   return result;
 }
 
@@ -352,7 +403,12 @@ export async function recordWorkoutCompletion(userId: string | null, isRestDay: 
  * This is a convenience method for recording meal completions specifically
  * @param userId User ID or null for local user
  * @param isRestDay Whether today is a rest day (no workout scheduled)
+ * @param mealType Specific meal type that was completed
  */
-export async function recordMealCompletion(userId: string | null, isRestDay: boolean = false): Promise<number> {
-  return processActivityCompletion(userId, 'meals', true, isRestDay);
+export async function recordMealCompletion(
+  userId: string | null,
+  isRestDay: boolean = false,
+  mealType: 'breakfast' | 'lunch' | 'dinner' = 'breakfast'
+): Promise<number> {
+  return processActivityCompletion(userId, 'meals', true, isRestDay, mealType);
 }

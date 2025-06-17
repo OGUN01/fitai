@@ -72,10 +72,24 @@ export default function NotificationsScreen() {
     };
 
     try {
+      // Update profile with new preferences
       await updateProfile({
         ...userProfile,
         notification_preferences: updatedPreferences,
       });
+
+      // Update notification service settings based on the type
+      const reminderType = type === 'workout_notifications' ? NotificationService.ReminderType.WORKOUT :
+                          type === 'meal_reminders' ? NotificationService.ReminderType.MEAL :
+                          NotificationService.ReminderType.WATER;
+
+      await NotificationService.updateReminderSettings(
+        reminderType,
+        updatedPreferences[type],
+        userProfile
+      );
+
+      console.log(`Updated ${type} to ${updatedPreferences[type]}`);
     } catch (error) {
       console.error("Failed to update notification preferences:", error);
       Alert.alert("Error", "Failed to update notification preferences. Please try again.");

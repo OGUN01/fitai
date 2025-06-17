@@ -3,12 +3,19 @@ import { View, StyleSheet, ScrollView, Alert } from 'react-native';
 import { Button, Card, Title, Text, Divider, useTheme, ActivityIndicator, Checkbox } from 'react-native-paper';
 import { useProfile } from '../../contexts/ProfileContext';
 import { useAuth } from '../../contexts/AuthContext';
-import { migrateProfileData, validateProfileConsistency } from '../../utils/profileMigration';
+import { migrateProfileData, validateProfileConsistency, fixWorkoutPreferences } from '../../utils/profileMigration';
 import { synchronizeProfileData } from '../../utils/profileSynchronizer';
+import { runDatabaseSyncTest, SyncTestResult } from '../../utils/databaseSyncTest';
+import { runSimpleDatabaseTest, SimpleDatabaseTestResult, getDatabaseStats, testAuthStatus } from '../../utils/simpleDatabaseTest';
+import { runDatabaseOptimization, analyzeDatabasePerformance, optimizeDatabaseIndexes, testQueryPerformance } from '../../utils/databaseOptimizer';
+import { enhancedSignOut, checkAuthStatus, sendEmailVerification } from '../../utils/authEnhancements';
+import { getSyncStatusForUI, forceSyncNow, OfflineManager } from '../../utils/offlineEnhancements';
+import { migrateProfile } from '../../utils/profileMigration';
 import { pydanticWorkoutGenerator } from '../../services/ai';
 import { UserFitnessPreferences, WorkoutPlan } from '../../services/ai/workoutGenerator';
 import { StructuredWorkoutGenerator } from '../../services/ai/structuredWorkoutGenerator';
 import { PydanticWorkoutGenerator } from '../../services/ai/pydanticWorkoutGenerator';
+import AsyncStorage from '@react-native-async-storage/async-storage';
 
 /**
  * Debug Panel Component
@@ -24,6 +31,14 @@ export default function DebugPanel() {
     isConsistent: boolean;
     discrepancies: string[];
   } | null>(null);
+  const [syncTestResult, setSyncTestResult] = useState<SyncTestResult | null>(null);
+  const [syncTestLoading, setSyncTestLoading] = useState(false);
+  const [simpleTestResult, setSimpleTestResult] = useState<SimpleDatabaseTestResult | null>(null);
+  const [optimizationResult, setOptimizationResult] = useState<any>(null);
+  const [optimizationLoading, setOptimizationLoading] = useState(false);
+  const [syncStatus, setSyncStatus] = useState<any>(null);
+  const [simpleTestLoading, setSimpleTestLoading] = useState(false);
+  const [authTestResult, setAuthTestResult] = useState<any>(null);
   const [error, setError] = useState<string | null>(null);
   
   // States for workout generation testing
@@ -138,6 +153,263 @@ export default function DebugPanel() {
     } else {
       Alert.alert('Validation Result', `Found ${result.discrepancies.length} inconsistencies`);
     }
+  };
+
+  // Test database synchronization
+  const handleTestDatabaseSync = async () => {
+    setSyncTestLoading(true);
+    setSyncTestResult(null);
+    setError(null);
+
+    try {
+      console.log('🧪 Starting comprehensive database synchronization test...');
+      const result = await runDatabaseSyncTest();
+      setSyncTestResult(result);
+
+      if (result.success) {
+        Alert.alert(
+          'Database Sync Test - SUCCESS ✅',
+          'All synchronization tests passed! Your database is properly configured and working.'
+        );
+      } else {
+        Alert.alert(
+          'Database Sync Test - ISSUES FOUND ⚠️',
+          `Found ${result.errors.length} issues. Check the detailed results below.`
+        );
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      setError(`Database sync test failed: ${errorMessage}`);
+      Alert.alert('Test Error', `Failed to run database sync test: ${errorMessage}`);
+    } finally {
+      setSyncTestLoading(false);
+    }
+  };
+
+  // Test simple database connectivity
+  const handleTestSimpleDatabase = async () => {
+    setSimpleTestLoading(true);
+    setSimpleTestResult(null);
+    setError(null);
+
+    try {
+      console.log('🔍 Starting simple database connectivity test...');
+      const result = await runSimpleDatabaseTest();
+      setSimpleTestResult(result);
+
+      if (result.success) {
+        Alert.alert(
+          'Database Test - SUCCESS ✅',
+          'Database is connected and properly configured!'
+        );
+      } else {
+        Alert.alert(
+          'Database Test - ISSUES FOUND ⚠️',
+          `Found ${result.errors.length} issues. Check the detailed results below.`
+        );
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      setError(`Simple database test failed: ${errorMessage}`);
+      Alert.alert('Test Error', `Failed to run database test: ${errorMessage}`);
+    } finally {
+      setSimpleTestLoading(false);
+    }
+  };
+
+  // Test authentication status
+  const handleTestAuth = async () => {
+    setAuthTestResult(null);
+    setError(null);
+
+    try {
+      console.log('🔑 Testing authentication status...');
+      const result = await testAuthStatus();
+      setAuthTestResult(result);
+
+      if (result.success && result.isAuthenticated) {
+        Alert.alert(
+          'Authentication Test - SUCCESS ✅',
+          `Authenticated as: ${result.userEmail}\nUser ID: ${result.userId}`
+        );
+      } else if (result.success && !result.isAuthenticated) {
+        Alert.alert(
+          'Authentication Test - NOT LOGGED IN ⚠️',
+          'You are not currently authenticated. Please log in first.'
+        );
+      } else {
+        Alert.alert(
+          'Authentication Test - ERROR ❌',
+          `Auth test failed: ${result.error}`
+        );
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      setError(`Auth test failed: ${errorMessage}`);
+      Alert.alert('Test Error', `Failed to test authentication: ${errorMessage}`);
+    }
+  };
+
+  // Fix profile data inconsistencies
+  const handleFixProfile = async () => {
+    setError(null);
+
+    try {
+      console.log('🔧 Fixing profile data inconsistencies...');
+
+      if (!profile) {
+        Alert.alert('Error', 'No profile found. Please complete onboarding first.');
+        return;
+      }
+
+      const migrationResult = await migrateProfile(profile);
+
+      if (migrationResult.success) {
+        Alert.alert(
+          'Profile Fixed ✅',
+          'Profile data inconsistencies have been resolved. Please refresh the validation.'
+        );
+
+        // Refresh the profile
+        if (refreshProfile) {
+          await refreshProfile();
+        }
+      } else {
+        Alert.alert(
+          'Fix Failed ❌',
+          `Failed to fix profile: ${migrationResult.message}`
+        );
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      setError(`Profile fix failed: ${errorMessage}`);
+      Alert.alert('Error', `Failed to fix profile: ${errorMessage}`);
+    }
+  };
+
+  // Fix workout preferences specifically
+  const handleFixWorkoutPreferences = async () => {
+    setError(null);
+
+    try {
+      console.log('🏋️ Fixing workout preferences specifically...');
+
+      if (!profile) {
+        Alert.alert('Error', 'No profile found. Please complete onboarding first.');
+        return;
+      }
+
+      const fixResult = await fixWorkoutPreferences(profile);
+
+      if (fixResult.success) {
+        Alert.alert(
+          'Workout Preferences Fixed ✅',
+          'Workout preferences inconsistencies have been resolved. Please refresh the validation.'
+        );
+
+        // Refresh the profile
+        if (refreshProfile) {
+          await refreshProfile();
+        }
+      } else {
+        Alert.alert(
+          'Fix Failed ❌',
+          `Failed to fix workout preferences: ${fixResult.message}`
+        );
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      setError(`Workout preferences fix failed: ${errorMessage}`);
+      Alert.alert('Error', `Failed to fix workout preferences: ${errorMessage}`);
+    }
+  };
+
+  // Run database optimization
+  const handleDatabaseOptimization = async () => {
+    setOptimizationLoading(true);
+    setOptimizationResult(null);
+    setError(null);
+
+    try {
+      console.log('🔧 Running database optimization...');
+      const result = await runDatabaseOptimization();
+      setOptimizationResult(result);
+
+      if (result.success) {
+        Alert.alert(
+          'Database Optimization Complete ✅',
+          'Database analysis completed. Check the results below for recommendations.'
+        );
+      } else {
+        Alert.alert(
+          'Optimization Failed ❌',
+          `Database optimization failed: ${result.error}`
+        );
+      }
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      setError(`Database optimization failed: ${errorMessage}`);
+      Alert.alert('Error', `Failed to run database optimization: ${errorMessage}`);
+    } finally {
+      setOptimizationLoading(false);
+    }
+  };
+
+  // Check sync status
+  const handleCheckSyncStatus = async () => {
+    try {
+      console.log('📊 Checking sync status...');
+      const status = await getSyncStatusForUI();
+      setSyncStatus(status);
+
+      Alert.alert(
+        'Sync Status',
+        `Online: ${status.isOnline ? 'Yes' : 'No'}\nPending Items: ${status.pendingSyncItems}\nConflicts: ${status.conflictsDetected}`
+      );
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      setError(`Failed to check sync status: ${errorMessage}`);
+    }
+  };
+
+  // Force sync now
+  const handleForceSync = async () => {
+    try {
+      console.log('🔄 Forcing sync...');
+      await forceSyncNow();
+      Alert.alert('Sync Complete ✅', 'Forced sync completed successfully.');
+
+      // Refresh sync status
+      await handleCheckSyncStatus();
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+      setError(`Force sync failed: ${errorMessage}`);
+      Alert.alert('Error', `Failed to force sync: ${errorMessage}`);
+    }
+  };
+
+  // Clear streak data
+  const handleClearStreakData = async () => {
+    Alert.alert(
+      'Clear Streak Data',
+      'This will reset your streak to 0 and clear all activity history. Are you sure?',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Clear',
+          style: 'destructive',
+          onPress: async () => {
+            try {
+              await AsyncStorage.removeItem('streak_data');
+              Alert.alert('Success ✅', 'Streak data cleared successfully. Restart the app to see changes.');
+            } catch (error) {
+              const errorMessage = error instanceof Error ? error.message : 'Unknown error';
+              Alert.alert('Error', `Failed to clear streak data: ${errorMessage}`);
+            }
+          }
+        }
+      ]
+    );
   };
 
   // Convert profile data to user fitness preferences for workout generation
@@ -371,14 +643,95 @@ export default function DebugPanel() {
               Fix Profile Data
             </Button>
 
-            <Button 
-              mode="outlined" 
+            <Button
+              mode="outlined"
               onPress={handleValidateProfileData}
               disabled={loading || !profile}
               style={styles.button}
             >
               Validate Profile Data
             </Button>
+
+            <Button
+              mode="contained"
+              onPress={handleFixProfile}
+              disabled={!profile}
+              style={[styles.button, { backgroundColor: '#9C27B0' }]}
+            >
+              Fix Profile Data Issues
+            </Button>
+
+            <Button
+              mode="contained"
+              onPress={handleFixWorkoutPreferences}
+              disabled={!profile}
+              style={[styles.button, { backgroundColor: '#FF5722' }]}
+            >
+              Fix Workout Preferences Only
+            </Button>
+
+            <Button
+              mode="contained"
+              onPress={handleTestAuth}
+              style={[styles.button, { backgroundColor: '#FF9800' }]}
+            >
+              Check Authentication Status
+            </Button>
+
+            <Button
+              mode="contained"
+              onPress={handleTestSimpleDatabase}
+              loading={simpleTestLoading}
+              disabled={simpleTestLoading}
+              style={[styles.button, { backgroundColor: '#4CAF50' }]}
+            >
+              Test Database Connection
+            </Button>
+
+            <Button
+              mode="contained"
+              onPress={handleTestDatabaseSync}
+              loading={syncTestLoading}
+              disabled={syncTestLoading}
+              style={[styles.button, { backgroundColor: '#2196F3' }]}
+            >
+              Test Full Database Sync
+            </Button>
+
+            <Button
+              mode="contained"
+              onPress={handleDatabaseOptimization}
+              loading={optimizationLoading}
+              disabled={optimizationLoading}
+              style={[styles.button, { backgroundColor: '#9932CC' }]}
+            >
+              {optimizationLoading ? 'Analyzing...' : 'Database Optimization'}
+            </Button>
+
+            <Button
+              mode="outlined"
+              onPress={handleCheckSyncStatus}
+              style={[styles.button, { borderColor: '#FF6B35' }]}
+            >
+              Check Sync Status
+            </Button>
+
+            <Button
+              mode="contained"
+              onPress={handleForceSync}
+              style={[styles.button, { backgroundColor: '#FF6B35' }]}
+            >
+              Force Sync Now
+            </Button>
+
+            <Button
+              mode="outlined"
+              onPress={handleClearStreakData}
+              style={[styles.button, { borderColor: '#f44336', marginTop: 8 }]}
+            >
+              🔥 Clear Streak Data
+            </Button>
+
           </View>
 
           {loading && (
@@ -412,6 +765,178 @@ export default function DebugPanel() {
                     <Text key={index} style={styles.discrepancyItem}>• {item}</Text>
                   ))}
                 </>
+              )}
+            </View>
+          )}
+
+          {authTestResult && (
+            <View style={styles.validationContainer}>
+              <Text style={styles.resultTitle}>Authentication Status:</Text>
+              <Text style={[
+                styles.validationStatus,
+                { color: authTestResult.isAuthenticated ? 'green' : 'orange' }
+              ]}>
+                {authTestResult.isAuthenticated ? 'Authenticated ✅' : 'Not Authenticated ⚠️'}
+              </Text>
+
+              {authTestResult.isAuthenticated && (
+                <>
+                  <Text style={styles.discrepanciesTitle}>User Details:</Text>
+                  <Text style={styles.discrepancyItem}>
+                    📧 Email: {authTestResult.userEmail || 'N/A'}
+                  </Text>
+                  <Text style={styles.discrepancyItem}>
+                    🆔 User ID: {authTestResult.userId || 'N/A'}
+                  </Text>
+                </>
+              )}
+
+              {authTestResult.error && (
+                <>
+                  <Text style={styles.discrepanciesTitle}>Error:</Text>
+                  <Text style={[styles.discrepancyItem, {color: 'red'}]}>• {authTestResult.error}</Text>
+                </>
+              )}
+            </View>
+          )}
+
+          {simpleTestResult && (
+            <View style={styles.validationContainer}>
+              <Text style={styles.resultTitle}>Database Connection Test Results:</Text>
+              <Text style={[
+                styles.validationStatus,
+                { color: simpleTestResult.success ? 'green' : 'red' }
+              ]}>
+                {simpleTestResult.success ? 'All Tests Passed ✅' : 'Issues Found ⚠️'}
+              </Text>
+
+              <Text style={styles.discrepanciesTitle}>Test Results:</Text>
+              <Text style={styles.discrepancyItem}>
+                📡 Database Connection: {simpleTestResult.tests.connection ? '✅' : '❌'}
+              </Text>
+              <Text style={styles.discrepancyItem}>
+                📋 Required Tables: {simpleTestResult.tests.tablesExist ? '✅' : '❌'}
+              </Text>
+              <Text style={styles.discrepancyItem}>
+                🔒 Row Level Security: {simpleTestResult.tests.rlsEnabled ? '✅' : '❌'}
+              </Text>
+              <Text style={styles.discrepancyItem}>
+                🔍 Basic Queries: {simpleTestResult.tests.basicQueries ? '✅' : '❌'}
+              </Text>
+
+              {simpleTestResult.errors.length > 0 && (
+                <>
+                  <Text style={styles.discrepanciesTitle}>Errors Found:</Text>
+                  {simpleTestResult.errors.map((error, index) => (
+                    <Text key={index} style={[styles.discrepancyItem, {color: 'red'}]}>• {error}</Text>
+                  ))}
+                </>
+              )}
+            </View>
+          )}
+
+          {syncTestResult && (
+            <View style={styles.validationContainer}>
+              <Text style={styles.resultTitle}>Database Sync Test Results:</Text>
+              <Text style={[
+                styles.validationStatus,
+                { color: syncTestResult.success ? 'green' : 'red' }
+              ]}>
+                {syncTestResult.success ? 'All Tests Passed ✅' : 'Issues Found ⚠️'}
+              </Text>
+
+              <Text style={styles.discrepanciesTitle}>Test Results:</Text>
+              <Text style={styles.discrepancyItem}>
+                📡 Database Connection: {syncTestResult.tests.databaseConnection ? '✅' : '❌'}
+              </Text>
+              <Text style={styles.discrepancyItem}>
+                👤 Profile Sync: {syncTestResult.tests.profileSync ? '✅' : '❌'}
+              </Text>
+              <Text style={styles.discrepancyItem}>
+                💪 Workout Sync: {syncTestResult.tests.workoutSync ? '✅' : '❌'}
+              </Text>
+              <Text style={styles.discrepancyItem}>
+                🍽️ Meal Sync: {syncTestResult.tests.mealSync ? '✅' : '❌'}
+              </Text>
+              <Text style={styles.discrepancyItem}>
+                🔒 RLS Policies: {syncTestResult.tests.rlsPolicies ? '✅' : '❌'}
+              </Text>
+
+              {syncTestResult.errors.length > 0 && (
+                <>
+                  <Text style={styles.discrepanciesTitle}>Errors Found:</Text>
+                  {syncTestResult.errors.map((error, index) => (
+                    <Text key={index} style={[styles.discrepancyItem, {color: 'red'}]}>• {error}</Text>
+                  ))}
+                </>
+              )}
+            </View>
+          )}
+
+          {optimizationResult && (
+            <View style={styles.validationContainer}>
+              <Text style={styles.resultTitle}>Database Optimization Results:</Text>
+              <Text style={[
+                styles.validationStatus,
+                { color: optimizationResult.success ? 'green' : 'red' }
+              ]}>
+                {optimizationResult.success ? 'Analysis Complete ✅' : 'Analysis Failed ❌'}
+              </Text>
+
+              {optimizationResult.success && optimizationResult.results.performance && (
+                <>
+                  <Text style={styles.discrepanciesTitle}>📊 Performance Analysis:</Text>
+                  {Object.entries(optimizationResult.results.performance.tableStats).map(([table, stats]: [string, any]) => (
+                    <Text key={table} style={styles.discrepancyItem}>
+                      {table}: {stats.rowCount} rows
+                    </Text>
+                  ))}
+
+                  <Text style={styles.discrepanciesTitle}>💡 Recommendations:</Text>
+                  {optimizationResult.results.performance.recommendations.map((rec: string, index: number) => (
+                    <Text key={index} style={[styles.discrepancyItem, { fontSize: 12 }]}>
+                      • {rec}
+                    </Text>
+                  ))}
+                </>
+              )}
+
+              {optimizationResult.success && optimizationResult.results.queryPerformance && (
+                <>
+                  <Text style={styles.discrepanciesTitle}>⚡ Query Performance:</Text>
+                  <Text style={styles.discrepancyItem}>
+                    Average response time: {optimizationResult.results.queryPerformance.details?.avgTime?.toFixed(2)}ms
+                  </Text>
+                </>
+              )}
+
+              {!optimizationResult.success && (
+                <Text style={[styles.discrepancyItem, {color: 'red'}]}>
+                  Error: {optimizationResult.error}
+                </Text>
+              )}
+            </View>
+          )}
+
+          {syncStatus && (
+            <View style={styles.validationContainer}>
+              <Text style={styles.resultTitle}>Sync Status:</Text>
+              <Text style={styles.discrepancyItem}>
+                🌐 Online: {syncStatus.isOnline ? '✅ Yes' : '❌ No'}
+              </Text>
+              <Text style={styles.discrepancyItem}>
+                📋 Pending Items: {syncStatus.pendingSyncItems}
+              </Text>
+              <Text style={styles.discrepancyItem}>
+                ⚠️ Conflicts: {syncStatus.conflictsDetected}
+              </Text>
+              <Text style={styles.discrepancyItem}>
+                🔄 Sync in Progress: {syncStatus.syncInProgress ? 'Yes' : 'No'}
+              </Text>
+              {syncStatus.lastSyncTime && (
+                <Text style={styles.discrepancyItem}>
+                  🕒 Last Sync: {new Date(syncStatus.lastSyncTime).toLocaleString()}
+                </Text>
               )}
             </View>
           )}
@@ -594,6 +1119,24 @@ export default function DebugPanel() {
               </ScrollView>
             </View>
           )}
+        </Card.Content>
+      </Card>
+
+      {/* Notification Testing Card */}
+      <Card style={styles.card}>
+        <Card.Content>
+          <Title>Notification System Testing</Title>
+          <Text>Test and debug notification functionality</Text>
+
+          <View style={styles.buttonContainer}>
+            <Button
+              mode="outlined"
+              onPress={() => router.push('/(dev)/test-notifications')}
+              style={styles.button}
+            >
+              Open Notification Tester
+            </Button>
+          </View>
         </Card.Content>
       </Card>
     </ScrollView>

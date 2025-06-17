@@ -21,7 +21,7 @@ interface StreakContextType {
   syncStreakData: () => Promise<void>;
   isRestDay: () => boolean;
   recordWorkout: () => Promise<number>;
-  recordMeal: () => Promise<number>;
+  recordMeal: (mealType?: 'breakfast' | 'lunch' | 'dinner') => Promise<number>;
   recordWater: () => Promise<number>;
 }
 
@@ -112,33 +112,42 @@ export const StreakProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   // Function to synchronize streak data between different sources
   const syncStreakData = useCallback(async (): Promise<void> => {
     if (!profile) return;
-    
+
     try {
       console.log('[StreakContext] Synchronizing streak data across sources');
       setLoading(true);
-      
+
       // 1. Repair any inconsistencies in streak data (local storage vs server)
       await repairStreakData(user?.id || null);
-      
+
       // 2. Get the current streak from the most authoritative source
       const restDay = isRestDay();
       const currentStreak = await getCurrentStreak(restDay);
-      
+
       // 3. Update profile with the current streak if needed
-      if (profile.streak !== currentStreak) {
-        console.log(`[StreakContext] Updating profile streak from ${profile.streak} to ${currentStreak}`);
-        
-        await updateProfile({
-          streak: currentStreak,
-          workout_tracking: {
-            ...profile.workout_tracking,
-            streak: currentStreak,
-            longestStreak: Math.max(
-              currentStreak,
-              profile.workout_tracking?.longestStreak || 0
-            )
+      const existingServerStreak = profile.workout_tracking?.streak ?? 0;
+      if (existingServerStreak !== currentStreak) {
+        console.log(`[StreakContext] Updating profile workout_tracking.streak from ${existingServerStreak} to ${currentStreak}`);
+
+        try {
+          await updateProfile({
+            workout_tracking: {
+              ...(profile.workout_tracking || {}),
+              streak: currentStreak,
+              longestStreak: Math.max(
+                currentStreak,
+                profile.workout_tracking?.longestStreak || 0
+              ),
+            }
+          });
+        } catch (updateError: any) {
+          // If network error, don't throw - just log and continue with local state
+          if (updateError.message?.includes('Failed to fetch') || updateError.message?.includes('ERR_TUNNEL_CONNECTION_FAILED')) {
+            console.warn('[StreakContext] Network error updating profile, continuing with local state');
+          } else {
+            throw updateError;
           }
-        });
+        }
       }
       
       // 4. Emit event to update other parts of the app
@@ -197,29 +206,29 @@ export const StreakProvider: React.FC<{ children: React.ReactNode }> = ({ childr
   }, [user, isRestDay, bestStreak, currentStreak, syncStreakData]);
 
   // Record a meal completion
-  const recordMeal = useCallback(async (): Promise<number> => {
+  const recordMeal = useCallback(async (mealType: 'breakfast' | 'lunch' | 'dinner' = 'breakfast'): Promise<number> => {
     try {
       setLoading(true);
       const restDay = isRestDay();
-      
+
       // Record meal completion and get updated streak
-      const newStreak = await recordMealCompletion(user?.id || null, restDay);
-      console.log(`[StreakContext] Recorded meal completion. New streak: ${newStreak}`);
-      
+      const newStreak = await recordMealCompletion(user?.id || null, restDay, mealType);
+      console.log(`[StreakContext] Recorded ${mealType} completion. New streak: ${newStreak}`);
+
       // Update state
       setCurrentStreak(newStreak);
-      
+
       // Update best streak if needed
       if (newStreak > bestStreak) {
         setBestStreak(newStreak);
       }
-      
+
       // Emit event to update other parts of the app
       EventRegister.emit('streakUpdated', { streak: newStreak });
-      
+
       // Trigger synchronization
       await syncStreakData();
-      
+
       return newStreak;
     } catch (error) {
       console.error('[StreakContext] Error recording meal:', error);
@@ -294,17 +303,20 @@ export const StreakProvider: React.FC<{ children: React.ReactNode }> = ({ childr
       // Initialize streak data from profile
       const profileStreak = profile.streak || 0;
       const profileBestStreak = profile.workout_tracking?.longestStreak || 0;
-      
+
       setCurrentStreak(profileStreak);
       setBestStreak(profileBestStreak);
-      
+
       // Then refresh from the authoritative source
       refreshStreak().then(() => {
         // After refreshing, synchronize with all sources
-        syncStreakData();
+        // Use setTimeout to prevent infinite loop
+        setTimeout(() => {
+          syncStreakData();
+        }, 100);
       });
     }
-  }, [profile, refreshStreak, syncStreakData]);
+  }, [profile?.id, profile?.workout_tracking?.streak, profile?.workout_tracking?.longestStreak, refreshStreak]); // Remove syncStreakData from dependencies
 
   const value = {
     currentStreak,

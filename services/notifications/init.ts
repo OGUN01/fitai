@@ -14,42 +14,62 @@ import * as Notifications from 'expo-notifications';
  */
 export async function initializeNotifications() {
   try {
-    // Step 1: Set up notification handler
-    await NotificationService.setupNotifications();
+    console.log('Starting notification service initialization...');
+
+    // Step 1: Set up notification handler and permissions
+    const setupSuccess = await NotificationService.setupNotifications();
+    if (!setupSuccess) {
+      console.log('Notification setup failed - permissions not granted');
+      return false;
+    }
+
     console.log('Notification service initialized successfully');
-    
+
     // Step 2: Check for permission status
     const permissionStatus = await checkNotificationPermissions();
     console.log(`Notification permission status: ${permissionStatus}`);
-    
-    // Step 3: Re-schedule notifications for resilience
-    // This ensures notifications persist after app restarts or updates
+
+    // Step 3: Only schedule notifications if permissions are granted
     if (permissionStatus === 'granted') {
       // Get notification settings first
       const settings = await NotificationService.loadNotificationSettings();
-      
+      console.log('Current notification settings:', settings);
+
       // Only re-schedule if at least one notification type is enabled
-      if (settings.workoutRemindersEnabled || 
-          settings.mealRemindersEnabled || 
+      if (settings.workoutRemindersEnabled ||
+          settings.mealRemindersEnabled ||
           settings.waterRemindersEnabled) {
-        
+
         // Check if we've already scheduled notifications recently
         const lastScheduled = await AsyncStorage.getItem('last_notification_schedule');
-        const scheduleThreshold = 1 * 60 * 60 * 1000; // 1 hour in milliseconds
-        
+        const scheduleThreshold = 2 * 60 * 60 * 1000; // 2 hours in milliseconds (increased)
+
         if (!lastScheduled || (Date.now() - parseInt(lastScheduled)) > scheduleThreshold) {
           console.log('Re-scheduling notifications for resilience');
-          await NotificationService.scheduleAllReminders();
-          
-          // Record when we last scheduled
-          await AsyncStorage.setItem('last_notification_schedule', Date.now().toString());
+
+          try {
+            await NotificationService.scheduleAllReminders();
+
+            // Record when we last scheduled
+            await AsyncStorage.setItem('last_notification_schedule', Date.now().toString());
+            console.log('Notifications scheduled successfully');
+          } catch (scheduleError) {
+            console.error('Error scheduling notifications:', scheduleError);
+          }
         } else {
           console.log('Notifications were recently scheduled, skipping re-schedule');
         }
+      } else {
+        console.log('No notifications enabled, skipping scheduling');
       }
+    } else {
+      console.log('Notification permissions not granted, skipping scheduling');
     }
+
+    return true;
   } catch (error) {
     console.error('Failed to initialize notification service:', error);
+    return false;
   }
 }
 

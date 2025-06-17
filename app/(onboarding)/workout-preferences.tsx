@@ -255,13 +255,21 @@ export default function WorkoutPreferencesScreen() {
     setValue('focusAreas', selectedFocusAreas);
   }, [selectedFocusAreas, setValue]);
 
+  // Watch for workout location changes and update equipment accordingly
+  useEffect(() => {
+    if (currentWorkoutLocation) {
+      console.log("🏋️ Workout location changed to:", currentWorkoutLocation);
+      updateEquipmentOptions(currentWorkoutLocation);
+    }
+  }, [currentWorkoutLocation]);
+
   // Use effect to handle navigation after form submission
   useEffect(() => {
     if (submittedData && navigateBack) {
       // Navigation logic
       if (params?.returnToReview === 'true') {
         console.log("Returning to review page as requested");
-        router.push('/review');
+        router.push('/(onboarding)/review');
       } else {
         // Complete the onboarding
         router.push('/(tabs)/');
@@ -271,6 +279,8 @@ export default function WorkoutPreferencesScreen() {
 
   // Update available equipment based on workout location
   const updateEquipmentOptions = (location: string) => {
+    console.log("🏋️ Updating equipment options for location:", location);
+
     switch(location) {
       case 'home':
         setAvailableEquipment(homeEquipmentOptions);
@@ -278,12 +288,20 @@ export default function WorkoutPreferencesScreen() {
       case 'gym':
         setAvailableEquipment(gymEquipmentOptions);
         // Clear any previously selected equipment that's not available in the gym
-        setSelectedEquipment(prev => prev.filter(item => gymEquipmentOptions.includes(item)));
+        setSelectedEquipment(prev => {
+          const filtered = prev.filter(item => gymEquipmentOptions.includes(item));
+          console.log("🏋️ Filtered gym equipment:", filtered);
+          return filtered;
+        });
         break;
       case 'outdoors':
         setAvailableEquipment(outdoorsEquipmentOptions);
         // Clear any previously selected equipment that's not available outdoors
-        setSelectedEquipment(prev => prev.filter(item => outdoorsEquipmentOptions.includes(item)));
+        setSelectedEquipment(prev => {
+          const filtered = prev.filter(item => outdoorsEquipmentOptions.includes(item));
+          console.log("🏋️ Filtered outdoor equipment:", filtered);
+          return filtered;
+        });
         break;
       case 'mix':
         setAvailableEquipment(mixEquipmentOptions);
@@ -364,7 +382,7 @@ export default function WorkoutPreferencesScreen() {
       // Navigate to the review page as the next step
       if (params?.returnToReview === 'true') {
         console.log("Returning to review page as requested");
-        router.push('/review');
+        router.push('/(onboarding)/review');
       } else {
         router.push('/(onboarding)/review');
       }
@@ -378,25 +396,49 @@ export default function WorkoutPreferencesScreen() {
   // Update form with current profile values when component mounts or profile changes
   useEffect(() => {
     if (profile) {
-      console.log("Updating workout form with latest profile values");
-      
-      // Get values from profile with appropriate fallbacks
-      // @ts-ignore - Property workout_fitness_level exists at runtime but not in TypeScript definition
-      const fitnessLevel = profile.workout_fitness_level || 'beginner';
-      // @ts-ignore - Property workout_location exists at runtime but not in TypeScript definition
-      const workoutLocation = profile.workout_location || 'home';
-      // @ts-ignore - Property workout_duration_minutes exists at runtime but not in TypeScript definition
-      const workoutDuration = profile.workout_duration_minutes || 30;
-      // @ts-ignore - Property workout_days_per_week exists at runtime but not in TypeScript definition
-      const workoutFrequency = profile.workout_days_per_week || 3;
-      // @ts-ignore - Property available_equipment exists at runtime but not in TypeScript definition
-      const availableEquipment = profile.available_equipment || [];
-      // @ts-ignore - Property preferred_workout_times exists at runtime but not in TypeScript definition
-      const preferredWorkoutTimes = profile.preferred_workout_times || [];
-      // @ts-ignore - Properties focus_areas and preferred_workouts exist at runtime but not in TypeScript definition
-      const focusAreas = profile.focus_areas || profile.preferred_workouts || [];
-      // @ts-ignore - Property exercises_to_avoid exists at runtime but not in TypeScript definition
-      const exercisesToAvoid = profile.exercises_to_avoid || '';
+      console.log("🔄 Updating workout form with latest profile values");
+      console.log("📊 Full profile workout_preferences:", profile.workout_preferences);
+      console.log("📊 Profile fitness_goals:", profile.fitness_goals);
+      console.log("📊 Profile fitness_level:", profile.fitness_level);
+
+      // Get values from profile with appropriate fallbacks - check both JSONB and root properties
+      const fitnessLevel = profile.workout_preferences?.fitness_level ||
+                          profile.fitness_level ||
+                          'beginner';
+
+      const workoutLocation = profile.workout_preferences?.workout_location ||
+                             'home';
+
+      const workoutDuration = profile.workout_preferences?.workout_duration ||
+                             profile.workout_duration_minutes ||
+                             30;
+
+      const workoutFrequency = profile.workout_preferences?.days_per_week ||
+                              profile.workout_days_per_week ||
+                              3;
+
+      // Handle equipment - check JSONB first, then root properties
+      const availableEquipment = profile.workout_preferences?.equipment ||
+                                 (profile as any).available_equipment ||
+                                 [];
+
+      // Handle preferred workout times - check JSONB first
+      const preferredWorkoutTimes = profile.workout_preferences?.preferred_days ||
+                                   profile.workout_preferences?.preferred_workout_times ||
+                                   (profile as any).preferred_workout_times ||
+                                   [];
+
+      // Handle focus areas - check multiple locations
+      const focusAreas = profile.workout_preferences?.focus_areas ||
+                        profile.fitness_goals ||
+                        (profile as any).focus_areas ||
+                        (profile as any).preferred_workouts ||
+                        [];
+
+      // Handle exercises to avoid
+      const exercisesToAvoid = profile.workout_preferences?.exercises_to_avoid?.join(', ') ||
+                              (profile as any).exercises_to_avoid ||
+                              '';
       
       // Detailed logging
       console.log("Setting workout form values:", {
@@ -420,11 +462,21 @@ export default function WorkoutPreferencesScreen() {
       setValue('focusAreas', focusAreas);
       setValue('exercisesToAvoid', exercisesToAvoid);
       
-      // Update related state variables
+      // CRITICAL FIX: Update state variables that control the UI
       setSelectedFocusAreas(focusAreas as FocusAreaType[]);
-      
+      setSelectedEquipment(availableEquipment || []);
+      setSelectedTimes(preferredWorkoutTimes || []);
+      setCurrentWorkoutLocation(workoutLocation);
+
       // Update equipment options based on the workout location
       updateEquipmentOptions(workoutLocation);
+
+      console.log("Updated state variables:", {
+        selectedFocusAreas: focusAreas,
+        selectedEquipment: availableEquipment,
+        selectedTimes: preferredWorkoutTimes,
+        currentWorkoutLocation: workoutLocation
+      });
     }
   }, [profile, setValue]);
 

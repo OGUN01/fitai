@@ -2,50 +2,55 @@ import { UserProfile } from '../types/profile';
 
 /**
  * Database column list - matches the actual columns in the profiles table
+ * Updated to match the real Supabase database schema (December 2024)
  * Use this to filter objects before saving to the database
  */
 export const DATABASE_COLUMNS = [
+  // Core identification and metadata
   'id',
-  'username',
   'full_name',
+  'updated_at',
+  'has_completed_onboarding',
+  'current_onboarding_step',
+
+  // Personal information
+  'age',
+  'gender',
+  'activity_level',
+  'date_of_birth',
+
+  // Physical measurements (standardized to metric)
   'height_cm',
   'weight_kg',
   'target_weight_kg',
-  'weight_goal',
-  'workout_preferences',
-  'diet_preferences',
-  'body_analysis',
-  'current_onboarding_step',
-  'has_completed_onboarding',
-  'created_at',
-  'updated_at',
-  'streak_days',
-  'streak_count',
-  'streak',
-  'starting_weight_kg',
-  'initial_weight_kg',
-  'current_weight_kg',
-  'fitness_level',
-  'workout_days_per_week',
-  'workout_duration_minutes',
-  'fitness_goals',
+  'body_fat_percentage',
+
+  // Diet and nutrition preferences
   'diet_type',
   'diet_plan_preference',
   'allergies',
+  'other_allergies',
   'meal_frequency',
   'meal_times',
   'country_region',
   'diet_restrictions',
   'water_intake_goal',
   'water_intake_unit',
+
+  // Workout preferences
+  'fitness_level',
+  'fitness_goals',
+  'preferred_workouts',
+  'workout_days_per_week',
+  'workout_duration_minutes',
+  'weight_goal',
+
+  // JSONB complex data fields
+  'diet_preferences',
+  'workout_preferences',
+  'body_analysis',
   'workout_plan',
   'meal_plans',
-  'workout_summary',
-  'meal_summary',
-  'motivational_quote',
-  'age',
-  'gender',
-  'activity_level',
   'workout_tracking',
   'meal_tracking'
 ];

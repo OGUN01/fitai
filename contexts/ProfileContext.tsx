@@ -6,13 +6,14 @@ import { useAuth } from './AuthContext';
 import { router } from 'expo-router';
 import { getUserWeight, getTargetWeight, synchronizeWeightFields } from '../utils/profileHelpers';
 import { filterToDatabaseColumns, feetToCm, lbsToKg, DATABASE_COLUMNS } from '../utils/profileUtils';
-import { synchronizeDietPreferences } from '../utils/profileSynchronizer';
+import { synchronizeDietPreferences, synchronizeProfileData as utilsSynchronizeProfileData } from '../utils/profileSynchronizer';
 import { updateOnboardingStep } from '../utils/onboardingTracker';
 import { isSyncInProgress, getSyncStatus } from '../utils/syncLocalData';
 import { isOnboardingComplete, markOnboardingComplete, repairOnboardingStatus } from '../utils/onboardingPersistence';
 import persistenceAdapter from '../utils/persistenceAdapter';
 import StorageKeys from '../utils/storageKeys';
 import { WorkoutCompletion, MealCompletion } from '../types/tracking';
+import NotificationService from '../services/notifications';
 
 // Constants for local storage keys
 const LOCAL_PROFILE_KEY = 'local_profile';
@@ -75,9 +76,10 @@ function sanitizeForDatabase(data: Record<string, any>): Record<string, any> {
     filteredData.full_name = data.full_name;
   }
   
-  // Log the preservation of critical fields
-  console.log('SANITIZE: Preserving full_name in database update:', data.full_name);
-  console.log('SANITIZE: Final filtered data includes full_name:', filteredData.full_name);
+  // Log the preservation of critical fields (only if full_name exists)
+  if (data.full_name) {
+    console.log('SANITIZE: Preserving full_name in database update:', data.full_name);
+  }
   
   return filteredData;
 }
@@ -132,7 +134,19 @@ export const ProfileProvider: React.FC<{ children: React.ReactNode }> = ({ child
   const getLocalProfileFromStorage = async () => {
     try {
       const localProfileData = await AsyncStorage.getItem(LOCAL_PROFILE_KEY);
-      return localProfileData ? JSON.parse(localProfileData) : null;
+      if (localProfileData) {
+        const localProfile = JSON.parse(localProfileData);
+        console.log("Local profile found in storage");
+
+        // CRITICAL FIX: Check if this is a fresh local profile created after logout
+        // If it has a full_name but no other onboarding data, it was created to preserve the name
+        if (localProfile.full_name && localProfile.has_completed_local_onboarding === true) {
+          console.log("Found local profile with preserved name after logout:", localProfile.full_name);
+        }
+
+        return localProfile;
+      }
+      return null;
     } catch (error) {
       console.error("Error getting local profile from storage:", error);
       return null;
@@ -419,61 +433,65 @@ export const ProfileProvider: React.FC<{ children: React.ReactNode }> = ({ child
       
       // Fetch from database
       console.log("🔍 FETCH PROFILE - Fetching from Supabase...");
-      const { data, error } = await supabase.from('profiles').select().eq('id', user.id).single();
-      
+      const { data, error } = await supabase.from('profiles').select().eq('id', user.id);
+
       if (error) {
         console.error("Error fetching profile:", error.message);
-        
-        // Check if error is because profile doesn't exist
-        if (error.code === 'PGRST116') {
-          console.log("🔍 FETCH PROFILE - Profile doesn't exist, creating new profile");
+
+        // Check if error is because profile doesn't exist or other API issues
+        if (error.code === 'PGRST116' ||
+            error.message?.includes('JSON object requested, multiple (or no) rows returned')) {
+          console.log("🔍 FETCH PROFILE - Profile doesn't exist or API issue, creating new profile");
           return await createProfile();
         }
-        
+
         setError(`Error fetching profile: ${error.message}`);
         setLoading(false);
         return null;
       }
-      
-      if (!data) {
+
+      // Handle array response (since we removed .single())
+      const profileData = data && data.length > 0 ? data[0] : null;
+
+      if (!profileData) {
         console.log("🔍 FETCH PROFILE - No profile data, creating new profile");
         return await createProfile();
       }
       
       // Profile exists, process it
       console.log("🔍 FETCH PROFILE - Profile found in database");
-      console.log("🔍 FETCH PROFILE - Raw DB country_region:", data.country_region);
-      console.log("🔍 FETCH PROFILE - Raw DB has_completed_onboarding:", data.has_completed_onboarding);
-      console.log("🔍 FETCH PROFILE - Raw DB workout_preferences:", data.workout_preferences);
-      console.log("🔍 FETCH PROFILE - Raw DB diet_preferences:", data.diet_preferences);
-      
+      console.log("🔍 FETCH PROFILE - Raw DB country_region:", profileData.country_region);
+      console.log("🔍 FETCH PROFILE - Raw DB has_completed_onboarding:", profileData.has_completed_onboarding);
+      console.log("🔍 FETCH PROFILE - Raw DB workout_preferences:", profileData.workout_preferences);
+      console.log("🔍 FETCH PROFILE - Raw DB diet_preferences:", profileData.diet_preferences);
+
       // Process for unit conversions and ensure all required fields
-      const processedProfile = processProfileData(data);
-      
-      // Synchronize data between nested objects and root properties
-      const synchronizedProfile = synchronizeProfileData(processedProfile);
-      
+      const processedProfile = processProfileData(profileData);
+
+      // Synchronize data between nested objects and root properties using the utils version
+      const synchronizedProfile = utilsSynchronizeProfileData(processedProfile);
+
       // CRITICAL FIX: Ensure onboarding completion status from DB is preserved
-      if (data.has_completed_onboarding === true) {
+      if (profileData.has_completed_onboarding === true) {
         console.log("🔍 FETCH PROFILE - Preserving has_completed_onboarding=true from database");
         synchronizedProfile.has_completed_onboarding = true;
         synchronizedProfile.current_onboarding_step = 'completed';
       }
       
       // CRITICAL FIX: Ensure workout and diet preferences are preserved from database
-      if (data.workout_preferences) {
+      if (profileData.workout_preferences) {
         console.log("🔍 FETCH PROFILE - Preserving workout preferences from database");
         synchronizedProfile.workout_preferences = {
           ...synchronizedProfile.workout_preferences,
-          ...data.workout_preferences
+          ...profileData.workout_preferences
         };
       }
-      
-      if (data.diet_preferences) {
+
+      if (profileData.diet_preferences) {
         console.log("🔍 FETCH PROFILE - Preserving diet preferences from database");
         synchronizedProfile.diet_preferences = {
           ...synchronizedProfile.diet_preferences,
-          ...data.diet_preferences
+          ...profileData.diet_preferences
         };
       }
       
@@ -535,6 +553,18 @@ export const ProfileProvider: React.FC<{ children: React.ReactNode }> = ({ child
         // Update local state
         setProfile(synchronizedProfile);
         console.log("Local profile updated successfully");
+
+        // Sync notification settings if notification preferences were updated
+        if (updatedFields.notification_preferences) {
+          try {
+            await NotificationService.syncNotificationSettingsWithProfile(synchronizedProfile);
+            console.log("Notification settings synced for local profile");
+          } catch (notificationError) {
+            console.error("Error syncing notification settings for local profile:", notificationError);
+            // Don't throw - notification sync failure shouldn't break profile update
+          }
+        }
+
         setLoading(false);
         return;
       }
@@ -572,28 +602,16 @@ export const ProfileProvider: React.FC<{ children: React.ReactNode }> = ({ child
       
       // Deep merge the current profile with the updated fields
       const mergedProfile = deepMerge(currentProfile, updatedFields);
-      
-      // If we're updating workout preferences, make sure they are properly synced
-      if (updatedFields.workout_preferences || 
-          updatedFields.fitness_level || 
-          updatedFields.fitness_goals) {
-        console.log("Synchronizing workout preferences");
-        synchronizeWorkoutPreferences(mergedProfile);
-      }
-      
-      // If we're updating diet preferences, make sure they are properly synced
-      if (updatedFields.diet_preferences || 
-          updatedFields.diet_type || 
-          updatedFields.allergies) {
-        console.log("Synchronizing diet preferences");
-        synchronizeDietPreferences(mergedProfile);
-      }
-      
+
+      // Use the utils synchronizer for consistency with the debug panel and validation
+      console.log("Synchronizing profile data using utils synchronizer");
+      const synchronizedProfile = utilsSynchronizeProfileData(mergedProfile);
+
       // Synchronize weight fields between body_analysis and root properties
-      synchronizeWeightFields(mergedProfile, 0);
+      synchronizeWeightFields(synchronizedProfile, 0);
       
       // Filter the profile to only include fields that exist in the database schema
-      const dbSafeProfile = sanitizeForDatabase(mergedProfile);
+      const dbSafeProfile = sanitizeForDatabase(synchronizedProfile);
       
       // Extra protection for critical fields
       if (explicityCompletingOnboarding) {
@@ -605,7 +623,7 @@ export const ProfileProvider: React.FC<{ children: React.ReactNode }> = ({ child
       if (currentStep) {
         // Create a profile object with the current step to pass to updateOnboardingStep
         const profileWithStep = {
-          ...mergedProfile,
+          ...synchronizedProfile,
           current_onboarding_step: currentStep
         };
         await updateOnboardingStep(profileWithStep);
@@ -618,22 +636,65 @@ export const ProfileProvider: React.FC<{ children: React.ReactNode }> = ({ child
         .from('profiles')
         .update(dbSafeProfile)
         .eq('id', user.id)
-        .select()
-        .single();
+        .select();
 
       if (error) {
         console.error("Error updating profile:", error);
+
+        // Handle specific Supabase errors
+        if (error.code === 'PGRST116') {
+          // No rows returned - profile doesn't exist, try to create it
+          console.warn("Profile doesn't exist, attempting to create it");
+          try {
+            const { error: createError } = await supabase
+              .from('profiles')
+              .insert([{ ...dbSafeProfile, id: user.id }]);
+
+            if (!createError) {
+              setProfile(synchronizedProfile);
+              await AsyncStorage.setItem(`profile:${user.id}`, JSON.stringify(synchronizedProfile));
+              return;
+            }
+          } catch (createErr) {
+            console.error("Error creating profile:", createErr);
+          }
+        }
+
+        // If it's a network error, don't throw - just log and continue with local state
+        if (error.message?.includes('Failed to fetch') ||
+            error.message?.includes('ERR_TUNNEL_CONNECTION_FAILED') ||
+            error.message?.includes('network') ||
+            error.message?.includes('JSON object requested, multiple (or no) rows returned')) {
+          console.warn("Network/API error updating profile, continuing with local state");
+          // Update local state with synchronized profile even if server update failed
+          setProfile(synchronizedProfile);
+          await AsyncStorage.setItem(`profile:${user.id}`, JSON.stringify(synchronizedProfile));
+          return;
+        }
+
         throw error;
       }
       
       // Update local state with the returned data from Supabase
-      if (data) {
-        setProfile(data);
-        
+      if (data && data.length > 0) {
+        const updatedProfile = data[0]; // Get the first (and should be only) updated profile
+        setProfile(updatedProfile);
+
         // Save to AsyncStorage as cache
-        await AsyncStorage.setItem(`profile:${user.id}`, JSON.stringify(data));
-        
-        console.log("Profile updated successfully:", data.id);
+        await AsyncStorage.setItem(`profile:${user.id}`, JSON.stringify(updatedProfile));
+
+        console.log("Profile updated successfully:", updatedProfile.id);
+
+        // Sync notification settings if notification preferences were updated
+        if (updatedFields.notification_preferences) {
+          try {
+            await NotificationService.syncNotificationSettingsWithProfile(updatedProfile);
+            console.log("Notification settings synced for authenticated profile");
+          } catch (notificationError) {
+            console.error("Error syncing notification settings for authenticated profile:", notificationError);
+            // Don't throw - notification sync failure shouldn't break profile update
+          }
+        }
       }
       
     } catch (err: any) {
@@ -799,7 +860,23 @@ export const ProfileProvider: React.FC<{ children: React.ReactNode }> = ({ child
         profile.fitness_goals = [...profile.workout_preferences.focus_areas];
       }
       
-      // Sync workout days per week - handle as a custom property that may not be in the type
+      // Sync workout days per week - use the same logic as the utils synchronizer
+      if (profile.workout_days_per_week) {
+        // Store as a number in the workout_preferences object
+        (profile.workout_preferences as any).days_per_week = profile.workout_days_per_week;
+        // Remove old/duplicate fields
+        delete (profile.workout_preferences as any).workoutFrequency;
+      } else if ((profile.workout_preferences as any).days_per_week) {
+        profile.workout_days_per_week = (profile.workout_preferences as any).days_per_week;
+      } else if ((profile.workout_preferences as any).workoutFrequency) {
+        // Migrate old field to standard field
+        profile.workout_days_per_week = (profile.workout_preferences as any).workoutFrequency;
+        (profile.workout_preferences as any).days_per_week = (profile.workout_preferences as any).workoutFrequency;
+        // Remove old field after migration
+        delete (profile.workout_preferences as any).workoutFrequency;
+      }
+
+      // Also handle preferred_days array for backward compatibility
       if (profile.workout_days_per_week && !profile.workout_preferences.preferred_days?.length) {
         // If we have a number, convert to appropriate number of preferred days
         const daysArray = ['monday', 'wednesday', 'friday', 'saturday'];

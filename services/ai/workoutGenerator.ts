@@ -10,7 +10,7 @@ import { promptManager } from './promptManager';
 import { API_TIMEOUTS } from '../../constants/api';
 import { parseJsonFromLLM } from './jsonUtils';
 
-// Type definitions
+// Type definitions - ENHANCED with all onboarding parameters
 export interface UserFitnessPreferences {
   fitnessLevel: 'beginner' | 'intermediate' | 'advanced';
   workoutLocation: 'home' | 'gym' | 'outdoors' | 'anywhere';
@@ -19,11 +19,23 @@ export interface UserFitnessPreferences {
   timePerSession: number;
   focusAreas: string[];
   exercisesToAvoid?: string;
+
+  // Demographics
   age?: number;
   gender?: string;
   weight?: number;
   height?: number;
+  weight_kg?: number;
+  height_cm?: number;
+
+  // MISSING CRITICAL PARAMETERS - NOW ADDED:
   country_region?: string;
+  activityLevel?: string;
+  weightGoal?: string;
+  preferredWorkoutDays?: string[];
+  currentWeight?: number;
+  targetWeight?: number;
+  bodyFatPercentage?: number;
 }
 
 export interface WorkoutExercise {
@@ -70,23 +82,44 @@ export class WorkoutGenerator {
    * Generate a personalized workout plan for a user
    */
   async generateWorkoutPlan(preferences: UserFitnessPreferences): Promise<WorkoutPlan | FallbackWorkoutPlan> {
-    // Get the prompt text from the prompt manager
+    // Get the prompt text from the prompt manager - ENHANCED with all parameters
     const promptParams = {
       fitnessLevel: preferences.fitnessLevel,
       workoutLocation: preferences.workoutLocation,
       // Conditionally set equipment based on workout location
-      equipment: preferences.workoutLocation === 'gym' 
-        ? 'Standard gym equipment' 
+      equipment: preferences.workoutLocation === 'gym'
+        ? 'Standard gym equipment'
         : preferences.availableEquipment.join(', '),
       exerciseFrequency: preferences.exerciseFrequency,
       timePerSession: preferences.timePerSession,
       focusAreas: preferences.focusAreas.join(', '),
       exercisesToAvoid: preferences.exercisesToAvoid || 'None',
-      // Add demographic data for more personalized workouts
+
+      // Demographics for personalized workouts
       age: preferences.age || 'Not specified',
       gender: preferences.gender || 'Not specified',
-      weight: preferences.weight || 'Not specified',
-      height: preferences.height || 'Not specified'
+      weight: preferences.weight_kg || preferences.weight || 'Not specified',
+      height: preferences.height_cm || preferences.height || 'Not specified',
+
+      // MISSING CRITICAL PARAMETERS - NOW INCLUDED:
+      // Country/region for culturally appropriate exercises
+      country_region: preferences.country_region || 'International',
+
+      // Activity level affects workout intensity and progression
+      activityLevel: preferences.activityLevel || 'Moderate',
+
+      // Weight goals affect workout focus (strength vs cardio vs maintenance)
+      weightGoal: preferences.weightGoal || 'Maintenance',
+
+      // Preferred workout days for scheduling optimization
+      preferredWorkoutDays: preferences.preferredWorkoutDays?.join(', ') || 'Flexible',
+
+      // Current and target weight for progress-oriented programming
+      currentWeight: preferences.currentWeight || preferences.weight_kg || 'Not specified',
+      targetWeight: preferences.targetWeight || 'Not specified',
+
+      // Body composition for advanced programming
+      bodyFatPercentage: preferences.bodyFatPercentage || 'Not specified'
     };
 
     // Get the prompt for workout generation

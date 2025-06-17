@@ -1,12 +1,14 @@
 import React, { useEffect } from 'react';
 import { View, StyleSheet, Dimensions, TouchableOpacity, ViewStyle, TextStyle, ActivityIndicator } from 'react-native';
-import { BarChart } from 'react-native-chart-kit';
 import { MaterialCommunityIcons } from '@expo/vector-icons';
 import { colors, spacing, borderRadius, shadows } from '../../theme/theme';
 import StyledText from '../ui/StyledText';
 import { LinearGradient } from 'expo-linear-gradient';
 import Animated, { useSharedValue, useAnimatedStyle, withTiming, withSpring, Easing } from 'react-native-reanimated';
 import Svg, { Circle, Path, G } from 'react-native-svg';
+import { Canvas, Rect, Skia, PaintStyle, Path as SkiaPath, Line } from '@shopify/react-native-skia';
+import { useSkiaContext } from '../../contexts/SkiaContext';
+import FallbackChart from './FallbackChart';
 
 // Add missing type definitions
 // Generic water analytics interface
@@ -66,6 +68,8 @@ const WaterTrackingProgress: React.FC<WaterTrackingProgressProps> = ({
   waterData,
   isLoading
 }) => {
+  const { isSkiaLoaded } = useSkiaContext();
+
   // Animation values
   const chartOpacity = useSharedValue(0);
   const statsScale = useSharedValue(0.8);
@@ -105,13 +109,86 @@ const WaterTrackingProgress: React.FC<WaterTrackingProgressProps> = ({
   
   // Get the screen width for chart sizing
   const screenWidth = Dimensions.get('window').width;
-  const chartWidth = screenWidth - (spacing.md * 2) - 16; // Adjust for padding
+  const chartCardWidth = screenWidth - (spacing.md * 2); // Full width of the card
+  const skiaChartWidth = chartCardWidth - (spacing.sm * 2); // Width inside card padding
+  const skiaChartHeight = 200; // Fixed height for the water chart
   
+  // Chart drawing constants
+  const chartPadding = { top: 10, right: 10, bottom: 20, left: 30 }; // Adjusted for simpler chart
+  const barAreaHeight = skiaChartHeight - chartPadding.top - chartPadding.bottom;
+  const barAreaWidth = skiaChartWidth - chartPadding.left - chartPadding.right;
+
+  // Check if Skia is actually available (not just the context state)
+  const isSkiaActuallyAvailable = React.useMemo(() => {
+    try {
+      // More comprehensive Skia availability check
+      const skiaAvailable = isSkiaLoaded &&
+        typeof Skia !== 'undefined' &&
+        Skia !== null &&
+        typeof Skia.Paint === 'function' &&
+        typeof Skia.Color === 'function' &&
+        typeof Skia.Point === 'function';
+
+      if (!skiaAvailable) {
+        console.log("[WaterTrackingProgress] Skia availability check failed:", {
+          isSkiaLoaded,
+          skiaUndefined: typeof Skia === 'undefined',
+          skiaNull: Skia === null,
+          paintFunction: typeof Skia?.Paint,
+          colorFunction: typeof Skia?.Color,
+          pointFunction: typeof Skia?.Point
+        });
+      }
+
+      return skiaAvailable;
+    } catch (error) {
+      console.error("[WaterTrackingProgress] Error checking Skia availability:", error);
+      return false;
+    }
+  }, [isSkiaLoaded]);
+
+  // Prepare paints (memoized for performance)
+  const barPaint = React.useMemo(() => {
+    // Early return if Skia is not available
+    if (!isSkiaActuallyAvailable) {
+      return null;
+    }
+
+    try {
+      const paint = Skia.Paint();
+      paint.setColor(Skia.Color(WATER_COLOR_LIGHT)); // Use water theme color
+      paint.setStyle(PaintStyle.Fill);
+      return paint;
+    } catch (error) {
+      console.error("[WaterTrackingProgress] Error creating barPaint:", error);
+      return null;
+    }
+  }, [isSkiaActuallyAvailable]);
+
+  const axisPaint = React.useMemo(() => {
+    // Early return if Skia is not available
+    if (!isSkiaActuallyAvailable) {
+      return null;
+    }
+
+    try {
+      const paint = Skia.Paint();
+      paint.setColor(Skia.Color(colors.text.muted)); // A subtle color for axis lines
+      paint.setStyle(PaintStyle.Stroke);
+      paint.setStrokeWidth(1);
+      return paint;
+    } catch (error) {
+      console.error("[WaterTrackingProgress] Error creating axisPaint:", error);
+      return null;
+    }
+  }, [isSkiaActuallyAvailable]);
+
   // Format data for charts based on time range
-  const formatWaterData = () => {
+  const getFormattedWaterData = React.useCallback(() => {
     // Default empty data
     let labels: string[] = [];
     let data: number[] = [];
+    let maxValue = 1;
     
     if (!waterData || !waterData.dailyIntake || Object.keys(waterData.dailyIntake).length === 0) {
       // Return empty state based on timeRange
@@ -125,7 +202,7 @@ const WaterTrackingProgress: React.FC<WaterTrackingProgressProps> = ({
         labels = ['Jan', 'Feb', 'Mar'];
         data = [0, 0, 0];
       }
-      return { labels, data };
+      return { labels, data, maxValue };
     }
     
     // Format data based on timeRange
@@ -246,53 +323,17 @@ const WaterTrackingProgress: React.FC<WaterTrackingProgressProps> = ({
       }
     }
     
-    return { labels, data };
-  };
+    // Determine the max value from the data for scaling, default to 1 if no data or all zeros
+    maxValue = data.length > 0 ? Math.max(...data, 1) : 1;
+    
+    return { labels, data, maxValue };
+  }, [timeRange, waterData]);
   
-  // Chart data and config
-  const { labels, data } = formatWaterData();
+  const { labels: chartLabels, data: chartData, maxValue: calculatedMaxValue } = getFormattedWaterData();
   
-  // Enhanced chart configuration with better styling
-  const chartConfig = {
-    backgroundColor: 'transparent',
-    backgroundGradientFrom: 'rgba(30, 42, 72, 0.5)',
-    backgroundGradientTo: 'rgba(30, 42, 72, 0.8)',
-    color: (opacity = 1) => `rgba(0, 224, 255, ${opacity})`,
-    labelColor: (opacity = 1) => `rgba(255, 255, 255, ${opacity})`,
-    style: {
-      borderRadius: 16,
-    },
-    barPercentage: 0.7,
-    propsForDots: {
-      r: '4',
-      stroke: WATER_COLOR_HIGHLIGHT,
-      strokeWidth: '1',
-    },
-    propsForBackgroundLines: {
-      strokeDasharray: "", 
-      strokeWidth: 1,
-      stroke: "rgba(255, 255, 255, 0.1)",
-    },
-    fillShadowGradient: WATER_COLOR_HIGHLIGHT,
-    fillShadowGradientOpacity: 0.9,
-    decimalPlaces: 1,
-  };
+  // Determine a reasonable Y-axis max value for scaling bars
+  const yAxisMax = calculatedMaxValue > 0 ? Math.ceil(calculatedMaxValue / 0.5) * 0.5 : 1; // Round up to nearest 0.5L, default 1L
 
-  // Chart data formatted for react-native-chart-kit
-  const chartData = {
-    labels,
-    datasets: [
-      {
-        data,
-        color: (opacity = 1) => `rgba(0, 224, 255, ${opacity})`,
-        strokeWidth: 2,
-      },
-    ],
-  };
-  
-  // Determine if the water data is empty (to show appropriate message)
-  const isEmptyData = !waterData || !waterData.dailyIntake || Object.keys(waterData.dailyIntake).length === 0;
-  
   // Calculate average consumption and daily goal
   const averageConsumption = waterData?.averageIntake ? (waterData.averageIntake / 1000).toFixed(1) : '0';
   const dailyGoal = waterData?.dailyGoal ? (waterData.dailyGoal / 1000).toFixed(1) : '3.5';
@@ -350,35 +391,67 @@ const WaterTrackingProgress: React.FC<WaterTrackingProgressProps> = ({
       {/* Chart */}
       <Animated.View style={[styles.chartContainer, chartAnimStyle]}>
         {isLoading ? (
-          <View style={styles.loadingContainer}>
-            <ActivityIndicator size="small" color={WATER_COLOR_HIGHLIGHT} />
-            <StyledText style={styles.loadingText}>Loading water data...</StyledText>
-          </View>
-        ) : isEmptyData ? (
-          <View style={styles.emptyContainer}>
-            <MaterialCommunityIcons 
-              name="water-off" 
-              size={24} 
-              color="rgba(255, 255, 255, 0.5)" 
+          <ActivityIndicator size="large" color={WATER_COLOR_LIGHT} style={{height: 200}} />
+        ) : chartData && chartData.length > 0 ? (
+          isSkiaActuallyAvailable && axisPaint && barPaint ? (
+            <Canvas style={{ width: skiaChartWidth, height: skiaChartHeight }}>
+              {/* Y-axis Line */}
+              <Line
+                p1={Skia.Point(chartPadding.left, chartPadding.top)}
+                p2={Skia.Point(chartPadding.left, chartPadding.top + barAreaHeight)}
+                paint={axisPaint}
+              />
+              {/* X-axis Line */}
+              <Line
+                p1={Skia.Point(chartPadding.left, chartPadding.top + barAreaHeight)}
+                p2={Skia.Point(chartPadding.left + barAreaWidth, chartPadding.top + barAreaHeight)}
+                paint={axisPaint}
+              />
+
+              {/* Bars */}
+              {chartData.map((value, index) => {
+                const barSlotWidth = barAreaWidth / chartData.length;
+                const barActualWidth = barSlotWidth * 0.6; // Make bars narrower
+                const barSpacing = (barSlotWidth - barActualWidth) / 2;
+
+                const x = chartPadding.left + index * barSlotWidth + barSpacing;
+                const normalizedValue = Math.max(0, value);
+                const barHeight = (normalizedValue / yAxisMax) * barAreaHeight;
+                const y = chartPadding.top + barAreaHeight - barHeight;
+
+                if (barHeight > 0) {
+                  return (
+                    <Rect
+                      key={`water-bar-${index}`}
+                      x={x}
+                      y={y}
+                      width={barActualWidth}
+                      height={barHeight}
+                      paint={barPaint}
+                    />
+                  );
+                }
+                return null;
+              })}
+            </Canvas>
+          ) : (
+            // Fallback chart when Skia is not available
+            <FallbackChart
+              data={chartData}
+              labels={chartLabels}
+              title=""
+              maxValue={yAxisMax}
+              color={WATER_COLOR_LIGHT}
+              height={skiaChartHeight}
             />
-            <StyledText style={styles.emptyText}>No water tracking data available</StyledText>
-            <StyledText style={styles.emptySubtext}>
-              Track your daily water intake to see data here
+          )
+        ) : (
+          <View style={styles.noDataContainer}>
+            <MaterialCommunityIcons name="chart-bar" size={32} color={colors.text.muted} />
+            <StyledText variant="bodySmall" style={{ color: colors.text.muted, marginTop: spacing.sm }}>
+              No water data available for this period.
             </StyledText>
           </View>
-        ) : (
-        <BarChart
-            data={chartData}
-          width={chartWidth}
-          height={180}
-          chartConfig={chartConfig}
-            style={styles.chart}
-            showValuesOnTopOfBars={true}
-            withInnerLines={false}
-          fromZero
-            yAxisSuffix="L"
-          yAxisLabel=""
-        />
         )}
       </Animated.View>
     </View>
@@ -455,37 +528,11 @@ const styles = StyleSheet.create({
     paddingVertical: spacing.md,
     alignItems: 'center',
   },
-  chart: {
-    marginVertical: 8,
-    borderRadius: 16,
-  },
-  loadingContainer: {
-    height: 180,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  loadingText: {
-    color: 'rgba(255, 255, 255, 0.7)',
-    marginTop: 8,
-    fontSize: 14,
-  },
-  emptyContainer: {
-    height: 180,
+  noDataContainer: {
+    height: 200,
     justifyContent: 'center',
     alignItems: 'center',
     padding: spacing.md,
-  },
-  emptyText: {
-    color: 'rgba(255, 255, 255, 0.7)',
-    marginTop: 8,
-    fontSize: 14,
-    fontWeight: '600',
-  },
-  emptySubtext: {
-    color: 'rgba(255, 255, 255, 0.5)',
-    marginTop: 4,
-    fontSize: 12,
-    textAlign: 'center',
   },
 });
 

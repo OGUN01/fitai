@@ -247,45 +247,99 @@ function parseTimeString(timeString: string): ReminderTime | null {
 
 /**
  * Extract workout reminder times from profile data
+ * Enhanced to handle multiple workout time formats and locations
  */
 function getWorkoutTimesFromProfile(profile: ProfileData): ReminderTime[] {
-  if (!profile?.workout_preferences?.preferred_workout_times?.length) {
+  console.log('Extracting workout times from profile:', profile?.workout_preferences);
+
+  // Check multiple possible locations for workout times
+  let workoutTimes: string[] | undefined;
+
+  // Check workout_preferences.preferred_workout_times
+  if (profile?.workout_preferences?.preferred_workout_times?.length) {
+    workoutTimes = profile.workout_preferences.preferred_workout_times;
+  }
+
+  // Check if there are any workout time preferences in the profile
+  if (!workoutTimes && profile?.workout_preferences) {
+    // Look for other possible time fields
+    const prefs = profile.workout_preferences;
+    if (prefs.workout_times && Array.isArray(prefs.workout_times)) {
+      workoutTimes = prefs.workout_times;
+    } else if (prefs.preferred_times && Array.isArray(prefs.preferred_times)) {
+      workoutTimes = prefs.preferred_times;
+    }
+  }
+
+  if (!workoutTimes || workoutTimes.length === 0) {
+    console.log('No workout times found in profile, using default 8 AM');
     return [{ hour: 8, minute: 0 }]; // Default to 8 AM
   }
-  
+
   const reminderTimes: ReminderTime[] = [];
-  
-  for (const timeString of profile.workout_preferences.preferred_workout_times) {
+
+  for (const timeString of workoutTimes) {
     const parsedTime = parseTimeString(timeString);
     if (parsedTime) {
       reminderTimes.push(parsedTime);
+      console.log(`Parsed workout time: ${parsedTime.hour}:${parsedTime.minute}`);
+    } else {
+      console.warn(`Failed to parse workout time: ${timeString}`);
     }
   }
-  
-  return reminderTimes.length > 0 ? reminderTimes : [{ hour: 8, minute: 0 }];
+
+  const result = reminderTimes.length > 0 ? reminderTimes : [{ hour: 8, minute: 0 }];
+  console.log('Final workout reminder times:', result);
+  return result;
 }
 
 /**
  * Extract meal reminder times from profile data
+ * Enhanced to handle multiple meal time formats
  */
 function getMealTimesFromProfile(profile: ProfileData): ReminderTime[] {
-  if (!profile?.diet_preferences?.meal_times?.length) {
+  console.log('Extracting meal times from profile:', profile?.diet_preferences?.meal_times);
+
+  // Check multiple possible locations for meal times
+  let mealTimes = profile?.diet_preferences?.meal_times;
+
+  // If not found in diet_preferences, check root level
+  if (!mealTimes && profile?.meal_times) {
+    mealTimes = profile.meal_times;
+  }
+
+  if (!mealTimes || !Array.isArray(mealTimes) || mealTimes.length === 0) {
+    console.log('No meal times found in profile, using defaults');
     return DEFAULT_SETTINGS.mealReminderTimes;
   }
-  
+
   const reminderTimes: ReminderTime[] = [];
-  
-  for (const meal of profile.diet_preferences.meal_times) {
-    const timeString = typeof meal === 'string' ? meal : meal.time;
+
+  for (const meal of mealTimes) {
+    let timeString: string | undefined;
+
+    if (typeof meal === 'string') {
+      // Handle direct time string format like "08:00"
+      timeString = meal;
+    } else if (meal && typeof meal === 'object') {
+      // Handle object format like { name: "Breakfast", time: "08:00" }
+      timeString = meal.time;
+    }
+
     if (timeString) {
       const parsedTime = parseTimeString(timeString);
       if (parsedTime) {
         reminderTimes.push(parsedTime);
+        console.log(`Parsed meal time: ${parsedTime.hour}:${parsedTime.minute}`);
+      } else {
+        console.warn(`Failed to parse meal time: ${timeString}`);
       }
     }
   }
-  
-  return reminderTimes.length > 0 ? reminderTimes : DEFAULT_SETTINGS.mealReminderTimes;
+
+  const result = reminderTimes.length > 0 ? reminderTimes : DEFAULT_SETTINGS.mealReminderTimes;
+  console.log('Final meal reminder times:', result);
+  return result;
 }
 
 /**
@@ -309,6 +363,41 @@ export async function updateLastWaterLogTime() {
   const settings = await loadNotificationSettings();
   settings.lastWaterLogTime = new Date().toISOString();
   await saveNotificationSettings(settings);
+}
+
+/**
+ * Sync notification settings with profile preferences
+ * This should be called when profile is updated
+ */
+export async function syncNotificationSettingsWithProfile(profile: ProfileData) {
+  try {
+    console.log('Syncing notification settings with profile preferences');
+
+    const settings = await loadNotificationSettings();
+
+    // Update enabled/disabled status based on profile preferences
+    if (profile.notification_preferences) {
+      settings.workoutRemindersEnabled = profile.notification_preferences.workout_notifications ?? true;
+      settings.mealRemindersEnabled = profile.notification_preferences.meal_reminders ?? true;
+      settings.waterRemindersEnabled = profile.notification_preferences.water_reminders ?? true;
+    }
+
+    // Update timing based on profile data
+    settings.workoutReminderTimes = getWorkoutTimesFromProfile(profile);
+    settings.mealReminderTimes = getMealTimesFromProfile(profile);
+
+    // Save updated settings
+    await saveNotificationSettings(settings);
+
+    // Re-schedule all notifications with new settings
+    await scheduleAllReminders(profile);
+
+    console.log('Notification settings synced successfully');
+    return settings;
+  } catch (error) {
+    console.error('Error syncing notification settings with profile:', error);
+    throw error;
+  }
 }
 
 /**
@@ -505,19 +594,24 @@ function getNotificationBody(type: ReminderType, mealName?: string) {
 
 /**
  * Calculate seconds until next occurrence of specified hour and minute
+ * Enhanced with better timezone handling and minimum delay
  */
 function getSecondsUntilTime(hour: number, minute: number): number {
   const now = new Date();
   const targetTime = new Date();
-  
+
+  // Set target time for today
   targetTime.setHours(hour, minute, 0, 0);
-  
+
   // If the target time is earlier today, schedule it for tomorrow
   if (targetTime <= now) {
     targetTime.setDate(targetTime.getDate() + 1);
   }
-  
-  return Math.floor((targetTime.getTime() - now.getTime()) / 1000);
+
+  const secondsUntil = Math.floor((targetTime.getTime() - now.getTime()) / 1000);
+
+  // Ensure we have at least 60 seconds to avoid immediate triggers
+  return Math.max(secondsUntil, 60);
 }
 
 /**
@@ -534,17 +628,17 @@ function getSecondsUntilNextHour(): number {
 }
 
 /**
- * Schedule a single daily reminder
+ * Schedule a single daily reminder using proper daily trigger
  */
 async function scheduleDailyReminder(
-  type: ReminderType, 
-  hour: number, 
-  minute: number, 
+  type: ReminderType,
+  hour: number,
+  minute: number,
   mealName?: string,
   channelId?: string
 ) {
   const identifier = getNotificationIdentifier(type, hour, minute);
-  
+
   // Set notification content
   const content = {
     title: getNotificationTitle(type),
@@ -553,21 +647,44 @@ async function scheduleDailyReminder(
     ...(Platform.OS === 'android' && channelId ? { channelId } : {})
   };
 
-  // Get seconds until the specified time
-  const secondsFromNow = getSecondsUntilTime(hour, minute);
-  
-  // Schedule using time interval trigger with the required type property
-  await Notifications.scheduleNotificationAsync({
-    content,
-    trigger: {
-      type: SchedulableTriggerInputTypes.TIME_INTERVAL,
-      seconds: secondsFromNow,
-      repeats: true,
-    },
-    identifier,
-  });
-  
-  return identifier;
+  try {
+    // Use daily trigger for proper recurring notifications
+    await Notifications.scheduleNotificationAsync({
+      content,
+      trigger: {
+        type: SchedulableTriggerInputTypes.DAILY,
+        hour: hour,
+        minute: minute,
+        repeats: true,
+      },
+      identifier,
+    });
+
+    console.log(`Scheduled ${type} reminder for ${hour}:${minute.toString().padStart(2, '0')} with ID: ${identifier}`);
+    return identifier;
+  } catch (error) {
+    console.error(`Error scheduling ${type} reminder:`, error);
+
+    // Fallback to time interval if daily trigger fails
+    try {
+      const secondsFromNow = getSecondsUntilTime(hour, minute);
+      await Notifications.scheduleNotificationAsync({
+        content,
+        trigger: {
+          type: SchedulableTriggerInputTypes.TIME_INTERVAL,
+          seconds: secondsFromNow,
+          repeats: true,
+        },
+        identifier,
+      });
+
+      console.log(`Fallback: Scheduled ${type} reminder using interval trigger`);
+      return identifier;
+    } catch (fallbackError) {
+      console.error(`Failed to schedule ${type} reminder with fallback:`, fallbackError);
+      throw fallbackError;
+    }
+  }
 }
 
 /**
@@ -719,6 +836,7 @@ export default {
   getReminderEnabledStatus,
   hasLoggedWaterRecently,
   updateLastWaterLogTime,
+  syncNotificationSettingsWithProfile,
   checkDeviceNotificationState,
   ReminderType,
-}; 
+};

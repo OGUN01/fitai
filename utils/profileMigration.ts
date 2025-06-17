@@ -122,6 +122,223 @@ export async function migrateProfileData(userId: string): Promise<{
 }
 
 /**
+ * Migrate a profile object to fix inconsistencies between nested objects and root properties
+ * This version works with a profile object directly and updates it in the database
+ *
+ * @param profile The profile object to migrate
+ * @returns Result of the migration operation
+ */
+export async function migrateProfile(profile: UserProfile): Promise<{
+  success: boolean;
+  error?: any;
+  message?: string;
+}> {
+  try {
+    if (!profile || !profile.id) {
+      return {
+        success: false,
+        message: 'Invalid profile object or missing profile ID'
+      };
+    }
+
+    // Apply synchronizer to fix data consistency
+    const syncedProfile = synchronizeProfileData(profile);
+
+    // Add specific fixes for workout data
+    if (!syncedProfile.workout_preferences) {
+      syncedProfile.workout_preferences = {
+        preferred_days: ['monday', 'wednesday', 'friday'],
+        workout_duration: 30
+      };
+    }
+
+    // Ensure workout days per week is consistent across all properties
+    // Follow the same logic as the synchronizer
+    if (syncedProfile.workout_days_per_week) {
+      (syncedProfile.workout_preferences as any).days_per_week = syncedProfile.workout_days_per_week;
+      // Remove old/duplicate fields as per synchronizer logic
+      delete (syncedProfile.workout_preferences as any).workoutFrequency;
+    } else if ((syncedProfile.workout_preferences as any).days_per_week) {
+      syncedProfile.workout_days_per_week = (syncedProfile.workout_preferences as any).days_per_week;
+    } else if ((syncedProfile.workout_preferences as any).workoutFrequency) {
+      // Migrate old field to standard field
+      syncedProfile.workout_days_per_week = (syncedProfile.workout_preferences as any).workoutFrequency;
+      (syncedProfile.workout_preferences as any).days_per_week = (syncedProfile.workout_preferences as any).workoutFrequency;
+      // Remove old field after migration
+      delete (syncedProfile.workout_preferences as any).workoutFrequency;
+    } else {
+      // Set default if none exists
+      syncedProfile.workout_days_per_week = 3;
+      (syncedProfile.workout_preferences as any).days_per_week = 3;
+      // Don't set workoutFrequency as it should be migrated to days_per_week
+    }
+
+    // Ensure fitness goals are consistent
+    if (Array.isArray(syncedProfile.fitness_goals) && syncedProfile.fitness_goals.length > 0) {
+      syncedProfile.workout_preferences.focus_areas = [...syncedProfile.fitness_goals];
+      (syncedProfile as any).preferred_workouts = [...syncedProfile.fitness_goals];
+    } else if (Array.isArray(syncedProfile.workout_preferences.focus_areas) && syncedProfile.workout_preferences.focus_areas.length > 0) {
+      syncedProfile.fitness_goals = [...syncedProfile.workout_preferences.focus_areas];
+      (syncedProfile as any).preferred_workouts = [...syncedProfile.workout_preferences.focus_areas];
+    } else if (Array.isArray((syncedProfile as any).preferred_workouts) && (syncedProfile as any).preferred_workouts.length > 0) {
+      syncedProfile.fitness_goals = [...(syncedProfile as any).preferred_workouts];
+      syncedProfile.workout_preferences.focus_areas = [...(syncedProfile as any).preferred_workouts];
+    } else {
+      // Set default if none exists
+      syncedProfile.fitness_goals = ['full body'];
+      syncedProfile.workout_preferences.focus_areas = ['full body'];
+      (syncedProfile as any).preferred_workouts = ['full body'];
+    }
+
+    // Check completion status
+    const { isComplete } = checkOnboardingCompletion(syncedProfile);
+
+    // Update onboarding completion flag if needed
+    syncedProfile.has_completed_onboarding = isComplete;
+
+    // Update current onboarding step based on data
+    const updatedProfile = updateOnboardingStep(syncedProfile);
+
+    // Save the fixed profile back to the database
+    const { error: updateError } = await supabase
+      .from('profiles')
+      .update(updatedProfile)
+      .eq('id', profile.id);
+
+    if (updateError) {
+      console.error('Error updating profile during migration:', updateError);
+      return {
+        success: false,
+        error: updateError,
+        message: `Failed to update profile: ${updateError.message}`
+      };
+    }
+
+    return {
+      success: true,
+      message: 'Profile data successfully migrated and fixed'
+    };
+  } catch (error) {
+    console.error('Error during profile migration:', error);
+    return {
+      success: false,
+      error,
+      message: error instanceof Error ? error.message : 'Unknown error during migration'
+    };
+  }
+}
+
+/**
+ * Specifically fix workout preferences inconsistencies
+ * This function targets the exact issue you're experiencing
+ *
+ * @param profile The profile object to fix
+ * @returns Result of the fix operation
+ */
+export async function fixWorkoutPreferences(profile: UserProfile): Promise<{
+  success: boolean;
+  error?: any;
+  message?: string;
+}> {
+  try {
+    if (!profile || !profile.id) {
+      return {
+        success: false,
+        message: 'Invalid profile object or missing profile ID'
+      };
+    }
+
+    // Create a copy to avoid mutating the original
+    const updatedProfile = { ...profile };
+
+    // Ensure workout_preferences exists
+    if (!updatedProfile.workout_preferences) {
+      updatedProfile.workout_preferences = {};
+    }
+
+    let hasChanges = false;
+
+    // Fix the specific workout frequency issue
+    if (updatedProfile.workout_days_per_week) {
+      // Set the correct field and remove the problematic one
+      (updatedProfile.workout_preferences as any).days_per_week = updatedProfile.workout_days_per_week;
+
+      // Remove the problematic workoutFrequency field that causes validation errors
+      if ((updatedProfile.workout_preferences as any).workoutFrequency !== undefined) {
+        delete (updatedProfile.workout_preferences as any).workoutFrequency;
+        hasChanges = true;
+      }
+
+      console.log(`Fixed workout preferences: set days_per_week to ${updatedProfile.workout_days_per_week} and removed workoutFrequency`);
+      hasChanges = true;
+    }
+
+    // Fix fitness level consistency
+    if (updatedProfile.fitness_level &&
+        updatedProfile.workout_preferences.fitness_level !== updatedProfile.fitness_level) {
+      updatedProfile.workout_preferences.fitness_level = updatedProfile.fitness_level;
+      hasChanges = true;
+      console.log(`Synchronized fitness_level: ${updatedProfile.fitness_level}`);
+    }
+
+    // Fix focus areas consistency
+    if (Array.isArray(updatedProfile.fitness_goals) && updatedProfile.fitness_goals.length > 0) {
+      if (!Array.isArray(updatedProfile.workout_preferences.focus_areas) ||
+          JSON.stringify(updatedProfile.workout_preferences.focus_areas) !== JSON.stringify(updatedProfile.fitness_goals)) {
+        updatedProfile.workout_preferences.focus_areas = [...updatedProfile.fitness_goals];
+        hasChanges = true;
+        console.log(`Synchronized focus_areas with fitness_goals: ${updatedProfile.fitness_goals.join(', ')}`);
+      }
+    }
+
+    // Fix workout duration consistency
+    if (updatedProfile.workout_duration_minutes &&
+        updatedProfile.workout_preferences.workout_duration !== updatedProfile.workout_duration_minutes) {
+      updatedProfile.workout_preferences.workout_duration = updatedProfile.workout_duration_minutes;
+      hasChanges = true;
+      console.log(`Synchronized workout_duration: ${updatedProfile.workout_duration_minutes} minutes`);
+    }
+
+    // Only update database if there are actual changes
+    if (hasChanges) {
+      const { error: updateError } = await supabase
+        .from('profiles')
+        .update({
+          workout_preferences: updatedProfile.workout_preferences
+        })
+        .eq('id', profile.id);
+
+      if (updateError) {
+        console.error('Error updating workout preferences:', updateError);
+        return {
+          success: false,
+          error: updateError,
+          message: `Failed to update workout preferences: ${updateError.message}`
+        };
+      }
+
+      console.log('Successfully fixed workout preferences inconsistencies');
+      return {
+        success: true,
+        message: 'Workout preferences fixed successfully - all inconsistencies resolved'
+      };
+    } else {
+      return {
+        success: true,
+        message: 'No workout preferences inconsistencies found - profile is already consistent'
+      };
+    }
+  } catch (error) {
+    console.error('Error fixing workout preferences:', error);
+    return {
+      success: false,
+      error,
+      message: error instanceof Error ? error.message : 'Unknown error fixing workout preferences'
+    };
+  }
+}
+
+/**
  * Validate that a profile's data is consistent between nested objects and root properties
  * This can be used to check if migration is needed
  * 
@@ -167,8 +384,10 @@ export function validateProfileConsistency(profile: UserProfile): {
     if ((profile.workout_preferences as any)?.days_per_week !== profile.workout_days_per_week) {
       discrepancies.push(`Workout days per week mismatch: ${profile.workout_days_per_week} vs ${(profile.workout_preferences as any)?.days_per_week} in workout_preferences`);
     }
-    
-    if ((profile.workout_preferences as any)?.workoutFrequency !== profile.workout_days_per_week) {
+
+    // Only check workoutFrequency if it exists (it should be migrated to days_per_week)
+    if ((profile.workout_preferences as any)?.workoutFrequency !== undefined &&
+        (profile.workout_preferences as any)?.workoutFrequency !== profile.workout_days_per_week) {
       discrepancies.push(`Workout frequency mismatch: ${profile.workout_days_per_week} vs ${(profile.workout_preferences as any)?.workoutFrequency} in workout_preferences`);
     }
   }
@@ -188,16 +407,8 @@ export function validateProfileConsistency(profile: UserProfile): {
     discrepancies.push(`Allergies inconsistency between root and nested objects`);
   }
   
-  // Add checks for workout data
-  if (profile.workout_days_per_week) {
-    if ((profile.workout_preferences as any)?.days_per_week !== profile.workout_days_per_week) {
-      discrepancies.push(`Workout days per week mismatch: ${profile.workout_days_per_week} vs ${(profile.workout_preferences as any)?.days_per_week} in workout_preferences`);
-    }
-    
-    if ((profile.workout_preferences as any)?.workoutFrequency !== profile.workout_days_per_week) {
-      discrepancies.push(`Workout frequency mismatch: ${profile.workout_days_per_week} vs ${(profile.workout_preferences as any)?.workoutFrequency} in workout_preferences`);
-    }
-  }
+  // Additional workout data checks (avoid duplicates from above)
+  // Note: The main workout frequency checks are already done above
   
   // Check fitness goals consistency
   if (Array.isArray(profile.fitness_goals) && profile.fitness_goals.length > 0) {

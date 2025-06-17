@@ -18,16 +18,20 @@ export default function MealCompletionHandler() {
     const mealCompletedListener = EventRegister.addEventListener(
       'mealCompleted',
       async (mealData: any) => {
-        console.log('🍲 Meal completed, updating streak...');
+        console.log('🍲 Meal completed, updating streak...', mealData);
         try {
           // Check if today is a rest day
           const restDay = isRestDay();
           console.log(`Today is ${restDay ? 'a REST day' : 'a WORKOUT day'}`);
-          
+
+          // Extract meal type from the event data
+          const mealType = mealData?.mealType?.toLowerCase() as 'breakfast' | 'lunch' | 'dinner';
+          console.log(`Recording completion for meal type: ${mealType}`);
+
           // Record the completion and get updated streak using the StreakContext
-          const newStreak = await recordMeal();
-          console.log(`✅ Streak updated after meal completion: ${newStreak} day(s) (rest day: ${restDay})`);
-          
+          const newStreak = await recordMeal(mealType || 'breakfast');
+          console.log(`✅ Streak updated after ${mealType} completion: ${newStreak} day(s) (rest day: ${restDay})`);
+
           // Emit an event with the updated streak so UI can update
           EventRegister.emit('streakUpdated', { streak: newStreak });
         } catch (error) {

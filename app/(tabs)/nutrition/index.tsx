@@ -26,6 +26,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 // Import at the top
 import { vegetarianFallbackMealPlan, veganFallbackMealPlan, nonVegetarianFallbackMealPlan } from '../../../services/ai/defaultMealPlans';
 import { useFocusEffect } from 'expo-router'; // Ensure useFocusEffect is imported
+import { logParameterValidation } from '../../../utils/parameterValidation';
 
 // Define interfaces for the meal plan data structure
 interface Nutrition {
@@ -127,58 +128,90 @@ export default function NutritionScreen() {
   
   // Added effect to load meal plan on component mount
   useEffect(() => {
-    // Set mounted flag to true when component mounts
     isMountedRef.current = true;
-    
-    // Load selected day from AsyncStorage
-    const initializeSelectedDay = async () => {
+
+    const initializeAndLoad = async () => {
       let dayToSet: string;
-      // Always default to the current day
       dayToSet = format(new Date(), 'EEEE');
       console.log('[NutritionScreen] Initializing selectedDay to current day:', dayToSet);
-      
+
       if (isMountedRef.current) {
         setSelectedDay(dayToSet);
-        
-        // Force initial load of meal plan after selectedDay is set
-        setTimeout(() => {
-          if (isMountedRef.current && !hasLoadedRef.current) {
-            console.log('[NutritionScreen] Triggering initial meal plan load after selectedDay is set');
-            loadMealPlan();
-            hasLoadedRef.current = true;
-      }
-        }, 300);
+
+        // Check for local meal plan transfer when user logs in
+        if (user && profile && profile.id && !hasLoadedRef.current) {
+          console.log('[NutritionScreen] Authenticated user detected, checking for local meal plan transfer');
+
+          try {
+            const localMealPlanString = await AsyncStorage.getItem('local_meal_plan');
+            if (localMealPlanString && updateProfile) {
+              const localMealPlan = JSON.parse(localMealPlanString);
+              console.log("🔄 [NutritionScreen] Found local meal plan during initialization, transferring to profile");
+
+              // Validate local meal plan
+              const isValidLocal = localMealPlan.weeklyPlan &&
+                                 Array.isArray(localMealPlan.weeklyPlan) &&
+                                 localMealPlan.weeklyPlan.length > 0 &&
+                                 localMealPlan.weeklyPlan.some((day: DayPlan) => day.meals && day.meals.length > 0);
+
+              if (isValidLocal) {
+                console.log("✅ [NutritionScreen] Transferring valid local meal plan to authenticated profile during initialization");
+
+                // Transfer local meal plan to authenticated profile
+                await updateProfile({
+                  meal_plans: localMealPlan
+                });
+
+                // Set the meal plan in state
+                setMealPlan(localMealPlan);
+
+                // Clean up local storage
+                await AsyncStorage.removeItem('local_meal_plan');
+                console.log("🧹 [NutritionScreen] Cleaned up local meal plan from AsyncStorage during initialization");
+
+                hasLoadedRef.current = true;
+                return; // Exit early since we've loaded the meal plan
+              }
+            }
+          } catch (error) {
+            console.error("[NutritionScreen] Error checking for local meal plan during initialization:", error);
+          }
+        }
+
+        // NOW, CHECK FOR PROFILE BEFORE LOADING MEAL PLAN
+        if (profile && profile.id && !hasLoadedRef.current) {
+          console.log('[NutritionScreen] Profile available, triggering initial meal plan load after selectedDay is set');
+          loadMealPlan();
+          hasLoadedRef.current = true;
+        } else if (!profile || !profile.id) {
+          console.log('[NutritionScreen] Profile not yet available when selectedDay was set. Waiting for profile...');
+        } else if (hasLoadedRef.current) {
+          console.log('[NutritionScreen] Meal plan already loaded or load attempted.');
+        }
       }
     };
+
+    initializeAndLoad();
     
-    // Set up event listener for mealCompleted events from other tabs
     const mealCompletionListener = EventRegister.addEventListener('mealCompleted', (data: any) => {
-      const userIdToCompare = user?.id || 'local_user'; // Renamed to avoid conflict if data.userId exists
+      const userIdToCompare = user?.id || 'local_user';
       const shouldProcess = !data.userId || data.userId === userIdToCompare;
       
       if (data && shouldProcess) {
         console.log('🍽️ Nutrition tab received meal completion event:', data);
-        
-        // Force refresh of meal completion status immediately
-        if (isMountedRef.current && !isLoadingRef.current) { // isLoadingRef check relies on loadCompletedMeals internal logic
+        if (isMountedRef.current && !isLoadingRef.current) {
           console.log('Refreshing nutrition tab meal completions due to external event');
           loadCompletedMeals();
-          
-          // Also force UI update
           setForceUpdate(prev => prev + 1);
         }
       }
     });
     
-    initializeSelectedDay();
-    
-    // Clean up function
     return () => {
       isMountedRef.current = false;
-      // Remove event listener
       EventRegister.removeEventListener(mealCompletionListener as string);
     };
-  }, []); // Empty dependency array ensures this runs only once on mount
+  }, [profile, user]); // <<< ADDED profile AND user TO DEPENDENCY ARRAY
 
   // Effect to save selectedDay to AsyncStorage when it changes (and is not null)
   useEffect(() => {
@@ -1290,14 +1323,23 @@ export default function NutritionScreen() {
       await AsyncStorage.setItem('meal_plan_generation_timestamp', Date.now().toString());
 
       console.log("🍽️ Starting meal plan generation process...");
-      
+
+      // PARAMETER VALIDATION - Check if all onboarding parameters are being passed
+      console.log("🔍 [NUTRITION] Validating parameters before generation...");
+      const validation = logParameterValidation(profile);
+
+      if (!validation.meal.isValid) {
+        console.warn("⚠️ [NUTRITION] Missing parameters detected:", validation.meal.missingParameters);
+      }
+
       // Ensure we have a profile
       if (!profile) {
         throw new Error("Cannot generate meal plan: No profile available");
       }
       
-      // Get preferences from profile context
+      // Get preferences from profile context - ENHANCED with ALL onboarding parameters
       const preferences = {
+        // Core diet preferences
         dietType: profile?.diet_preferences?.diet_type || "balanced",
         dietPlanPreference: "balanced", // Default value
         restrictions: profile?.diet_preferences?.dietary_restrictions || [],
@@ -1305,9 +1347,34 @@ export default function NutritionScreen() {
         excludedFoods: profile?.diet_preferences?.excluded_foods || [],
         favoriteFoods: profile?.diet_preferences?.favorite_foods || [],
         mealFrequency: profile?.diet_preferences?.meal_frequency || 3,
-        countryRegion: profile?.diet_preferences?.country_region || "international",
+        countryRegion: profile?.diet_preferences?.country_region || profile?.country_region || "international",
         fitnessGoal: profile?.fitness_goals?.[0] || "general-fitness",
         calorieTarget: calculateCalorieTarget(profile),
+
+        // MISSING CRITICAL PARAMETERS - NOW ADDED:
+        // Meal timing preferences from onboarding
+        preferredMealTimes: profile?.meal_times || profile?.diet_preferences?.meal_times || [],
+
+        // Water intake goal from onboarding
+        waterIntakeGoal: profile?.diet_preferences?.water_intake_goal || profile?.water_intake_goal || 2000,
+
+        // Demographics for personalized nutrition calculations
+        age: profile?.age || null,
+        gender: profile?.gender || null,
+        weight: profile?.weight_kg || null,
+        height: profile?.height_cm || null,
+
+        // Activity level affects calorie needs
+        activityLevel: profile?.activity_level || "moderate",
+
+        // Weight goals affect meal planning approach
+        weightGoal: profile?.weight_goal || "maintenance",
+        currentWeight: profile?.weight_kg || null,
+        targetWeight: profile?.target_weight_kg || null,
+
+        // Body composition for advanced nutrition planning
+        bodyFatPercentage: profile?.body_analysis?.body_fat_percentage || profile?.body_fat_percentage || null,
+
         // Add an explicit requirement for unique meals for all 7 days
         requireFullWeek: true,
         requireUniqueMeals: true
@@ -1532,24 +1599,24 @@ export default function NutritionScreen() {
               try {
               const localMealPlan = JSON.parse(localMealPlanString);
               console.log("Found local meal plan in AsyncStorage");
-              
+
               // Validate meal plan structure
-              const validMealPlan = localMealPlan.weeklyPlan && 
-                            Array.isArray(localMealPlan.weeklyPlan) && 
-                            localMealPlan.weeklyPlan.length > 0 && 
+              const validMealPlan = localMealPlan.weeklyPlan &&
+                            Array.isArray(localMealPlan.weeklyPlan) &&
+                            localMealPlan.weeklyPlan.length > 0 &&
                             localMealPlan.weeklyPlan.some((day: DayPlan) => day.meals && day.meals.length > 0);
-              
+
               if (validMealPlan) {
                 console.log(`Local meal plan validation: ${localMealPlan.weeklyPlan.length} days with meals`);
                 setMealPlan(localMealPlan);
-                  
+
                   // Load meal completion status right after setting the meal plan
                   setTimeout(() => {
                     if (isMountedRef.current) {
                       loadCompletedMeals();
                     }
                   }, 300);
-                  
+
                 setLoading(false);
                 return;
               } else {
@@ -1559,15 +1626,78 @@ export default function NutritionScreen() {
                 console.error("Error parsing local meal plan:", parseError);
               }
             } else {
-              console.log("No local meal plan found in AsyncStorage");
+              console.log("No local meal plan found in AsyncStorage - will generate new meal plan");
             }
           } catch (localError) {
             console.error("Error reading local meal plan:", localError);
+          }
+
+          // For local mode, directly generate a meal plan instead of using fallbacks
+          console.log("🚀 Local mode: Generating AI meal plan directly");
+          try {
+            // Clear any rate limiting flags to ensure AI generation works
+            await AsyncStorage.removeItem('skipApiCalls');
+            await AsyncStorage.removeItem('meal_plan_rate_limited');
+
+            // Generate the meal plan using AI
+            const generatedPlan = await generateMealPlan();
+            if (generatedPlan) {
+              console.log("✅ Successfully generated meal plan for local mode");
+              setLoading(false);
+              return;
+            }
+          } catch (genError) {
+            console.error("❌ Failed to generate meal plan in local mode:", genError);
+            // Continue to the fallback logic below
           }
         }
         
         // AUTHENTICATED MODE: Load from profile
         if (user) {
+          // First, check if there's a local meal plan that needs to be transferred
+          let localMealPlan = null;
+          try {
+            const localMealPlanString = await AsyncStorage.getItem('local_meal_plan');
+            if (localMealPlanString) {
+              localMealPlan = JSON.parse(localMealPlanString);
+              console.log("🔄 Found local meal plan that needs to be transferred to authenticated profile");
+
+              // Validate local meal plan
+              const isValidLocal = localMealPlan.weeklyPlan &&
+                                 Array.isArray(localMealPlan.weeklyPlan) &&
+                                 localMealPlan.weeklyPlan.length > 0 &&
+                                 localMealPlan.weeklyPlan.some((day: DayPlan) => day.meals && day.meals.length > 0);
+
+              if (isValidLocal && updateProfile) {
+                console.log("✅ Transferring valid local meal plan to authenticated profile");
+
+                // Transfer local meal plan to authenticated profile
+                await updateProfile({
+                  meal_plans: localMealPlan
+                });
+
+                // Set the meal plan in state
+                setMealPlan(localMealPlan);
+
+                // Load meal completion status
+                setTimeout(() => {
+                  if (isMountedRef.current) {
+                    loadCompletedMeals();
+                  }
+                }, 300);
+
+                // Clean up local storage
+                await AsyncStorage.removeItem('local_meal_plan');
+                console.log("🧹 Cleaned up local meal plan from AsyncStorage");
+
+                setLoading(false);
+                return;
+              }
+            }
+          } catch (error) {
+            console.error("Error checking for local meal plan:", error);
+          }
+
           // Load existing meal plan from profile if available
           const existingMealPlan = profile.meal_plans;
           let validMealPlan = false;
@@ -1612,56 +1742,26 @@ export default function NutritionScreen() {
             }
           } else {
             console.log("No existing meal plan found, need to generate one");
-            
-            // Try to use a fallback meal plan right away
-            let defaultPlan;
-            const dietType = profile?.diet_preferences?.diet_type || 'balanced';
-            
-            if (dietType === 'vegetarian') {
-              defaultPlan = vegetarianFallbackMealPlan;
-            } else if (dietType === 'vegan') {
-              defaultPlan = veganFallbackMealPlan;
-            } else {
-              defaultPlan = nonVegetarianFallbackMealPlan;
+
+            // For authenticated mode, directly generate AI meal plan
+            console.log("🚀 Authenticated mode: Generating AI meal plan directly");
+            try {
+              // Clear any rate limiting flags to ensure AI generation works
+              await AsyncStorage.removeItem('skipApiCalls');
+              await AsyncStorage.removeItem('meal_plan_rate_limited');
+
+              // Generate the meal plan using AI
+              const generatedPlan = await generateMealPlan();
+              if (generatedPlan) {
+                console.log("✅ Successfully generated meal plan for authenticated mode");
+                setLoading(false);
+                return;
+              }
+            } catch (genError) {
+              console.error("❌ Failed to generate meal plan in authenticated mode:", genError);
+              // Continue to the fallback logic below
             }
 
-            // Add unique ID to the plan
-            const planWithId = {
-              ...defaultPlan,
-              id: `fallback_meal_plan_${Date.now()}`
-            };
-            
-            // Set the fallback meal plan and save it
-            setMealPlan(planWithId);
-            await saveMealPlan(planWithId);
-            
-            // Now try to generate a custom plan in the background
-            try {
-              // Anti-flicker debounce - wait 200ms
-              await new Promise(resolve => setTimeout(resolve, 200));
-              
-              // Check if meal plan generation is already in progress
-              const generationInProgress = await AsyncStorage.getItem('meal_plan_generation_in_progress');
-              const timestamp = await AsyncStorage.getItem('meal_plan_generation_timestamp');
-              
-              if (generationInProgress === 'true' && timestamp) {
-                const startTime = parseInt(timestamp);
-                // If generation started less than 60 seconds ago, don't start another one
-                if (Date.now() - startTime < 60 * 1000) {
-                  console.log("Meal plan generation already in progress in background, user can use fallback for now");
-                  return;
-                } else {
-                  // Reset lock if it's been too long (stuck generation)
-                  await AsyncStorage.setItem('meal_plan_generation_in_progress', 'false');
-                }
-              }
-              
-              // Generate in the background without blocking UI
-              generateMealPlan();
-            } catch (bgGenError) {
-              console.error("Error in background meal plan generation:", bgGenError);
-            }
-            
             setLoading(false);
             return;
           }
@@ -1688,39 +1788,22 @@ export default function NutritionScreen() {
         }
         
         // Generate a new meal plan if none exists or if the existing one is invalid
+        console.log("🚀 Generating AI meal plan as final attempt");
         try {
+          // Clear any rate limiting flags to ensure AI generation works
+          await AsyncStorage.removeItem('skipApiCalls');
+          await AsyncStorage.removeItem('meal_plan_rate_limited');
+
           await generateMealPlan();
         } catch (genError) {
-          console.error("Error in meal plan generation:", genError);
-          // Check for rate limit errors
+          console.error("❌ Final meal plan generation attempt failed:", genError);
           const genErrorString = genError instanceof Error ? genError.message : String(genError);
-          if (genErrorString.includes('429') || genErrorString.includes('rate limit')) {
-            await AsyncStorage.setItem('meal_plan_rate_limited', 'true');
-            await AsyncStorage.setItem('meal_plan_rate_limit_timestamp', Date.now().toString());
-            console.warn("API rate limited, marking for future reference");
-            
-            // Use appropriate default based on diet type as fallback
-            let defaultPlan;
-            const dietType = profile?.diet_preferences?.diet_type || 'balanced';
-            
-            if (dietType === 'vegetarian') {
-              defaultPlan = vegetarianFallbackMealPlan;
-            } else if (dietType === 'vegan') {
-              defaultPlan = veganFallbackMealPlan;
-            } else {
-              defaultPlan = nonVegetarianFallbackMealPlan;
-            }
 
-            // Add unique ID to the plan
-            const planWithId = {
-              ...defaultPlan,
-              id: `fallback_meal_plan_${Date.now()}`
-            };
-            
-            // Set the fallback meal plan and save it
-            setMealPlan(planWithId);
-            await saveMealPlan(planWithId);
-          }
+          setError({
+            title: "Generation Failed",
+            message: "Could not generate a meal plan. Please check your internet connection and try again.",
+            isRetryable: true
+          });
         } finally {
           // Clear generation in progress flag
           await AsyncStorage.setItem('meal_plan_generation_in_progress', 'false');
@@ -2242,6 +2325,41 @@ export default function NutritionScreen() {
           </View>
         ) : (
           <>
+            {/* Debug: Force Meal Plan Generation Button */}
+            {!mealPlan && (
+              <View style={{ padding: 20, alignItems: 'center' }}>
+                <TouchableOpacity
+                  style={{
+                    backgroundColor: colors.primary.main,
+                    padding: 15,
+                    borderRadius: 10,
+                    marginBottom: 20
+                  }}
+                  onPress={async () => {
+                    console.log("🚀 DEBUG: Force generating meal plan");
+                    try {
+                      // Clear any rate limiting flags
+                      await AsyncStorage.removeItem('skipApiCalls');
+                      await AsyncStorage.removeItem('meal_plan_rate_limited');
+                      await AsyncStorage.removeItem('meal_plan_generation_in_progress');
+
+                      // Force generate
+                      await generateMealPlan();
+                    } catch (error) {
+                      console.error("❌ DEBUG: Force generation failed:", error);
+                    }
+                  }}
+                >
+                  <StyledText style={{ color: 'white', fontWeight: 'bold' }}>
+                    🚀 Force Generate Meal Plan (DEBUG)
+                  </StyledText>
+                </TouchableOpacity>
+                <StyledText style={{ color: colors.text.secondary, textAlign: 'center' }}>
+                  No meal plan found. Click above to generate one using AI.
+                </StyledText>
+              </View>
+            )}
+
             {/* Day Selector */}
             {mealPlan && mealPlan.weeklyPlan && (
             <FadeIn duration={600} delay={100}>
@@ -2524,68 +2642,76 @@ export default function NutritionScreen() {
                       </View>
                     </View>
                     
-                    <TouchableOpacity 
-                      style={styles.sectionButton}
-                      onPress={() => toggleSection('modal-ingredients')}
-                    >
-                      <View style={styles.sectionHeader}>
-                        <MaterialCommunityIcons name="food-apple" size={20} color={colors.primary.main} />
-                        <StyledText variant="bodyLarge" style={styles.sectionTitle}>
-                          Ingredients
-                        </StyledText>
-                      </View>
-                      <MaterialCommunityIcons 
-                        name={expandedSections['modal-ingredients'] ? "chevron-up" : "chevron-down"} 
-                        size={24} 
-                        color={colors.text.muted} 
-                      />
-                    </TouchableOpacity>
-                    
-                    {expandedSections['modal-ingredients'] && (
-                      <View style={styles.sectionContent}>
-                        {(selectedMeal.recipe?.ingredients || []).map((ingredient, ingIndex) => (
-                          <View key={`ingredient-${ingIndex}`} style={styles.ingredientItem}>
-                            <View style={styles.bulletPoint} />
-                            <StyledText variant="bodyMedium" style={styles.ingredientText}>
-                              {ingredient}
+                    {selectedMeal.recipe?.ingredients && selectedMeal.recipe.ingredients.length > 0 && (
+                      <>
+                        <TouchableOpacity 
+                          style={styles.sectionButton}
+                          onPress={() => toggleSection('modal-ingredients')}
+                        >
+                          <View style={styles.sectionHeader}>
+                            <MaterialCommunityIcons name="food-apple" size={20} color={colors.primary.main} />
+                            <StyledText variant="bodyLarge" style={styles.sectionTitle}>
+                              Ingredients
                             </StyledText>
                           </View>
-                        ))}
-                      </View>
+                          <MaterialCommunityIcons 
+                            name={expandedSections['modal-ingredients'] ? "chevron-up" : "chevron-down"} 
+                            size={24} 
+                            color={colors.text.muted} 
+                          />
+                        </TouchableOpacity>
+                        
+                        {expandedSections['modal-ingredients'] && (
+                          <View style={styles.sectionContent}>
+                            {(selectedMeal.recipe.ingredients || []).map((ingredient, ingIndex) => (
+                              <View key={`ingredient-${ingIndex}`} style={styles.ingredientItem}>
+                                <View style={styles.bulletPoint} />
+                                <StyledText variant="bodyMedium" style={styles.ingredientText}>
+                                  {ingredient}
+                                </StyledText>
+                              </View>
+                            ))}
+                          </View>
+                        )}
+                      </>
                     )}
                     
-                    <TouchableOpacity 
-                      style={styles.sectionButton}
-                      onPress={() => toggleSection('modal-instructions')}
-                    >
-                      <View style={styles.sectionHeader}>
-                        <MaterialCommunityIcons name="chef-hat" size={20} color={colors.primary.main} />
-                        <StyledText variant="bodyLarge" style={styles.sectionTitle}>
-                          Instructions
-                        </StyledText>
-                      </View>
-                      <MaterialCommunityIcons 
-                        name={expandedSections['modal-instructions'] ? "chevron-up" : "chevron-down"} 
-                        size={24} 
-                        color={colors.text.muted} 
-                      />
-                    </TouchableOpacity>
-                    
-                    {expandedSections['modal-instructions'] && (
-                      <View style={styles.sectionContent}>
-                        {(selectedMeal.recipe?.instructions || []).map((instruction, instIndex) => (
-                          <View key={`instruction-${instIndex}`} style={styles.instructionItem}>
-                            <View style={styles.instructionNumber}>
-                              <StyledText variant="bodySmall" style={styles.numberText}>
-                                {instIndex + 1}
-                              </StyledText>
-                            </View>
-                            <StyledText variant="bodyMedium" style={styles.instructionText}>
-                              {instruction}
+                    {selectedMeal.recipe?.instructions && selectedMeal.recipe.instructions.length > 0 && (
+                      <>
+                        <TouchableOpacity 
+                          style={styles.sectionButton}
+                          onPress={() => toggleSection('modal-instructions')}
+                        >
+                          <View style={styles.sectionHeader}>
+                            <MaterialCommunityIcons name="chef-hat" size={20} color={colors.primary.main} />
+                            <StyledText variant="bodyLarge" style={styles.sectionTitle}>
+                              Instructions
                             </StyledText>
                           </View>
-                        ))}
-                      </View>
+                          <MaterialCommunityIcons 
+                            name={expandedSections['modal-instructions'] ? "chevron-up" : "chevron-down"} 
+                            size={24} 
+                            color={colors.text.muted} 
+                          />
+                        </TouchableOpacity>
+                        
+                        {expandedSections['modal-instructions'] && (
+                          <View style={styles.sectionContent}>
+                            {(selectedMeal.recipe.instructions || []).map((instruction, instIndex) => (
+                              <View key={`instruction-${instIndex}`} style={styles.instructionItem}>
+                                <View style={styles.instructionNumber}>
+                                  <StyledText variant="bodySmall" style={styles.numberText}>
+                                    {instIndex + 1}
+                                  </StyledText>
+                                </View>
+                                <StyledText variant="bodyMedium" style={styles.instructionText}>
+                                  {instruction}
+                                </StyledText>
+                              </View>
+                            ))}
+                          </View>
+                        )}
+                      </>
                     )}
                     
                     <TouchableOpacity

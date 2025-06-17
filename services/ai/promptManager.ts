@@ -32,10 +32,21 @@ Create a personalized workout plan for the following user:
 - Time per session: {{timePerSession}} minutes
 - Focus areas: {{focusAreas}}
 - Exercises/movements to avoid: {{exercisesToAvoid}}
+
+DEMOGRAPHICS:
 - Age: {{age}}
 - Gender: {{gender}}
 - Weight: {{weight}}
 - Height: {{height}}
+
+ENHANCED USER CONTEXT (NOW INCLUDED):
+- Country/Region: {{country_region}} (for culturally appropriate exercises)
+- Activity Level: {{activityLevel}} (affects workout intensity)
+- Weight Goal: {{weightGoal}} (affects workout focus - strength vs cardio)
+- Preferred Workout Days: {{preferredWorkoutDays}}
+- Current Weight: {{currentWeight}}
+- Target Weight: {{targetWeight}}
+- Body Fat Percentage: {{bodyFatPercentage}} (if available)
 
 The workout plan should include:
 1. A weekly schedule with specific workouts for each day
@@ -84,10 +95,24 @@ Create a personalized meal plan for the following user:
 - Meal frequency: {{mealFrequency}} meals per day
 - Country/Region: {{region}}
 - Fitness goal: {{fitnessGoal}}
+
+DEMOGRAPHICS:
 - Age: {{age}}
 - Gender: {{gender}}
 - Weight: {{weight}}
 - Height: {{height}}
+
+ENHANCED USER CONTEXT (NOW INCLUDED):
+- Dietary Restrictions: {{restrictions}}
+- Excluded Foods: {{excludedFoods}}
+- Favorite Foods: {{favoriteFoods}}
+- Preferred Meal Times: {{preferredMealTimes}}
+- Water Intake Goal: {{waterIntakeGoal}}
+- Activity Level: {{activityLevel}} (affects caloric needs)
+- Weight Goal: {{weightGoal}} (affects meal planning approach)
+- Current Weight: {{currentWeight}}
+- Target Weight: {{targetWeight}}
+- Body Fat Percentage: {{bodyFatPercentage}} (for advanced nutrition planning)
 
 The meal plan should include:
 1. Daily meal schedule with meal types (breakfast, lunch, dinner, snacks)

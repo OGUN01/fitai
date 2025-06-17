@@ -4,8 +4,9 @@ import { format, subDays, parseISO, differenceInDays, isSameDay, isAfter } from 
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import persistenceAdapter from '../utils/persistenceAdapter';
 import StorageKeys from '../utils/storageKeys';
-import { recordMealCompletion } from '../utils/streakManager';
+
 import { EventRegister } from 'react-native-event-listeners';
+import { UserProfile } from '../types/profile';
 
 // Local storage keys for workout and meal completions
 const LOCAL_WORKOUT_COMPLETIONS_KEY = StorageKeys.COMPLETED_WORKOUTS;
@@ -116,6 +117,47 @@ function calculateCaloriesBurned(
   const caloriesBurned = adjustedMet * weight_kg * durationHours;
   
   return Math.round(caloriesBurned);
+}
+
+/**
+ * Clear all workout completions for a user (for testing purposes)
+ */
+export async function clearWorkoutCompletions(userId: string): Promise<void> {
+  try {
+    const isLocalUser = userId === 'local_user' || !userId || userId.length < 10;
+
+    if (isLocalUser) {
+      // Clear local storage
+      await persistenceAdapter.setItem(LOCAL_WORKOUT_COMPLETIONS_KEY, []);
+      console.log('[clearWorkoutCompletions] Cleared local workout completions');
+    } else {
+      // Clear from Supabase
+      const { error } = await supabase
+        .from('workout_completions')
+        .delete()
+        .eq('user_id', userId);
+
+      if (error) {
+        console.error('[clearWorkoutCompletions] Error clearing Supabase completions:', error);
+        throw error;
+      } else {
+        console.log('[clearWorkoutCompletions] Cleared Supabase workout completions');
+      }
+
+      // Also clear local backup
+      await persistenceAdapter.setItem(LOCAL_WORKOUT_COMPLETIONS_KEY, []);
+    }
+
+    // Clear any cached data by invalidating the cache
+    console.log('[clearWorkoutCompletions] Clearing workout completion cache');
+
+    // Force a small delay to ensure data is cleared before any subsequent reads
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+  } catch (error) {
+    console.error('[clearWorkoutCompletions] Error:', error);
+    throw error;
+  }
 }
 
 /**
@@ -345,9 +387,31 @@ export async function isWorkoutCompleted(
     }
 
     const workoutCompletedLocally = completions.some(completion => {
-      const dateMatches = completion.user_id === userId && completion.workout_date === formattedDate;
+      // ENHANCED FIX: More robust user ID matching for login transition
+      // This handles the case where user completed workout as local_user but is now authenticated
+      let userIdMatches = false;
+
+      if (completion.user_id === userId) {
+        // Direct match - most common case
+        userIdMatches = true;
+      } else if (userId !== 'local_user' && completion.user_id === 'local_user') {
+        // User was local, now authenticated - check for recent completions
+        userIdMatches = true;
+        console.log(`Found local_user completion for authenticated user ${userId}: ${completion.workout_date}`);
+      } else if (userId === 'local_user' && completion.user_id !== 'local_user') {
+        // Edge case: authenticated user data still in local storage
+        userIdMatches = true;
+        console.log(`Found authenticated user completion in local storage: ${completion.workout_date}`);
+      }
+
+      const dateMatches = userIdMatches && completion.workout_date === formattedDate;
+
       if (dayName && dateMatches) {
-        return completion.workout_day_name === dayName;
+        const dayMatches = completion.workout_day_name === dayName;
+        if (dayMatches) {
+          console.log(`Workout completion found: user_id=${completion.user_id}, date=${completion.workout_date}, day=${completion.workout_day_name}`);
+        }
+        return dayMatches;
       }
       return dateMatches;
     });
@@ -561,11 +625,14 @@ export async function isMealCompleted(userId: string, mealDate: string, mealType
         localMealCompletions = [];
       }
       
-      const mealCompletedLocally = localMealCompletions.some(completion => 
-        completion.user_id === userId && 
-        completion.meal_date === mealDate && 
-        completion.meal_type === formattedMealType
-      );
+      const mealCompletedLocally = localMealCompletions.some(completion => {
+        // CRITICAL FIX: During login transition, check both current user ID and 'local_user'
+        const userIdMatches = completion.user_id === userId ||
+                             (userId !== 'local_user' && completion.user_id === 'local_user');
+        return userIdMatches &&
+               completion.meal_date === mealDate &&
+               completion.meal_type === formattedMealType;
+      });
       
       if (mealCompletedLocally) {
         console.log(`[isMealCompleted] Found completed meal in local cache: ${formattedMealType} for ${mealDate}`);
@@ -639,11 +706,27 @@ export async function isMealCompleted(userId: string, mealDate: string, mealType
 
     // Final check - in case we missed something in the initial local check
     try {
-    const mealCompletedLocally = localMealCompletions.some(completion => 
-      completion.user_id === userId && 
-      completion.meal_date === mealDate && 
-      completion.meal_type === formattedMealType
-    );
+    const mealCompletedLocally = localMealCompletions.some(completion => {
+      // ENHANCED FIX: More robust user ID matching for login transition
+      let userIdMatches = false;
+
+      if (completion.user_id === userId) {
+        // Direct match - most common case
+        userIdMatches = true;
+      } else if (userId !== 'local_user' && completion.user_id === 'local_user') {
+        // User was local, now authenticated - check for recent completions
+        userIdMatches = true;
+        console.log(`Found local_user meal completion for authenticated user ${userId}: ${completion.meal_date} ${completion.meal_type}`);
+      } else if (userId === 'local_user' && completion.user_id !== 'local_user') {
+        // Edge case: authenticated user data still in local storage
+        userIdMatches = true;
+        console.log(`Found authenticated user meal completion in local storage: ${completion.meal_date} ${completion.meal_type}`);
+      }
+
+      return userIdMatches &&
+             completion.meal_date === mealDate &&
+             completion.meal_type === formattedMealType;
+    });
     
     if (mealCompletedLocally) {
         console.log(`[FINAL CHECK] Meal ${formattedMealType} completed for ${mealDate} found in local cache`);
@@ -832,12 +915,23 @@ export async function getWorkoutStats(userId: string, period: 'week' | 'month' |
     const getDayNameFromWorkout = (workout: any): string => {
       // First try to use the stored workout_day_name if available
       if (workout.workout_day_name && allDayNames.includes(workout.workout_day_name)) {
+        console.log(`[getWorkoutStats] Using stored day name: ${workout.workout_day_name} for date: ${workout.workout_date}`);
         return workout.workout_day_name;
       }
-      
-      // Fallback: Use the date to determine day name
+
+      // Fallback: Use the date to determine day name with proper timezone handling
       const date = workout.workout_date;
-      return new Date(date).toLocaleDateString('en-US', { weekday: 'long' });
+      try {
+        // Parse the date string properly to avoid timezone issues
+        const parsedDate = new Date(date + 'T00:00:00'); // Add time to ensure local timezone
+        const dayName = parsedDate.toLocaleDateString('en-US', { weekday: 'long' });
+        console.log(`[getWorkoutStats] Calculated day name: ${dayName} for date: ${date} (workout_day_name: ${workout.workout_day_name})`);
+        return dayName;
+      } catch (error) {
+        console.error(`[getWorkoutStats] Error parsing date ${date}:`, error);
+        // If date parsing fails, try to use the current day as fallback
+        return 'Monday'; // Default fallback
+      }
     };
     
     // Sort data by date (ascending) for streak calculation
@@ -846,12 +940,47 @@ export async function getWorkoutStats(userId: string, period: 'week' | 'month' |
     );
     
     // Process each workout to count completions per day
+    // Store both by day name (for 7-day view) and by date (for 30/90-day views)
     sortedWorkouts.forEach(workout => {
       const dayName = getDayNameFromWorkout(workout);
+      const dateString = workout.workout_date; // Store by exact date too
+
+      console.log(`[getWorkoutStats] Processing workout: date=${workout.workout_date}, stored_day_name=${workout.workout_day_name}, calculated_day_name=${dayName}`);
+
       if (allDayNames.includes(dayName)) {
-        workoutsPerDay[dayName] = 1; // Set to 1 to indicate completed
+        workoutsPerDay[dayName] = 1; // Set to 1 to indicate completed (for 7-day view)
+        workoutsPerDay[dateString] = 1; // Also store by date (for 30/90-day views)
+        console.log(`[getWorkoutStats] ✅ Set ${dayName} = 1 and ${dateString} = 1 for workout on ${workout.workout_date}`);
+      } else {
+        console.log(`[getWorkoutStats] ❌ Invalid day name '${dayName}' for workout on ${workout.workout_date}`);
       }
     });
+
+    console.log(`[getWorkoutStats] Final workoutsPerDay:`, workoutsPerDay);
+    console.log(`[getWorkoutStats] Raw workout data (${data.length} items):`, data.map(w => ({
+      date: w.workout_date,
+      stored_day_name: w.workout_day_name,
+      user_id: w.user_id
+    })));
+
+    // If no data, ensure we return empty workoutsPerDay
+    if (data.length === 0) {
+      console.log('[getWorkoutStats] No workout data found, returning empty workoutsPerDay');
+      const emptyWorkoutsPerDay: Record<string, number> = {};
+      allDayNames.forEach(day => {
+        emptyWorkoutsPerDay[day] = 0;
+      });
+      return {
+        totalWorkouts: 0,
+        completedWorkouts: 0,
+        completionRate: 0,
+        currentStreak: 0,
+        longestStreak: 0,
+        totalCaloriesBurned: 0,
+        lastWorkoutDate: null,
+        workoutsPerDay: emptyWorkoutsPerDay
+      };
+    }
     
     // Calculate current streak
     let currentStreak = calculateDayStreak(sortedWorkouts.map(w => parseISO(w.workout_date)));
@@ -897,249 +1026,112 @@ export async function getWorkoutStats(userId: string, period: 'week' | 'month' |
  * Get meal statistics for a user
  */
 export async function getMealStats(userId: string, period: 'week' | 'month' | 'all' = 'all'): Promise<MealStats> {
-  try {
-    console.log(`Getting meal stats for user ${userId}, period: ${period}`);
-    
-    // Check if this is a local user
+  let mealCompletions: MealCompletion[] = [];
     const isLocalUser = userId === 'local_user' || !userId || userId.length < 10;
     
-    // Initialize data array for stats
-    let data: MealCompletion[] = [];
-    
-    // For local users, get data from persistent storage
+  try {
     if (isLocalUser) {
-      console.log('Getting local meal stats from storage');
-      
-      try {
-        // Try to get from AsyncStorage first (most reliable)
-          const asyncData = await AsyncStorage.getItem(LOCAL_MEAL_COMPLETIONS_KEY);
-          if (asyncData) {
-          try {
-            const parsedData = JSON.parse(asyncData);
-            if (Array.isArray(parsedData)) {
-              data = parsedData.filter(completion => completion.user_id === userId);
-              console.log(`Found ${data.length} local meal completions in AsyncStorage`);
-          }
-          } catch (parseError) {
-            console.error('Error parsing meal completions from AsyncStorage:', parseError);
-          }
-        }
-        
-        // If no data from AsyncStorage, try persistence adapter
-        if (data.length === 0) {
-          // Try to get from persistence adapter as fallback
-          const localCompletions = await persistenceAdapter.getItem<MealCompletion[]>(LOCAL_MEAL_COMPLETIONS_KEY, []);
-          if (localCompletions && Array.isArray(localCompletions)) {
-            data = localCompletions.filter(completion => completion.user_id === userId);
-            console.log(`Found ${data.length} local meal completions in persistence adapter`);
-        }
-        }
-      } catch (storageError) {
-        console.error('Error reading meal completions from storage:', storageError);
-      }
+      const localData = await persistenceAdapter.getItem<MealCompletion[]>(LOCAL_MEAL_COMPLETIONS_KEY, []);
+      mealCompletions = Array.isArray(localData) ? localData.filter(mc => mc.user_id === userId) : [];
     } else {
-      // For authenticated users, get from Supabase
-      console.log('Getting meal stats from local cache and Supabase');
-      
-      try {
-        // First try to get from local storage as a quick first view
-        let localData: MealCompletion[] = [];
-        
-        try {
-          // Try AsyncStorage first for most reliable data
-            const asyncData = await AsyncStorage.getItem(LOCAL_MEAL_COMPLETIONS_KEY);
-            if (asyncData) {
-            try {
-              const parsedData = JSON.parse(asyncData);
-              if (Array.isArray(parsedData)) {
-                localData = parsedData.filter(completion => completion.user_id === userId);
-                console.log(`Found ${localData.length} meal completions in AsyncStorage`);
-            }
-            } catch (parseError) {
-              console.error('Error parsing meal completions from AsyncStorage:', parseError);
-            }
-          }
-          
-          // If no data from AsyncStorage, try persistence adapter
-          if (localData.length === 0) {
-            const localCompletions = await persistenceAdapter.getItem<MealCompletion[]>(LOCAL_MEAL_COMPLETIONS_KEY, []);
-            if (localCompletions && Array.isArray(localCompletions)) {
-              localData = localCompletions.filter(completion => completion.user_id === userId);
-              console.log(`Found ${localData.length} meal completions in persistence adapter`);
-          }
-          }
-        } catch (cacheError) {
-          console.error('Error reading meal completions from local cache:', cacheError);
-        }
-        
-        // Set data to local cache initially for fast rendering
-        if (localData.length > 0) {
-          data = localData;
-        }
-        
-        // Then fetch from Supabase for the latest data
-    let query = supabase
+      const { data, error } = await supabase
       .from('meal_completions')
       .select('*')
           .eq('user_id', userId);
-        
-        // Apply date filter based on period
-        const today = new Date();
-        if (period === 'week') {
-          const weekAgo = subDays(today, 7);
-          query = query.gte('meal_date', format(weekAgo, 'yyyy-MM-dd'));
-        } else if (period === 'month') {
-          const monthAgo = subDays(today, 30);
-          query = query.gte('meal_date', format(monthAgo, 'yyyy-MM-dd'));
-        }
-        
-        const { data: dbData, error } = await query;
-    
-    if (error) {
-          throw error;
-        }
-        
-        if (dbData && dbData.length > 0) {
-          data = dbData as MealCompletion[];
-          console.log(`Found ${data.length} meal completions in database`);
-          
-          // Update local cache with the latest data from server
-          try {
-            // Merge with any existing local completions not in the server response
-            const newLocalData = [...localData];
-            
-            // Add any server records not in local cache
-            for (const serverCompletion of data) {
-              const existsLocally = localData.some(
-                local => 
-                  local.meal_date === serverCompletion.meal_date && 
-                  local.meal_type === serverCompletion.meal_type
-              );
-              
-              if (!existsLocally) {
-                newLocalData.push(serverCompletion);
-              }
-            }
-            
-            // Update persistence adapter
-            await persistenceAdapter.setItem(LOCAL_MEAL_COMPLETIONS_KEY, newLocalData);
-            
-            // Also update AsyncStorage as a backup
-            await AsyncStorage.setItem(LOCAL_MEAL_COMPLETIONS_KEY, JSON.stringify(newLocalData));
-            
-            console.log('Updated local meal completion cache with server data');
-          } catch (syncError) {
-            console.error('Error updating local meal completion cache:', syncError);
-            // Continue with the server data for this request
-          }
-        } else if (data.length === 0) {
-          console.log('No meal completions found in database, using local cache');
-          data = localData;
-        }
-      } catch (dbError) {
-        console.error('Error getting meal completions from database:', dbError);
-        // If we failed to get from database, use whatever we got from local cache
-      }
+      if (error) throw error;
+      mealCompletions = data || [];
     }
-    
-    // Rest of function remains unchanged to calculate stats from data
-    // Filter data based on period if needed
-    const today = new Date();
-    let filteredData = [...data];
-    
-    if (period === 'week') {
-      const weekAgo = subDays(today, 7);
-      filteredData = data.filter(completion => {
-        return isAfter(parseISO(completion.meal_date), weekAgo);
-      });
-    } else if (period === 'month') {
-      const monthAgo = subDays(today, 30);
-      filteredData = data.filter(completion => {
-        return isAfter(parseISO(completion.meal_date), monthAgo);
-      });
-    }
-    
-    // Calculate completed meals
-    const completedMeals = filteredData.length;
-    
-    // Group by day
-    const mealsPerDay: Record<string, number> = {};
-    
-    // Process each meal to count by day
-    filteredData.forEach(meal => {
-      try {
-        const date = parseISO(meal.meal_date);
-        const dayName = date.toLocaleDateString('en-US', { weekday: 'long' });
-        
-        if (!mealsPerDay[dayName]) {
-          mealsPerDay[dayName] = 0;
-        }
-        
-        mealsPerDay[dayName]++;
-      } catch (err) {
-        console.error(`Error processing meal date ${meal.meal_date}:`, err);
-        // Continue with next meal if there's an error with this one
-      }
-    });
-    
-    // Find the most recent meal date
-    let lastMealDate = null;
-    if (filteredData.length > 0) {
-      const sortedMeals = filteredData.sort((a, b) => 
-        new Date(b.meal_date).getTime() - new Date(a.meal_date).getTime()
-      );
-      lastMealDate = sortedMeals[0].meal_date;
-    }
-    
-    // Calculate total meals based on period
-    let totalDays = 30; // Default to 30 days
-    
-    if (period === 'week') {
-      totalDays = 7;
-    } else if (period === 'month') {
-      totalDays = 30;
-    } else {
-      // For 'all', use days since first meal or 30 days, whichever is greater
-      const oldestMeal = [...filteredData].sort((a, b) => 
-        new Date(a.meal_date).getTime() - new Date(b.meal_date).getTime()
-      )[0];
-      
-      if (oldestMeal) {
-        totalDays = Math.max(
-          differenceInDays(new Date(), parseISO(oldestMeal.meal_date)), 
-          30
-        );
-      } else {
-        totalDays = 30;
-      }
-    }
-    
-    const totalMeals = totalDays * 3; // Assuming 3 meals per day
-    const completionRate = totalMeals > 0 ? (completedMeals / totalMeals) * 100 : 0;
-    
-    return {
-      totalMeals,
-      completedMeals,
-      completionRate,
-      mealsPerDay,
-      lastMealDate
-    };
-  } catch (err) {
-    console.error('Error in getMealStats:', err);
+  } catch (error) {
+    console.error('Error fetching meal completions:', error);
+    // Return default stats on error
     return {
       totalMeals: 0,
       completedMeals: 0,
-      completionRate: 0,
+      completionRate: 0, // Will be calculated based on planned meals if available
       mealsPerDay: {},
-      lastMealDate: null
+      lastMealDate: null,
     };
   }
+
+  // Sort completions by date, newest first
+  mealCompletions.sort((a, b) => parseISO(b.meal_date).getTime() - parseISO(a.meal_date).getTime());
+  
+  const stats: MealStats = {
+    totalMeals: 0, // This might need to be re-evaluated based on planned meals over period
+    completedMeals: mealCompletions.length, // Total number of completion records
+    completionRate: 0, // Placeholder, will be calculated later if possible
+    mealsPerDay: {}, // Key: 'YYYY-MM-DD' or 'DayName', Value: count of distinct meal types
+    lastMealDate: mealCompletions.length > 0 ? mealCompletions[0].meal_date : null,
+  };
+
+    const today = new Date();
+  let startDate: Date;
+
+  switch (period) {
+    case 'week':
+      startDate = subDays(today, 6); // Last 7 days including today
+      break;
+    case 'month':
+      startDate = subDays(today, 29); // Last 30 days including today
+      break;
+    case 'all':
+      startDate = new Date(0); // Epoch, to include all completions
+      break;
+    default:
+      startDate = subDays(today, 6);
+  }
+  startDate.setHours(0, 0, 0, 0); // Normalize start date
+
+  const relevantCompletions = mealCompletions.filter(comp => 
+    isAfter(parseISO(comp.meal_date), startDate) || isSameDay(parseISO(comp.meal_date), startDate)
+  );
+
+  // Calculate distinct meal types completed per day
+  const dailyDistinctMealTypes: { [key: string]: Set<string> } = {};
+  relevantCompletions.forEach(completion => {
+    // Use day name (e.g., 'Monday') as key to match frontend's formatWorkoutsData expectations for 7-day view
+    // For 30/90 day views, frontend uses 'yyyy-MM-dd'.
+    // For consistency with getWorkoutStats and ProgressScreen's formatNutritionData,
+    // we'll populate with both day name (for 7-day summary) and date string (for longer periods if needed directly from here)
+    // However, ProgressScreen's formatNutritionData currently uses dayName for 7-day view.
+    const dayNameKey = format(parseISO(completion.meal_date), 'EEEE'); // e.g., "Monday"
+    const dateStringKey = format(parseISO(completion.meal_date), 'yyyy-MM-dd');
+
+
+    if (!dailyDistinctMealTypes[dayNameKey]) {
+      dailyDistinctMealTypes[dayNameKey] = new Set();
+    }
+    dailyDistinctMealTypes[dayNameKey].add(completion.meal_type.toLowerCase());
+
+    // Also populate for dateStringKey if it's different (it usually will be)
+    // This ensures data is available if formatNutritionData switches to dateString for 7-day view
+    if (!dailyDistinctMealTypes[dateStringKey]) {
+        dailyDistinctMealTypes[dateStringKey] = new Set();
+    }
+    dailyDistinctMealTypes[dateStringKey].add(completion.meal_type.toLowerCase());
+  });
+
+  Object.keys(dailyDistinctMealTypes).forEach(key => {
+    stats.mealsPerDay[key] = dailyDistinctMealTypes[key].size;
+  });
+
+  console.log(`[getMealStats] Final mealsPerDay:`, stats.mealsPerDay);
+  
+  // Note: totalMeals and completionRate might be better calculated in getTrackingAnalytics 
+  // or on the frontend where access to planned meals (from profile.meal_plans or diet_preferences) is readily available.
+  // For now, completedMeals is the count of records, and totalMeals is left as 0 here.
+  
+  return stats;
 }
 
 /**
  * Get water tracking analytics for a user
  */
-export async function getWaterTrackingStats(userId: string, period: '7days' | '30days' | '90days' = '7days') {
+export async function getWaterTrackingStats(
+  userId: string, 
+  period: '7days' | '30days' | '90days' = '7days',
+  localProfileData?: { workout_tracking?: any, water_intake_goal?: number }
+) {
   try {
     // Default stats
     const defaultStats = {
@@ -1148,30 +1140,41 @@ export async function getWaterTrackingStats(userId: string, period: '7days' | '3
       goalCompletionRate: 0,
       streak: 0
     };
-    
-    // Get the user's profile to access workout_tracking data
-    const { data: profileData, error: profileError } = await supabase
-      .from('profiles')
-      .select('workout_tracking, water_intake_goal')
-      .eq('id', userId)
-      .single();
-      
-    if (profileError || !profileData) {
-      console.error('Error fetching user profile for water tracking:', profileError);
-      return defaultStats;
+
+    let profileDataForWater: { workout_tracking?: any, water_intake_goal?: number } | null = null;
+
+    if (localProfileData) {
+      // Use provided local data
+      profileDataForWater = localProfileData;
+      // Ensure water_intake_goal has a default if undefined in localProfileData
+      if (profileDataForWater && typeof profileDataForWater.water_intake_goal === 'undefined') {
+        profileDataForWater.water_intake_goal = 3.5; // Default to 3.5L
+      }
+    } else {
+      // Fetch from Supabase for non-local users or if local data not provided
+      const { data: supabaseProfileData, error: profileError } = await supabase
+        .from('profiles')
+        .select('workout_tracking, water_intake_goal')
+        .eq('id', userId);
+
+      if (profileError || !supabaseProfileData || supabaseProfileData.length === 0) {
+        console.error('Error fetching user profile for water tracking from Supabase:', profileError);
+        return defaultStats;
+      }
+      profileDataForWater = supabaseProfileData[0]; // Get first profile from array
     }
     
-    // Get water goal from profile
-    const waterGoal = profileData.water_intake_goal || 3.5; // Default to 3.5L if not set
+    // Get water goal from profile data
+    const waterGoal = profileDataForWater?.water_intake_goal || 3.5; // Default to 3.5L if not set
     
     // Check if workout_tracking exists and contains water_tracking data
-    if (!profileData.workout_tracking || 
-        typeof profileData.workout_tracking !== 'object' || 
-        !profileData.workout_tracking.water_tracking) {
+    if (!profileDataForWater?.workout_tracking || 
+        typeof profileDataForWater.workout_tracking !== 'object' || 
+        !profileDataForWater.workout_tracking.water_tracking) {
       return defaultStats;
     }
     
-    const waterTracking = profileData.workout_tracking.water_tracking;
+    const waterTracking = profileDataForWater.workout_tracking.water_tracking;
     
     // If no logs are present, return default stats
     if (!waterTracking.logs || !Array.isArray(waterTracking.logs) || waterTracking.logs.length === 0) {
@@ -1283,7 +1286,8 @@ function getPeriodDays(period: '7days' | '30days' | '90days'): number {
  */
 export async function getTrackingAnalytics(
   userId: string, 
-  period: '7days' | '30days' | '90days'
+  period: '7days' | '30days' | '90days',
+  userProfile?: UserProfile
 ): Promise<TrackingAnalytics> {
   const analytics: TrackingAnalytics = {
     workout: {
@@ -1307,7 +1311,7 @@ export async function getTrackingAnalytics(
       totalWorkouts: 0,
       completionRate: 0,
       currentStreak: 0,
-      bestStreak: 0
+      longestStreak: 0
     },
     period: 'week',
     water: {
@@ -1335,28 +1339,67 @@ export async function getTrackingAnalytics(
   analytics.period = periodType;
   
   try {
+    console.log('[getTrackingAnalytics] Starting analytics fetch for user:', userId, 'period:', period);
+
     // Get workout stats
     const workoutPeriod = period === '7days' ? 'week' : period === '30days' ? 'month' : 'all';
-    const workoutStats = await getWorkoutStats(userId, workoutPeriod);
-    analytics.workout = workoutStats;
-    
+    console.log('[getTrackingAnalytics] Getting workout stats for period:', workoutPeriod);
+    const workoutStatsResult = await getWorkoutStats(userId, workoutPeriod);
+    console.log('[getTrackingAnalytics] Workout stats result:', workoutStatsResult);
+    analytics.workout = {
+      ...analytics.workout,
+      totalWorkouts: workoutStatsResult.totalWorkouts,
+      completedWorkouts: workoutStatsResult.completedWorkouts,
+      completionRate: workoutStatsResult.completionRate,
+      currentStreak: workoutStatsResult.currentStreak,
+      longestStreak: workoutStatsResult.longestStreak,
+      totalCaloriesBurned: workoutStatsResult.totalCaloriesBurned,
+      lastWorkoutDate: workoutStatsResult.lastWorkoutDate,
+      workoutsPerDay: workoutStatsResult.workoutsPerDay,
+    };
+    analytics.workoutStats = workoutStatsResult; // Keep the detailed stats as well
+
     // Get meal stats
     const mealPeriod = period === '7days' ? 'week' : period === '30days' ? 'month' : 'all';
-    const mealStats = await getMealStats(userId, mealPeriod);
-    analytics.meal = mealStats;
-    
-    // Get water tracking stats
-    const waterStats = await getWaterTrackingStats(userId, period);
-    analytics.water = waterStats;
-    
-    // Update overall workout stats
-    analytics.workoutStats = {
-      totalWorkouts: workoutStats.totalWorkouts,
-      completionRate: workoutStats.completionRate,
-      currentStreak: workoutStats.currentStreak,
-      bestStreak: workoutStats.longestStreak
+    const mealStatsResult = await getMealStats(userId, mealPeriod);
+    analytics.meal = {
+      ...analytics.meal,
+      totalMeals: mealStatsResult.totalMeals,
+      completedMeals: mealStatsResult.completedMeals,
+      completionRate: mealStatsResult.completionRate,
+      mealsPerDay: mealStatsResult.mealsPerDay,
+      lastMealDate: mealStatsResult.lastMealDate,
     };
+
+    // Get water tracking stats
+    let waterProfileData: { workout_tracking?: any, water_intake_goal?: number } | undefined = undefined;
+    if (userProfile && (userId.startsWith('local_') || userId === 'local_user')) { // Check if local user and profile is available
+        waterProfileData = { 
+            workout_tracking: userProfile.workout_tracking, 
+            water_intake_goal: userProfile.water_intake_goal 
+        };
+    }
     
+    // Pass local data if available, otherwise it will fetch from Supabase
+    const waterStatsResult = await getWaterTrackingStats(userId, period, waterProfileData);
+    analytics.water = waterStatsResult;
+
+    // Update overall workout stats
+    if (workoutStatsResult) {
+        const totalWorkouts = workoutStatsResult.totalWorkouts || 0;
+        const completionRate = workoutStatsResult.completionRate || 0;
+        const currentStreak = workoutStatsResult.currentStreak || 0;
+        const longestStreakVal = workoutStatsResult.longestStreak || 0; // Explicit variable
+
+        analytics.workoutStats = {
+            totalWorkouts: totalWorkouts,
+            completionRate: completionRate,
+            currentStreak: currentStreak,
+            longestStreak: longestStreakVal, // Corrected from bestStreak to longestStreak
+        };
+    }
+
+    console.log('[getTrackingAnalytics] Final analytics result:', analytics);
     return analytics;
   } catch (error) {
     console.error('Error getting tracking analytics:', error);

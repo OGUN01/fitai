@@ -18,9 +18,11 @@ import Constants from 'expo-constants';
 import { useProfile } from '../../../contexts/ProfileContext';
 import { useAuth } from '../../../contexts/AuthContext';
 import { useNotifications } from '../../../contexts/NotificationContext';
+import { useStreak } from '../../../contexts/StreakContext';
 import StyledText from '../../../components/ui/StyledText';
 import { patternOverlayBase64 } from '../../../assets/images/pattern-overlay';
 import { getWorkoutStats } from '../../../services/trackingService';
+import NotificationService, { ReminderType } from '../../../services/notifications';
 
 // Define the notification preferences type
 type NotificationPreferences = {
@@ -62,6 +64,7 @@ export default function ProfileScreen() {
   const router = useRouter();
   const { user, signOut } = useAuth();
   const { profile, updateProfile } = useProfile();
+  const { currentStreak, syncStreakData } = useStreak();
   const insets = useSafeAreaInsets();
   
   // State for notification preferences
@@ -79,36 +82,50 @@ export default function ProfileScreen() {
   }, [profile]);
   
   // New state variables for enhanced UI
-  const [workoutStats, setWorkoutStats] = useState({
-    streak: 0,
+  const [activityMetrics, setActivityMetrics] = useState({
     completionRate: 0,
     totalWorkouts: 0
   });
   const [statsLoading, setStatsLoading] = useState(false);
   const [showLoginAnimation, setShowLoginAnimation] = useState(false);
   
-  // Load workout stats for authenticated users
-  useEffect(() => {
-    const loadStats = async () => {
-      if (user && user.id) {
+  // Use useFocusEffect to load stats when the tab comes into focus
+  useFocusEffect(
+    React.useCallback(() => {
+      const loadProfileStats = async () => {
+        setStatsLoading(true);
         try {
-          setStatsLoading(true);
-          const stats = await getWorkoutStats(user.id, 'all');
-          setWorkoutStats({
-            streak: stats.currentStreak || 0,
-            completionRate: stats.completionRate || 0,
-            totalWorkouts: stats.completedWorkouts || 0
-          });
-    } catch (error) {
-          console.error('Error loading workout stats:', error);
+          // Sync and allow StreakContext to update its currentStreak
+          await syncStreakData(); 
+
+          // Fetch overall completionRate and totalWorkouts if profile.id exists (covers local and auth users)
+          if (profile && profile.id) { 
+            try {
+              const overallStats = await getWorkoutStats(profile.id, 'all'); 
+              setActivityMetrics({
+                completionRate: overallStats.completionRate || 0,
+                totalWorkouts: overallStats.completedWorkouts || 0,
+              });
+            } catch (statsError) {
+              console.error(`Error fetching workout stats for user ${profile.id}:`, statsError);
+              setActivityMetrics({ completionRate: 0, totalWorkouts: 0 }); // Default on error
+            }
+          } else {
+            // No profile or no profile.id, default these stats
+            setActivityMetrics({ completionRate: 0, totalWorkouts: 0 });
+          }
+        } catch (error) {
+          // This catch block is for errors from syncStreakData or other general errors
+          console.error("Error in loadProfileStats (outer try-catch):", error);
+          setActivityMetrics({ completionRate: 0, totalWorkouts: 0 }); // Default on any outer error
         } finally {
           setStatsLoading(false);
         }
-      }
-    };
-    
-    loadStats();
-  }, [user]);
+      };
+
+      loadProfileStats();
+    }, [profile, user, syncStreakData]) // Dependencies: profile (for profile.id), user (syncStreakData might use it), syncStreakData
+  );
   
   // Add state for custom fitness goals modal
   const [showFitnessGoalsModal, setShowFitnessGoalsModal] = useState(false);
@@ -285,6 +302,20 @@ export default function ProfileScreen() {
           console.log('Notification preferences updated locally');
         }
       }
+
+      // Update notification service settings based on the type
+      const reminderType = type === 'workout_notifications' ? ReminderType.WORKOUT :
+                          type === 'meal_reminders' ? ReminderType.MEAL :
+                          ReminderType.WATER;
+
+      await NotificationService.updateReminderSettings(
+        reminderType,
+        updatedPreferences[type],
+        profile || undefined
+      );
+
+      console.log(`Updated ${type} to ${updatedPreferences[type]} and scheduled notifications`);
+
     } catch (error) {
       console.error('Error updating notification preferences:', error);
       Alert.alert(
@@ -538,7 +569,7 @@ export default function ProfileScreen() {
                       <StyledText variant="headingMedium" style={styles.statValueNew}>
                         {statsLoading ? 
                           <ActivityIndicator size={16} color="#5E72EB" /> : 
-                          workoutStats.streak}
+                          currentStreak}
                       </StyledText>
                       <StyledText variant="bodySmall" style={styles.statLabelNew}>
                         Day Streak
@@ -560,7 +591,7 @@ export default function ProfileScreen() {
                       <StyledText variant="headingMedium" style={styles.statValueNew}>
                         {statsLoading ? 
                           <ActivityIndicator size={16} color="#FF9190" /> : 
-                          `${workoutStats.completionRate}%`}
+                          `${activityMetrics.completionRate}%`}
                       </StyledText>
                       <StyledText variant="bodySmall" style={styles.statLabelNew}>
                         Completion
@@ -582,7 +613,7 @@ export default function ProfileScreen() {
                       <StyledText variant="headingMedium" style={styles.statValueNew}>
                         {statsLoading ? 
                           <ActivityIndicator size={16} color="#40DFD9" /> : 
-                          workoutStats.totalWorkouts}
+                          activityMetrics.totalWorkouts}
                       </StyledText>
                       <StyledText variant="bodySmall" style={styles.statLabelNew}>
                         Workouts

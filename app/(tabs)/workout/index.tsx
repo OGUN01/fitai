@@ -11,7 +11,7 @@ import { useProfile } from '../../../contexts/ProfileContext';
 import { useAuth } from '../../../contexts/AuthContext';
 import supabase from '../../../lib/supabase';
 import { format } from 'date-fns';
-import { markWorkoutComplete, isWorkoutCompleted } from '../../../services/trackingService';
+import { markWorkoutComplete, isWorkoutCompleted, clearWorkoutCompletions } from '../../../services/trackingService';
 import { Celebration, FadeIn, ScaleIn } from '../../../components/animations';
 import { colors, spacing, borderRadius, shadows, gradients } from '../../../theme/theme';
 import StyledText from '../../../components/ui/StyledText';
@@ -21,6 +21,7 @@ import { EventRegister } from 'react-native-event-listeners';
 import { useFocusEffect, useRouter } from 'expo-router';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useStorageInitialization } from '../../../utils/storageInitializer';
+import { logParameterValidation } from '../../../utils/parameterValidation';
 
 // Define workout plan interface based on Gemini response
 interface Exercise {
@@ -183,23 +184,43 @@ export default function WorkoutScreen() {
     fitnessLevel: (profile?.fitness_level || "beginner") as "beginner" | "intermediate" | "advanced",
     exerciseFrequency: profile?.workout_days_per_week || 3,
     timePerSession: profile?.workout_duration_minutes || 30,
-    
+
     // Location and equipment from workout_preferences JSONB
     workoutLocation: (profile?.workout_preferences?.workout_location || "home") as "home" | "gym" | "outdoors" | "anywhere",
     // For gym location, we use standard equipment; otherwise use specified equipment
-    availableEquipment: profile?.workout_preferences?.workout_location === 'gym' 
-      ? ["standard gym equipment"] 
+    availableEquipment: profile?.workout_preferences?.workout_location === 'gym'
+      ? ["standard gym equipment"]
       : (profile?.workout_preferences?.equipment || ["bodyweight", "dumbbells"]),
-    
+
     // Goals and limitations
     focusAreas: profile?.fitness_goals || ["full body"],
     exercisesToAvoid: profile?.workout_preferences?.exercises_to_avoid?.join(", ") || "",
-    
-    // Demographics
+
+    // Demographics - ENHANCED with all onboarding data
     age: profile?.age || null,
     gender: profile?.gender || null,
     weight_kg: profile?.weight_kg || null,
-    height_cm: profile?.height_cm || null
+    height_cm: profile?.height_cm || null,
+
+    // MISSING CRITICAL PARAMETERS - NOW ADDED:
+    // Country/Region for exercise recommendations
+    country_region: profile?.country_region || profile?.diet_preferences?.country_region || "international",
+
+    // Activity level affects workout intensity
+    activityLevel: profile?.activity_level || "moderate",
+
+    // Weight goal affects workout type (strength vs cardio focus)
+    weightGoal: profile?.weight_goal || "maintenance",
+
+    // Preferred workout days for scheduling
+    preferredWorkoutDays: profile?.workout_preferences?.preferred_days || [],
+
+    // Current weight and target for progress tracking
+    currentWeight: profile?.weight_kg || null,
+    targetWeight: profile?.target_weight_kg || null,
+
+    // Body fat percentage if available
+    bodyFatPercentage: profile?.body_analysis?.body_fat_percentage || profile?.body_fat_percentage || null
   };
 
   const saveWorkoutPlan = async (plan: WorkoutPlan) => {
@@ -220,10 +241,18 @@ export default function WorkoutScreen() {
     try {
       setLoading(true);
       setError(null);
-      
+
       // Display feedback to the user
       console.log("🔄 [WORKOUT] Starting workout plan generation...");
-      
+
+      // PARAMETER VALIDATION - Check if all onboarding parameters are being passed
+      console.log("🔍 [WORKOUT] Validating parameters before generation...");
+      const validation = logParameterValidation(profile);
+
+      if (!validation.workout.isValid) {
+        console.warn("⚠️ [WORKOUT] Missing parameters detected:", validation.workout.missingParameters);
+      }
+
       // Make sure we have valid preferences
       if (!userPreferences || !userPreferences.fitnessLevel) {
         throw new Error("Missing required workout preferences");
@@ -399,12 +428,18 @@ export default function WorkoutScreen() {
       
       for (const daySchedule of daysToQuery) {
         // day is now guaranteed to be a string
-        const dayName = daySchedule.day;
+        const planDayName = daySchedule.day;
+        // Get the actual day name for today
+        const actualDayName = new Date().toLocaleDateString('en-US', { weekday: 'long' });
+
         try {
-          completionStatus[dayName] = await isWorkoutCompleted(userId, formattedDate, dayName);
+          // Check completion using the actual day name, not the plan day name
+          const isCompleted = await isWorkoutCompleted(userId, formattedDate, actualDayName);
+          completionStatus[planDayName] = isCompleted; // Store under plan day name for UI
+          console.log(`[WorkoutScreen] Completion check - Plan day: "${planDayName}", Actual day: "${actualDayName}", Completed: ${isCompleted}`);
         } catch (err) {
-          console.error(`Error checking completion for ${dayName}:`, err);
-          completionStatus[dayName] = false;
+          console.error(`Error checking completion for ${planDayName}:`, err);
+          completionStatus[planDayName] = false;
         }
       }
       
@@ -483,6 +518,25 @@ export default function WorkoutScreen() {
     }, [loadWorkoutCompletionData])
   );
 
+  // Test function to clear workout completions
+  const handleClearCompletions = async () => {
+    try {
+      const userId = user?.id || 'local_user';
+      await clearWorkoutCompletions(userId);
+      setCompletedWorkouts({});
+
+      // Emit event to notify Progress tab that data has changed
+      EventRegister.emit('workoutDataChanged', { userId, action: 'cleared' });
+
+      setSnackbarMessage('Workout completions cleared for testing');
+      setSnackbarVisible(true);
+    } catch (error) {
+      console.error('Error clearing completions:', error);
+      setSnackbarMessage('Error clearing completions');
+      setSnackbarVisible(true);
+    }
+  };
+
   // Handle completing a workout
   const handleCompleteWorkout = async (dayName: string) => {
     // Ensure storage is ready before attempting to write
@@ -501,29 +555,33 @@ export default function WorkoutScreen() {
       console.log('Workout days:', getWorkoutDays());
       console.log('Looking for day:', dayName);
       
+      // Get the actual day name for today (Monday, Tuesday, etc.)
+      const actualDayName = new Date().toLocaleDateString('en-US', { weekday: 'long' });
+      console.log(`[WorkoutScreen] Completing workout - Plan day name: "${dayName}", Actual day name: "${actualDayName}"`);
+
       // Immediately update UI state for better user feedback
       setCompletedWorkouts(prev => ({
         ...prev,
-        [dayName]: true
+        [actualDayName]: true
       }));
-      
+
       const workoutDays = getWorkoutDays();
-      
+
       // Find the workout day by its name
       const day = workoutDays.find(d => d.day === dayName);
-      
+
       if (!day) {
         console.error('Available days:', workoutDays.map(d => d.day));
         console.error('Searching for day:', dayName);
         throw new Error('Workout day not found');
       }
-      
+
       // Get the index of the day (1-based) to use as day number
       const dayIndex = workoutDays.findIndex(d => d.day === dayName);
       const dayNum = dayIndex + 1;
-      
+
       console.log(`Found workout day: ${day.day}, using day number: ${dayNum}`);
-      
+
       // Prepare workout completion data including the workout_day_name
       const completionData = {
         date: today,
@@ -533,10 +591,10 @@ export default function WorkoutScreen() {
         focus_area: getWorkoutFocus(day),
         completed: true
       };
-      
+
       // Use local_user ID if user is not logged in
       const userId = user?.id || 'local_user';
-      
+
       // Mark workout as complete in the database
       const result = await markWorkoutComplete(
         userId,
@@ -544,17 +602,17 @@ export default function WorkoutScreen() {
         dayNum, // Keep passing dayNum for now, as the function still accepts it
         workoutPlan.id || 'workout_plan_1',
         completionData, // Pass workout details
-        dayName // Pass the actual day name
+        actualDayName // Use the actual day name instead of the plan's day name
       );
       
       if (result) {
         console.log('Workout marked as complete in database:', result);
         
-        // Double-check for UI consistency
+        // Double-check for UI consistency - use actual day name
         setCompletedWorkouts(prev => {
           const updatedState = {
             ...prev,
-            [dayName]: true
+            [actualDayName]: true
           };
           console.log('Final completedWorkouts state:', updatedState);
           return updatedState;
@@ -566,7 +624,7 @@ export default function WorkoutScreen() {
           date: today,
           workoutName: day.day,
           dayNumber: dayNum,
-          dayName: day.day,
+          dayName: actualDayName, // Use actual day name for consistency
           focusArea: getWorkoutFocus(day),
           completed: true,
           workoutPlanId: workoutPlan.id || 'workout_plan_1'
@@ -574,6 +632,10 @@ export default function WorkoutScreen() {
         
         console.log('📢 Emitting workoutCompleted event with data:', eventData);
         EventRegister.emit('workoutCompleted', eventData);
+
+        // Also emit the workoutDataChanged event for immediate refresh
+        console.log('📢 Emitting workoutDataChanged event for immediate refresh');
+        EventRegister.emit('workoutDataChanged', { userId, action: 'completed', data: eventData });
         
         // Determine celebration type based on streak or achievements
         let celebrationType: 'success' | 'achievement' | 'streak' | 'confetti' = 'success';
@@ -607,9 +669,10 @@ export default function WorkoutScreen() {
       
       // Even if there's an error, still mark as complete locally
       // This ensures a good user experience even if backend persistence fails
+      const actualDayName = new Date().toLocaleDateString('en-US', { weekday: 'long' });
       setCompletedWorkouts(prev => ({
         ...prev,
-        [dayName]: true
+        [actualDayName]: true
       }));
       
       setSnackbarMessage('Workout marked as complete locally, but there was an issue saving to server. Your progress is still tracked.');
@@ -748,16 +811,21 @@ export default function WorkoutScreen() {
   // Find the selected day's plan - use the first day as default if none selected
   const selectedWorkoutDay = React.useMemo(() => {
     const days = getWorkoutDays();
-    
+
+    console.log(`[WorkoutScreen] Available workout days:`, days.map(d => ({ day: d.day, focus: d.focus })));
+
     if (days.length === 0) return null;
-    
+
     if (!selectedDay && days.length > 0) {
       // Set the default selected day on first load
+      console.log(`[WorkoutScreen] Setting default selected day to: ${days[0].day}`);
       setSelectedDay(days[0].day);
       return days[0];
     }
-    
-    return days.find(day => day.day === selectedDay) || days[0];
+
+    const foundDay = days.find(day => day.day === selectedDay) || days[0];
+    console.log(`[WorkoutScreen] Selected workout day: ${foundDay.day} (focus: ${foundDay.focus})`);
+    return foundDay;
   }, [workoutPlan, selectedDay]);
 
   // Determine the plan to display, prioritizing local state after generation
@@ -1372,10 +1440,20 @@ export default function WorkoutScreen() {
                       </LinearGradient>
                     </TouchableOpacity>
                   )}
+
+                  {/* Temporary Test Button - Remove in production */}
+                  <TouchableOpacity
+                    style={[styles.completeWorkoutButton, { marginTop: 10, backgroundColor: '#ff4444' }]}
+                    onPress={handleClearCompletions}
+                  >
+                    <StyledText variant="bodyMedium" style={[styles.buttonText, { color: '#fff' }]}>
+                      Clear Completions (Test)
+                    </StyledText>
+                  </TouchableOpacity>
                 </>
               )}
-            </> 
-         ) : ( 
+            </>
+         ) : (
             // Optional: Keep showing loading indicator here too, or leave blank 
             <View style={styles.loadingContainer}> 
                <ActivityIndicator size="large" color={colors.primary.main} /> 

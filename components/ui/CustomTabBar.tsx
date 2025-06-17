@@ -24,8 +24,6 @@ const tabConfig = {
 // Define quick actions for the FAB
 const fabActions = [
   { icon: 'stats-chart-outline' as IconName, label: 'Progress', action: () => router.push('/(tabs)/progress') },
-  { icon: 'barbell-outline' as IconName, label: 'Log Workout', action: () => router.push('/(tabs)/workout') },
-  { icon: 'restaurant-outline' as IconName, label: 'Log Meal', action: () => router.push('/(tabs)/nutrition') },
   { icon: 'camera-outline' as IconName, label: 'Body Analysis', action: () => router.push('/(tabs)/progress/body-details') },
 ];
 
@@ -43,7 +41,11 @@ const CustomTabBar = ({ state, descriptors, navigation }: BottomTabBarProps) => 
   const { height: screenHeight, width: screenWidth } = Dimensions.get('window');
   
   // Initialize animation values in a stable way
-  const actionAnimations = useRef(null);
+  const actionAnimations = useRef<Array<{
+    translateY: Animated.Value;
+    scale: Animated.Value;
+    opacity: Animated.Value;
+  }> | null>(null);
   
   // Initialize animation values only once
   useEffect(() => {

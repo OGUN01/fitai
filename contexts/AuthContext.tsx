@@ -13,6 +13,167 @@ import { repairOnboardingStatus } from '../utils/onboardingPersistence';
 const AUTH_SESSION_KEY = 'auth-session';
 const AUTH_USER_KEY = 'auth-user';
 
+/**
+ * Convert all activity data from authenticated user ID to 'local_user' ID
+ * This ensures data remains accessible after logout and refresh
+ */
+const convertActivityDataToLocalUser = async (authenticatedUserId: string | undefined) => {
+  if (!authenticatedUserId) {
+    console.log('AuthContext: No authenticated user ID provided, skipping activity data conversion');
+    return;
+  }
+
+  console.log('AuthContext: Converting activity data to local_user format...');
+
+  try {
+    // Convert workout completions
+    const workoutKeys = ['local_workout_completions', 'completed_workouts'];
+    for (const key of workoutKeys) {
+      try {
+        const workoutData = await AsyncStorage.getItem(key);
+        if (workoutData) {
+          const workouts = JSON.parse(workoutData);
+          if (Array.isArray(workouts)) {
+            const convertedWorkouts = workouts.map(workout => ({
+              ...workout,
+              user_id: 'local_user' // Convert to local_user
+            }));
+            await AsyncStorage.setItem(key, JSON.stringify(convertedWorkouts));
+            console.log(`AuthContext: Converted ${convertedWorkouts.length} workouts in ${key} to local_user`);
+          }
+        }
+      } catch (error) {
+        console.error(`AuthContext: Error converting workouts in ${key}:`, error);
+      }
+    }
+
+    // Convert meal completions
+    const mealKeys = ['local_meal_completions', 'meals'];
+    for (const key of mealKeys) {
+      try {
+        const mealData = await AsyncStorage.getItem(key);
+        if (mealData) {
+          const meals = JSON.parse(mealData);
+          if (Array.isArray(meals)) {
+            const convertedMeals = meals.map(meal => ({
+              ...meal,
+              user_id: 'local_user' // Convert to local_user
+            }));
+            await AsyncStorage.setItem(key, JSON.stringify(convertedMeals));
+            console.log(`AuthContext: Converted ${convertedMeals.length} meals in ${key} to local_user`);
+          }
+        }
+      } catch (error) {
+        console.error(`AuthContext: Error converting meals in ${key}:`, error);
+      }
+    }
+
+    // Convert any cached meal plans
+    try {
+      const mealPlanKey = `mealPlan:${authenticatedUserId}`;
+      const mealPlanData = await AsyncStorage.getItem(mealPlanKey);
+      if (mealPlanData) {
+        // Move meal plan to local user key
+        await AsyncStorage.setItem('mealPlan:local_user', mealPlanData);
+        await AsyncStorage.removeItem(mealPlanKey); // Remove old key
+        console.log('AuthContext: Converted meal plan to local_user format');
+      }
+    } catch (error) {
+      console.error('AuthContext: Error converting meal plan:', error);
+    }
+
+    // Convert any workout completion state cache
+    try {
+      const workoutStateData = await AsyncStorage.getItem('workout_completion_state');
+      if (workoutStateData) {
+        const state = JSON.parse(workoutStateData);
+        if (state.userId === authenticatedUserId) {
+          state.userId = 'local_user';
+          await AsyncStorage.setItem('workout_completion_state', JSON.stringify(state));
+          console.log('AuthContext: Converted workout completion state to local_user');
+        }
+      }
+    } catch (error) {
+      console.error('AuthContext: Error converting workout completion state:', error);
+    }
+
+    // Convert any additional data that might contain user IDs
+    try {
+      // Convert streak data if it contains user-specific information
+      const streakData = await AsyncStorage.getItem('streak_data');
+      if (streakData) {
+        const streak = JSON.parse(streakData);
+        if (streak.userId === authenticatedUserId) {
+          streak.userId = 'local_user';
+          await AsyncStorage.setItem('streak_data', JSON.stringify(streak));
+          console.log('AuthContext: Converted streak data to local_user');
+        }
+      }
+    } catch (error) {
+      console.error('AuthContext: Error converting streak data:', error);
+    }
+
+    // Convert any water intake data
+    try {
+      const waterData = await AsyncStorage.getItem('water_intake');
+      if (waterData) {
+        const water = JSON.parse(waterData);
+        if (Array.isArray(water)) {
+          const convertedWater = water.map(entry => ({
+            ...entry,
+            user_id: entry.user_id === authenticatedUserId ? 'local_user' : entry.user_id
+          }));
+          await AsyncStorage.setItem('water_intake', JSON.stringify(convertedWater));
+          console.log('AuthContext: Converted water intake data to local_user');
+        }
+      }
+    } catch (error) {
+      console.error('AuthContext: Error converting water intake data:', error);
+    }
+
+    // Convert any body measurements data
+    try {
+      const bodyData = await AsyncStorage.getItem('body_measurements');
+      if (bodyData) {
+        const measurements = JSON.parse(bodyData);
+        if (Array.isArray(measurements)) {
+          const convertedMeasurements = measurements.map(measurement => ({
+            ...measurement,
+            user_id: measurement.user_id === authenticatedUserId ? 'local_user' : measurement.user_id
+          }));
+          await AsyncStorage.setItem('body_measurements', JSON.stringify(convertedMeasurements));
+          console.log('AuthContext: Converted body measurements to local_user');
+        }
+      }
+    } catch (error) {
+      console.error('AuthContext: Error converting body measurements:', error);
+    }
+
+    // Convert any nutrition tracking data
+    try {
+      const nutritionData = await AsyncStorage.getItem('nutrition_tracking');
+      if (nutritionData) {
+        const nutrition = JSON.parse(nutritionData);
+        if (Array.isArray(nutrition)) {
+          const convertedNutrition = nutrition.map(entry => ({
+            ...entry,
+            user_id: entry.user_id === authenticatedUserId ? 'local_user' : entry.user_id
+          }));
+          await AsyncStorage.setItem('nutrition_tracking', JSON.stringify(convertedNutrition));
+          console.log('AuthContext: Converted nutrition tracking to local_user');
+        }
+      }
+    } catch (error) {
+      console.error('AuthContext: Error converting nutrition tracking:', error);
+    }
+
+    console.log('AuthContext: ✅ Successfully converted all activity data to local_user format');
+
+  } catch (error) {
+    console.error('AuthContext: Error during activity data conversion:', error);
+  }
+};
+
 // Define profile type
 type UserProfile = {
   id: string;
@@ -191,17 +352,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       console.log("Starting sign-in process for:", email);
       setLoading(true);
       
-      // Clear any previous authentication errors
       await AsyncStorage.removeItem('auth_error');
       
-      // Call Supabase signIn
       const { data, error } = await supabase.auth.signInWithPassword({
         email,
         password,
       });
       
       if (error) {
-        // Store authentication error for UI to display
         await AsyncStorage.setItem('auth_error', JSON.stringify({
           message: error.message === "Invalid login credentials" 
             ? "Email or password is incorrect" 
@@ -212,185 +370,80 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         throw error;
       }
       
-      // Clear any previous login errors
       await AsyncStorage.removeItem('auth_error');
       
-      // Save session and user info securely
       await SecureStorage.setItem(AUTH_SESSION_KEY, JSON.stringify(data.session));
       await SecureStorage.setItem(AUTH_USER_KEY, JSON.stringify(data.user));
       
-      // Update state
       safeSetSession(data.session);
       safeSetUser(data.user);
       
-      // If user has local data, we need to check for onboarding
-      // and sync local data to server
       if (data.session && data.user) {
         try {
           const localProfile = await AsyncStorage.getItem('local_profile');
           
-          // Check if user has completed onboarding locally
           if (localProfile) {
-            console.log("Local profile found, will attempt to sync with server");
+            console.log("Local profile found, proceeding with comprehensive sync.");
             
-            // Set sync in progress flag with timestamp
             const syncTimestamp = Date.now();
-            await AsyncStorage.setItem('sync_in_progress', 'true');
-            await AsyncStorage.setItem('sync_in_progress_since', JSON.stringify(syncTimestamp));
-            
-            // If we have a local profile, mark onboarding as complete
-            // This is to prevent weird state where user has to repeat onboarding
-            // after logging in on a new device
-            console.log("Marking onboarding as complete due to local profile");
-            const { error: updateError } = await supabase
-              .from('profiles')
-              .update({ 
-                has_completed_onboarding: true,
-                current_onboarding_step: 'completed' 
-              })
-              .eq('id', data.user.id);
-              
-            if (updateError) {
-              console.error("Error updating onboarding status:", updateError);
+            await AsyncStorage.setItem('sync_in_progress', 'true'); // Managed by syncLocalDataToServer now, but can keep for wider visibility
+            await AsyncStorage.setItem('sync_in_progress_since', JSON.stringify(syncTimestamp)); // Same as above
+
+            // Primary sync operation using the enhanced syncLocalDataToServer
+            const syncResult = await syncLocalDataToServer(data.user.id);
+            console.log("Comprehensive sync result:", syncResult);
+
+            if (syncResult.success) {
+              console.log("Comprehensive sync completed successfully after sign-in.");
+              await AsyncStorage.setItem(`sync_status:${data.user.id}`, JSON.stringify({
+                timestamp: new Date().toISOString(),
+                status: 'success',
+                details: syncResult.syncedItems
+              }));
             } else {
-              console.log("Successfully marked onboarding as complete");
-            }
-            
-            // Sync all local data with priority to local changes
-            try {
-              console.log("Starting data sync to server");
-              
-              const syncResult = await syncLocalDataToServer(data.user.id);
-              console.log("Sync result:", syncResult);
-              
-              if (syncResult.success) {
-                console.log("Sync completed successfully");
-                
-                // Store successful sync status
-                await AsyncStorage.setItem(`sync_status:${data.user.id}`, JSON.stringify({
-                  timestamp: new Date().toISOString(),
-                  status: 'success'
-                }));
-              } else {
-                console.error("Sync failed:", syncResult.error);
-                
-                // If there was a specific error about meal_completions or workout_completions
-                // with a NULL constraint violation, we need to fix that
-                if (syncResult.error && (
+              console.error("Comprehensive sync failed after sign-in:", syncResult.error);
+              // Conditional repair call, as was present before
+              if (syncResult.error && (
                   syncResult.error.includes("workout_completions") || 
                   syncResult.error.includes("meal_completions") ||
                   syncResult.error.includes("violates not-null") ||
                   syncResult.error.includes("null value")
-                )) {
-                  console.log("Detected ID/NULL issues in sync, attempting repair");
-                  try {
-                    const repairResult = await repairDatabaseSync(data.user.id);
-                    console.log("Repair result:", repairResult);
-                    
-                    if (repairResult.success) {
-                      // If repair was successful, record the success
-                      await AsyncStorage.setItem('sync_repair_result', JSON.stringify({
-                        timestamp: new Date().toISOString(),
-                        message: `Repaired ${repairResult.repairs.workouts} workouts and ${repairResult.repairs.meals} meals`,
-                        success: true
-                      }));
-                    } else {
-                      // If repair failed, record the error
-                      await AsyncStorage.setItem('sync_repair_result', JSON.stringify({
-                        timestamp: new Date().toISOString(),
-                        message: repairResult.message,
-                        success: false
-                      }));
-                    }
-                  } catch (repairError) {
-                    console.error("Error attempting repair:", repairError);
-                  }
-                }
-                
-                // Store sync error for later display
-                await AsyncStorage.setItem('last_sync_error', JSON.stringify({
-                  message: syncResult.error,
-                  timestamp: new Date().toISOString(),
-                  syncId: syncResult.syncId
-                }));
+              )) {
+                console.log("Detected potential ID/NULL issues in sync, attempting repairDatabaseSync.");
+                const repairResult = await repairDatabaseSync(data.user.id);
+                console.log("RepairDatabaseSync result:", repairResult);
+                // Log repair result appropriately
+                 await AsyncStorage.setItem('sync_repair_result', JSON.stringify({
+                    timestamp: new Date().toISOString(),
+                    message: repairResult.message,
+                    success: repairResult.success,
+                    repairs: repairResult.repairs
+                  }));
               }
-            } catch (syncError: any) {
-              console.error("Error during sync process:", syncError);
-              // Store the error
-              await AsyncStorage.setItem('sync_error', JSON.stringify({
-                message: syncError.message || "Unknown sync error",
-                timestamp: new Date().toISOString()
+              await AsyncStorage.setItem('last_sync_error', JSON.stringify({
+                message: syncResult.error,
+                timestamp: new Date().toISOString(),
+                syncId: syncResult.syncId
               }));
-            } finally {
-              // Always clear the in-progress flag
-              await AsyncStorage.removeItem('sync_in_progress');
-              
-              // Mark as recently synced so ProfileContext uses the cached version 
-              // regardless of success/failure to prevent flickering
-              await AsyncStorage.setItem(`recently_synced:${data.user.id}`, 'true');
-              
-              // Get the merged profile with local data priority
-              const cachedMergedProfile = await AsyncStorage.getItem(`profile:${data.user.id}`);
-              
-              if (cachedMergedProfile) {
-                console.log("Using cached merged profile from sync");
-                setUserProfile(JSON.parse(cachedMergedProfile));
-              } else {
-                // Refresh user profile after sync - but this is a fallback
-                await fetchUserProfile(data.user.id);
-              }
             }
+            // The 'sync_in_progress' flags are cleared by syncLocalDataToServer's finally block
+
           } else {
-            // No local profile, just fetch from server
-            console.log("No local profile found, fetching from server");
+            console.log("No local profile found, fetching profile from server.");
             await fetchUserProfile(data.user.id);
           }
         } catch (profileError) {
-          console.error("Error handling profile:", profileError);
-          // Continue with sign in process despite profile errors
-          await fetchUserProfile(data.user.id);
+          console.error("Error during post-login profile/sync handling:", profileError);
+          if (data.user) await fetchUserProfile(data.user.id); // Fallback to fetch profile
         }
       }
       
-      // Verify and fix onboarding status if needed
-      await verifyAndFixOnboardingStatus();
-      
-      // Enhanced data synchronization
-      // This ensures that any local data is properly synced to Supabase
-      console.log("🔄 Starting enhanced data synchronization process");
-      try {
-        // Check if there's local data to sync
-        const { total, breakdown } = await getItemsFunc(data.user.id);
-        
-        if (total > 0) {
-          console.log(`📊 Found ${total} local items to sync with Supabase: `, breakdown);
-          
-          // Use our enhanced migration utility for reliable data transfer
-          const migrationSuccess = await migrateFunc(data.user.id);
-          
-          if (migrationSuccess) {
-            console.log("✅ Successfully synchronized local data with Supabase");
-          } else {
-            console.warn("⚠️ Some items failed to synchronize during login");
-            // Fall back to traditional sync method
-            await syncLocalDataToServer(data.user.id);
-          }
-        } else {
-          console.log("ℹ️ No local data to synchronize");
-        }
-      } catch (syncError) {
-        console.error("❌ Error during data synchronization:", syncError);
-        // Continue with sign in process despite synchronization errors
-      }
+      await verifyAndFixOnboardingStatus(); // Keep this for robust onboarding checks
       
       console.log("✅ Sign in process completed");
-      // Let the component handle navigation instead of doing it here
-      // router.replace("/(tabs)" as any);
-      return data; // Return the authentication data
+      return data;
     } catch (error) {
       console.error("Sign in process failed:", error);
-      
-      // Store the error for the UI to display if not already stored
       try {
         const existingError = await AsyncStorage.getItem('auth_error');
         if (!existingError) {
@@ -402,9 +455,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } catch (storageError) {
         console.error("Error storing auth error:", storageError);
       }
-      
       setLoading(false);
-      throw error; // Re-throw the error for the UI to handle
+      throw error;
     }
   };
 
@@ -413,7 +465,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       console.log("✉️ Starting enhanced sign-up process for:", email);
       setLoading(true);
       
-      // Call Supabase signUp directly
       const { data, error } = await supabase.auth.signUp({
         email,
         password,
@@ -421,38 +472,34 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       
       if (error) throw error;
       
-      // If signup was successful and user is confirmed immediately
-      if (data?.user && !data.user.identities?.[0]?.identity_data?.email_confirmed_at) {
-        console.log("🔄 New user created, preparing to migrate local data to cloud");
+      // If signup was successful and user is confirmed (or confirms immediately)
+      // data.user will exist. The check for !data.user.identities... was for auto-confirmation, may not always hold true.
+      if (data?.user) { 
+        console.log("🔄 New user created/session obtained, proceeding with comprehensive data sync to cloud.");
         
-        // Check if there's local data to migrate
-        const { total, breakdown } = await getItemsFunc(data.user.id);
-        
-        if (total > 0) {
-          console.log(`📊 Found ${total} local items to migrate: `, breakdown);
-          
-          try {
-            // Use our enhanced migration utility
-            const migrationSuccess = await migrateFunc(data.user.id);
-            
-            if (migrationSuccess) {
-              console.log("✅ Successfully migrated local data to new user account");
-            } else {
-              console.warn("⚠️ Some items failed to migrate during signup");
+        // Check if there's any local data that might need syncing by checking for local_profile
+        // syncLocalDataToServer will internally check for various data items.
+        const localProfile = await AsyncStorage.getItem('local_profile');
+        if (localProfile) {
+            console.log("Local profile found, indicating potential local data to sync for new user.");
+            try {
+                const syncResult = await syncLocalDataToServer(data.user.id);
+                if (syncResult.success) {
+                    console.log("✅ Successfully synced local data to new user account after signup.");
+                } else {
+                    console.warn("⚠️ Some items failed to sync during signup comprehensive sync:", syncResult.error);
+                    // Potentially call repairDatabaseSync here too if specific errors occur, similar to signIn
+                }
+            } catch (syncError) {
+                console.error("❌ Error during comprehensive data sync after signup:", syncError);
             }
-          } catch (migrationError) {
-            console.error("❌ Error during data migration:", migrationError);
-            // Continue with signup process despite migration errors
-          }
         } else {
-          console.log("ℹ️ No local data to migrate for new user");
+            console.log("ℹ️ No local profile found, assuming no local data to sync for new user.");
         }
       }
       
-      console.log("✅ Sign-up successful, user can now sign in");
+      console.log("✅ Sign-up successful. User might need to confirm email then sign in.");
       return data;
-      // We don't automatically sign in after signup
-      // User will need to log in after registration
     } catch (error: any) {
       console.error('❌ Error signing up:', error);
       throw error;
@@ -464,19 +511,244 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const signOut = async () => {
     try {
       console.log('AuthContext: Starting signOut process');
-      
+
+      const userIdForClearing = user?.id; // Capture user ID before it's nulled
+
+      // ENHANCED FIX: Preserve ALL user data for local mode
+      // Get the current profile to preserve ALL user information
+      let userDataToPreserve = null;
+      try {
+        if (userIdForClearing) {
+          const currentProfileJson = await AsyncStorage.getItem(`profile:${userIdForClearing}`);
+          if (currentProfileJson) {
+            const currentProfile = JSON.parse(currentProfileJson);
+            userDataToPreserve = {
+              full_name: currentProfile.full_name,
+              email: currentProfile.email,
+              diet_preferences: currentProfile.diet_preferences,
+              workout_preferences: currentProfile.workout_preferences,
+              body_analysis: currentProfile.body_analysis,
+              weight_kg: currentProfile.weight_kg,
+              height_cm: currentProfile.height_cm,
+              age: currentProfile.age,
+              gender: currentProfile.gender,
+              activity_level: currentProfile.activity_level,
+              weight_goal: currentProfile.weight_goal,
+              target_weight_kg: currentProfile.target_weight_kg,
+              starting_weight_kg: currentProfile.starting_weight_kg,
+              country_region: currentProfile.country_region,
+              meal_plans: currentProfile.meal_plans,
+              workout_tracking: currentProfile.workout_tracking,
+              meal_tracking: currentProfile.meal_tracking
+            };
+            console.log('AuthContext: Preserving complete user data for local mode:', {
+              name: userDataToPreserve.full_name,
+              email: userDataToPreserve.email,
+              hasDietPrefs: !!userDataToPreserve.diet_preferences,
+              hasWorkoutPrefs: !!userDataToPreserve.workout_preferences,
+              hasMealPlans: !!userDataToPreserve.meal_plans
+            });
+          }
+        }
+
+        // Also check local_profile as fallback
+        if (!userDataToPreserve) {
+          const localProfileJson = await AsyncStorage.getItem('local_profile');
+          if (localProfileJson) {
+            const localProfile = JSON.parse(localProfileJson);
+            userDataToPreserve = localProfile;
+            console.log('AuthContext: Found user data in local profile');
+          }
+        }
+      } catch (dataPreservationError) {
+        console.error('AuthContext: Error preserving user data:', dataPreservationError);
+      }
+
       // Sign out from Supabase first
       await supabase.auth.signOut();
-      
-      // Clear secure storage
+
+      // Clear secure storage for auth tokens
       await SecureStorage.deleteItem(AUTH_SESSION_KEY);
       await SecureStorage.deleteItem(AUTH_USER_KEY);
-      
-      // Then clear the local state
+
+      // Then clear the local context state
       safeSetSession(null);
       safeSetUser(null);
-      
-      console.log('AuthContext: Signout successful');
+      setUserProfile(null); // Also clear userProfile from context state
+
+      // ENHANCED FIX: Clear only session-related data, preserve ALL user data
+      console.log('AuthContext: Clearing session-related AsyncStorage data while preserving ALL user data...');
+      const keysToClear = [
+        // ✅ PRESERVED USER DATA (NOT cleared):
+        // - 'completed_workouts' (workout completions)
+        // - 'local_workout_completions' (new workout completions format)
+        // - 'meals' (meal completions - legacy)
+        // - 'local_meal_completions' (new meal completions format)
+        // - 'body_measurements' (user body tracking data)
+        // - 'nutrition_tracking' (user nutrition data)
+        // - 'streak_data' (user streak information)
+        // - 'water_intake' (user water tracking)
+        // - 'meal_history' (user meal history)
+        // - 'workout_history' (user workout history)
+        // - 'notification_settings' (user notification preferences)
+        // - 'app_theme' (user app preferences)
+        // - 'measurement_units' (user unit preferences)
+        // - 'local_profile' (handled separately to preserve with auth data)
+
+        // 🗑️ CLEARED SESSION DATA (safe to clear):
+        'hideLoginBanner',
+
+        // Onboarding Status - clear these as they're session-specific
+        'onboarding_status',
+        'onboarding_completed',
+        'onboarding_fallback_complete', // From FALLBACK_KEY in onboardingStatusChecker
+        'onboarding_verification_details', // From VERIFICATION_KEY in onboardingStatusChecker
+
+        // Sync Status & Logs - clear these as they're session-specific
+        'data_sync_status',
+        'last_data_sync',
+        'data_change_log',
+        'sync_in_progress',
+        'sync_in_progress_since',
+        'sync_repair_result',
+        'last_sync_error',
+        'sync_error',
+
+        // Developer/Debug Flags - clear these
+        'skipApiCalls',
+        'skipApiCallsTimestamp',
+        'meal_plan_rate_limited',
+        'meal_plan_rate_limit_timestamp',
+        'meal_plan_generation_in_progress',
+
+        // Legacy keys that might exist (but preserve main data)
+        'LocalWorkoutCompletions', // older key from trackingService if used directly
+        'LocalMealCompletions', // older key from trackingService if used directly
+      ];
+
+      if (userIdForClearing) {
+        keysToClear.push(...[
+          `profile:${userIdForClearing}`,
+          `sync_status:${userIdForClearing}`,
+          `sync_backup:${userIdForClearing}`,
+          `recently_synced:${userIdForClearing}`,
+          // Add any other userId-prefixed keys here if necessary
+        ]);
+      }
+
+      // It's good practice to also clear keys that might have been dynamically created with user patterns
+      // if not covered by the specific userIdForClearing block. However, multiRemove is safer with known keys.
+
+      try {
+        await AsyncStorage.multiRemove(keysToClear);
+        console.log('AuthContext: Specified AsyncStorage keys cleared.');
+      } catch (e) {
+        console.error('AuthContext: Error clearing AsyncStorage keys:', e);
+      }
+
+      // ENHANCED FIX: Create a comprehensive local profile preserving ALL user data
+      // AND convert all activity data to use 'local_user' ID for proper access after logout
+      if (userDataToPreserve) {
+        try {
+          const newLocalProfile = {
+            id: 'local_user',
+            // Preserve all user data
+            full_name: userDataToPreserve.full_name,
+            email: userDataToPreserve.email,
+
+            // Preserve diet preferences (use preserved data or defaults)
+            diet_preferences: userDataToPreserve.diet_preferences || {
+              meal_frequency: 3,
+              diet_type: 'balanced',
+              allergies: [],
+              excluded_foods: [],
+              favorite_foods: [],
+              country_region: userDataToPreserve.country_region || "us"
+            },
+
+            // Preserve workout preferences (use preserved data or defaults)
+            workout_preferences: userDataToPreserve.workout_preferences || {
+              preferred_days: ['monday', 'wednesday', 'friday'],
+              workout_duration: 30
+            },
+
+            // Preserve body analysis and measurements
+            body_analysis: userDataToPreserve.body_analysis,
+            weight_kg: userDataToPreserve.weight_kg,
+            height_cm: userDataToPreserve.height_cm,
+            age: userDataToPreserve.age,
+            gender: userDataToPreserve.gender,
+            activity_level: userDataToPreserve.activity_level,
+            weight_goal: userDataToPreserve.weight_goal,
+            target_weight_kg: userDataToPreserve.target_weight_kg,
+            starting_weight_kg: userDataToPreserve.starting_weight_kg,
+
+            // Preserve meal plans and tracking data
+            meal_plans: userDataToPreserve.meal_plans,
+            workout_tracking: userDataToPreserve.workout_tracking,
+            meal_tracking: userDataToPreserve.meal_tracking,
+
+            // Basic settings
+            country_region: userDataToPreserve.country_region || "us",
+            has_completed_onboarding: false, // Reset for local mode
+            has_completed_local_onboarding: true, // Mark as completed to avoid re-onboarding
+            current_onboarding_step: 'completed'
+          };
+
+          await AsyncStorage.setItem('local_profile', JSON.stringify(newLocalProfile));
+          console.log('AuthContext: Created comprehensive local profile with preserved data:', {
+            name: newLocalProfile.full_name,
+            email: newLocalProfile.email,
+            hasDietPrefs: !!newLocalProfile.diet_preferences,
+            hasWorkoutPrefs: !!newLocalProfile.workout_preferences,
+            hasMealPlans: !!newLocalProfile.meal_plans,
+            hasBodyAnalysis: !!newLocalProfile.body_analysis
+          });
+
+          // CRITICAL FIX: Convert all activity data to use 'local_user' ID
+          // This ensures data is accessible after logout and refresh
+          await convertActivityDataToLocalUser(userIdForClearing);
+
+        } catch (profileCreationError) {
+          console.error('AuthContext: Error creating comprehensive local profile:', profileCreationError);
+        }
+      } else {
+        // If no data to preserve, create a minimal local profile
+        try {
+          const minimalLocalProfile = {
+            id: 'local_user',
+            full_name: 'User',
+            diet_preferences: {
+              meal_frequency: 3,
+              diet_type: 'balanced',
+              allergies: [],
+              excluded_foods: [],
+              favorite_foods: [],
+              country_region: "us"
+            },
+            workout_preferences: {
+              preferred_days: ['monday', 'wednesday', 'friday'],
+              workout_duration: 30
+            },
+            country_region: "us",
+            has_completed_onboarding: false,
+            has_completed_local_onboarding: false,
+            current_onboarding_step: 'personal_info'
+          };
+
+          await AsyncStorage.setItem('local_profile', JSON.stringify(minimalLocalProfile));
+          console.log('AuthContext: Created minimal local profile (no data to preserve)');
+        } catch (clearError) {
+          console.error('AuthContext: Error creating minimal local profile:', clearError);
+        }
+      }
+
+      // Optionally, clear all AsyncStorage if a completely fresh start is desired,
+      // but this is aggressive and might remove things unrelated to this app or user session.
+      // await AsyncStorage.clear();
+      // console.log('AuthContext: All AsyncStorage cleared (aggressive option).');
+
+      console.log('AuthContext: Signout successful, local data cleared.');
     } catch (error) {
       console.error('AuthContext: Error signing out:', error);
       throw error;
@@ -489,13 +761,22 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const { data, error } = await supabase
         .from('profiles')
         .select('*')
-        .eq('id', userId)
-        .single();
-        
-      if (error) throw error;
-      
-      setUserProfile(data);
-      return data;
+        .eq('id', userId);
+
+      if (error) {
+        // Handle specific errors gracefully
+        if (error.message?.includes('JSON object requested, multiple (or no) rows returned') ||
+            error.code === 'PGRST116') {
+          console.warn('Profile not found or multiple profiles found:', error.message);
+          return null;
+        }
+        throw error;
+      }
+
+      // Handle array response (since we removed .single())
+      const profile = data && data.length > 0 ? data[0] : null;
+      setUserProfile(profile);
+      return profile;
     } catch (error) {
       console.error('Error fetching user profile:', error);
       return null;

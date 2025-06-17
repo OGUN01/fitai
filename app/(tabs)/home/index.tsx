@@ -65,11 +65,20 @@ const useWorkouts = () => {
     // Check if profile has workout_plan with valid data
     const enhancedProfile = profile as EnhancedUserProfile;
     const workoutPlan = enhancedProfile?.workout_plan;
-    const hasValidWorkoutPlan = workoutPlan && 
-      workoutPlan.weeklySchedule && 
-      Array.isArray(workoutPlan.weeklySchedule) && 
+    const hasValidWorkoutPlan = workoutPlan &&
+      workoutPlan.weeklySchedule &&
+      Array.isArray(workoutPlan.weeklySchedule) &&
       workoutPlan.weeklySchedule.length > 0;
-    
+
+    // Debug workout plan detection (can be removed in production)
+    if (__DEV__) {
+      console.log('[useWorkouts] Workout plan detection:', {
+        profileExists: !!profile,
+        workoutPlanExists: !!workoutPlan,
+        hasValidWorkoutPlan: hasValidWorkoutPlan
+      });
+    }
+
     setHasWorkouts(hasValidWorkoutPlan || false);
   }, [profile]);
   
@@ -272,9 +281,33 @@ export default function HomeScreen() {
   
   // Update isWorkoutScheduledToday state on profile changes
   useEffect(() => {
-    if (profile?.workout_preferences?.preferred_days) {
+    // CRITICAL FIX: Check actual workout plan days instead of just preferences
+    // This ensures consistency between Activity Summary and Workout Plan tab
+    const enhancedProfile = profile as EnhancedUserProfile;
+    const workoutPlan = enhancedProfile?.workout_plan;
+
+    if (workoutPlan?.weeklySchedule && Array.isArray(workoutPlan.weeklySchedule)) {
+      // Check if any workout in the plan matches today
+      const currentDay = currentDayName.toLowerCase();
+      const hasWorkoutToday = workoutPlan.weeklySchedule.some(workout => {
+        const workoutDay = String(workout.day).toLowerCase();
+        // Handle both "Day 1" format and actual day names like "Tuesday"
+        return workoutDay === currentDay ||
+               workoutDay.includes(currentDay) ||
+               currentDay.includes(workoutDay);
+      });
+
+      console.log('[isWorkoutScheduledToday] Checking workout plan days:', {
+        currentDay,
+        workoutDays: workoutPlan.weeklySchedule.map(w => String(w.day)),
+        hasWorkoutToday
+      });
+
+      setIsWorkoutScheduledToday(hasWorkoutToday);
+    } else if (profile?.workout_preferences?.preferred_days) {
+      // Fallback to preferences if no workout plan exists
       const preferredDays = profile.workout_preferences.preferred_days || [];
-      const normalizedPreferredDays = preferredDays.map(day => 
+      const normalizedPreferredDays = preferredDays.map(day =>
         typeof day === 'string' ? day.toLowerCase() : ''
       );
       setIsWorkoutScheduledToday(normalizedPreferredDays.includes(currentDayName.toLowerCase()));
@@ -301,8 +334,24 @@ export default function HomeScreen() {
   
   // Create the activity summary data for the UI components
   const activitySummary = useMemo(() => {
-    const isWorkoutDay = isWorkoutScheduledToday; // Use the memoized value
-    const isRestDay = !isWorkoutDay;
+    // CRITICAL FIX: Only show "Rest" if workouts have been generated AND today is not a workout day
+    // If no workouts exist, we should NEVER show "Rest" - always show 0%
+    const isWorkoutDay = hasWorkouts && isWorkoutScheduledToday;
+    const isRestDay = hasWorkouts && !isWorkoutScheduledToday;
+
+    // OVERRIDE: If no workouts have been generated, force isRestDay to false
+    const finalIsRestDay = hasWorkouts ? isRestDay : false;
+
+    // Debug activity summary calculation (can be removed in production)
+    if (__DEV__) {
+      console.log('[activitySummary] Activity summary calculation:', {
+        hasWorkouts,
+        isWorkoutScheduledToday,
+        finalIsRestDay,
+        willShow: !hasWorkouts ? '0%' : (finalIsRestDay ? 'Rest' : 'percentage')
+      });
+    }
+
     let dailyProgressPercentage = 0;
     const totalMeals = mealTimes?.length || 1;
 
@@ -313,23 +362,36 @@ export default function HomeScreen() {
     } else {
       dailyProgressPercentage = totalMeals > 0 ? Math.round((todayMealsCompleted.length / totalMeals) * 100) : 0;
     }
-    
+
     let workoutPercentage = 0;
-    if (isRestDay) {
+    if (!hasWorkouts) {
+      // No workouts generated yet - show 0% instead of rest day
+      workoutPercentage = 0;
+    } else if (finalIsRestDay) {
+      // Workouts exist and today is a rest day - show 100% with rest indicator
       workoutPercentage = 100;
     } else {
-      // It's a scheduled workout day
+      // Workouts exist and today is a workout day - show completion status
       workoutPercentage = todayWorkoutCompleted ? 100 : 0;
+    }
+
+    // Debug final values (can be removed in production)
+    if (__DEV__) {
+      console.log('[activitySummary] Final values:', {
+        workoutPercentage,
+        finalIsRestDay,
+        willDisplay: !hasWorkouts ? '0%' : (finalIsRestDay ? 'Rest' : `${workoutPercentage}%`)
+      });
     }
 
     return {
       workouts: {
         count: todayWorkoutCompleted ? 1 : 0,
         percentage: workoutPercentage,
-        isRestDay: isRestDay,
+        isRestDay: finalIsRestDay, // Only true if workouts exist AND today is not a workout day
         scheduledForToday: isWorkoutDay,
         todayCompleted: todayWorkoutCompleted,
-        todayWorkoutName: todayWorkout?.title || (isRestDay ? 'Rest Day' : 'Workout'),
+        todayWorkoutName: todayWorkout?.title || (finalIsRestDay ? 'Rest Day' : 'Workout'),
         dayStreak: streak
       },
       meals: {
@@ -344,11 +406,60 @@ export default function HomeScreen() {
         percentage: dailyProgressPercentage
       }
     };
-  }, [profile, todayMealsCompleted, todayWorkoutCompleted, mealTimes, todayWorkout, streak, isWorkoutScheduledToday]);
+  }, [profile, todayMealsCompleted, todayWorkoutCompleted, mealTimes, todayWorkout, streak, isWorkoutScheduledToday, hasWorkouts]);
   
   // Function to check meal and workout completion status
   const checkCompletionStatus = async () => {
-    console.log('Checking completion status for home screen...');
+    console.log('[checkCompletionStatus] Called. Profile loaded:', !!profile, 'User ID:', user?.id);
+    console.log('[checkCompletionStatus] Initial states: isWorkoutScheduledToday=', isWorkoutScheduledToday, 'todayWorkoutCompleted=', todayWorkoutCompleted);
+
+    // CRITICAL FIX: Enhanced sync waiting with better timing and fallback
+    // This prevents checking completion status before local data is synced with new user ID
+    try {
+      const syncInProgress = await AsyncStorage.getItem('sync_in_progress');
+      if (syncInProgress === 'true') {
+        console.log('[checkCompletionStatus] Sync in progress, waiting for completion...');
+        // Wait up to 8 seconds for sync to complete (increased from 5 seconds)
+        let waitTime = 0;
+        const maxWaitTime = 8000;
+        const checkInterval = 300; // Check every 300ms for faster response
+
+        while (waitTime < maxWaitTime) {
+          await new Promise(resolve => setTimeout(resolve, checkInterval));
+          waitTime += checkInterval;
+          const stillSyncing = await AsyncStorage.getItem('sync_in_progress');
+          if (stillSyncing !== 'true') {
+            console.log('[checkCompletionStatus] Sync completed, proceeding with status check');
+            // Add a small delay to ensure data is fully written
+            await new Promise(resolve => setTimeout(resolve, 200));
+            break;
+          }
+        }
+        if (waitTime >= maxWaitTime) {
+          console.warn('[checkCompletionStatus] Sync timeout after 8 seconds, proceeding anyway');
+        }
+      }
+
+      // Additional check: If we just logged in, wait a bit more for data to settle
+      if (user && user.id !== 'local_user') {
+        const lastSyncStatus = await AsyncStorage.getItem(`sync_status:${user.id}`);
+        if (lastSyncStatus) {
+          const syncStatus = JSON.parse(lastSyncStatus);
+          const syncTime = new Date(syncStatus.timestamp).getTime();
+          const now = Date.now();
+          const timeSinceSync = now - syncTime;
+
+          // If sync was very recent (within last 2 seconds), wait a bit more
+          if (timeSinceSync < 2000) {
+            console.log('[checkCompletionStatus] Recent sync detected, waiting for data to settle...');
+            await new Promise(resolve => setTimeout(resolve, 500));
+          }
+        }
+      }
+    } catch (syncCheckError) {
+      console.error('[checkCompletionStatus] Error checking sync status:', syncCheckError);
+    }
+
     try {
       // Check if workout is completed for today
       const now = new Date();
@@ -358,20 +469,40 @@ export default function HomeScreen() {
       // Determine if today is a workout day
       const currentDayName = format(now, 'EEEE');
       
-      // Check if workout is scheduled for today based on profile workout_preferences
-      setIsWorkoutScheduledToday(
-        profile?.workout_preferences?.preferred_days
-          ? profile.workout_preferences.preferred_days.some(
-              (day: string) => day === currentDayName
+      // CRITICAL FIX: Check actual workout plan days instead of just preferences
+      const enhancedProfile = profile as EnhancedUserProfile;
+      const workoutPlan = enhancedProfile?.workout_plan;
+
+      let isScheduled = false;
+      if (workoutPlan?.weeklySchedule && Array.isArray(workoutPlan.weeklySchedule)) {
+        // Check if any workout in the plan matches today
+        const currentDay = currentDayName.toLowerCase();
+        isScheduled = workoutPlan.weeklySchedule.some(workout => {
+          const workoutDay = String(workout.day).toLowerCase();
+          return workoutDay === currentDay ||
+                 workoutDay.includes(currentDay) ||
+                 currentDay.includes(workoutDay);
+        });
+        console.log('[checkCompletionStatus] Using workout plan days:', workoutPlan.weeklySchedule.map(w => String(w.day)));
+      } else {
+        // Fallback to preferences if no workout plan exists
+        const preferredDays = profile?.workout_preferences?.preferred_days;
+        isScheduled = preferredDays
+          ? preferredDays.some((day: string) =>
+              typeof day === 'string' && day.toLowerCase() === currentDayName.toLowerCase()
             )
-          : false
-      );
+          : false;
+        console.log('[checkCompletionStatus] Fallback to profile preferred_days:', preferredDays);
+      }
+
+      console.log('[checkCompletionStatus] Calculated isScheduled for today:', isScheduled, 'Current day name:', currentDayName);
+      setIsWorkoutScheduledToday(isScheduled);
       
       // Check if workout is completed for today
       let workoutDone = false;
       try {
         workoutDone = await isWorkoutCompleted(userId, dateString);
-        console.log(`🏋️‍♂️ Is workout completed for today? ${workoutDone ? 'Yes' : 'No'}`);
+        console.log(`[checkCompletionStatus] 🏋️‍♂️ Result from isWorkoutCompleted: ${workoutDone}`);
       } catch (workoutCheckError) {
         console.error('Error checking workout completion:', workoutCheckError);
       }
@@ -397,19 +528,37 @@ export default function HomeScreen() {
 
       // --- STREAK CHECK ---
       try {
-        // Check if today is a rest day based on workout schedule
+        // Check if today is a rest day based on actual workout schedule
+        // Only consider it a rest day if workouts have been generated AND today is not a workout day
         const currentDayName = format(new Date(), 'EEEE').toLowerCase();
-        const isRestDay = profile?.workout_preferences?.preferred_days 
-          ? !profile.workout_preferences.preferred_days.some(
+        let isRestDay = !hasWorkouts; // Default: if no workouts, treat as rest day
+
+        if (hasWorkouts) {
+          const enhancedProfile = profile as EnhancedUserProfile;
+          const workoutPlan = enhancedProfile?.workout_plan;
+
+          if (workoutPlan?.weeklySchedule && Array.isArray(workoutPlan.weeklySchedule)) {
+            // Use actual workout plan days
+            const hasWorkoutToday = workoutPlan.weeklySchedule.some(workout => {
+              const workoutDay = String(workout.day).toLowerCase();
+              return workoutDay === currentDayName ||
+                     workoutDay.includes(currentDayName) ||
+                     currentDayName.includes(workoutDay);
+            });
+            isRestDay = !hasWorkoutToday;
+          } else if (profile?.workout_preferences?.preferred_days) {
+            // Fallback to preferences
+            isRestDay = !profile.workout_preferences.preferred_days.some(
               (day: string) => day.toLowerCase() === currentDayName
-            )
-          : true; // Default to rest day if no preferences
-        
-        console.log(`Checking streak (today is ${isRestDay ? 'a REST day' : 'a WORKOUT day'})`);
-        
+            );
+          }
+        }
+
+        console.log(`Checking streak (workouts generated: ${hasWorkouts}, today is ${isRestDay ? 'a REST day' : 'a WORKOUT day'})`);
+
         // Sync streak data to ensure we have the latest streak value
         await syncStreakData();
-        
+
         // Get the current streak from the StreakContext
         console.log(`Current streak: ${currentStreak} days`);
         setStreak(currentStreak);
@@ -496,7 +645,7 @@ export default function HomeScreen() {
   
   // Process and format the data for the home screen (after loading and error checks)
   const userStats = {
-    name: profile?.full_name ? profile.full_name.split(' ')[0] : 'User',
+    name: getUserDisplayName(profile, user),
     goal: profile?.weight_goal || 'Maintain Weight',
     progress: {
       currentWeight: String(profile?.weight_kg || profile?.current_weight_kg || profile?.body_analysis?.weight_kg || 0),
@@ -568,6 +717,35 @@ export default function HomeScreen() {
   }
 
   // Helper functions (ensure they don't rely on profile being defined before loading check if called by useMemos)
+
+  // CRITICAL FIX: Enhanced user name display logic
+  // This function handles name display for both authenticated and local users
+  function getUserDisplayName(currentProfile: EnhancedUserProfile | null, currentUser: any): string {
+    // If we have a profile with a full name, use the first name
+    if (currentProfile?.full_name) {
+      const firstName = currentProfile.full_name.split(' ')[0];
+      console.log('Using profile full_name for display:', firstName);
+      return firstName;
+    }
+
+    // If authenticated user but no profile name, try to extract from email
+    if (currentUser?.email) {
+      const emailName = currentUser.email.split('@')[0];
+      const capitalizedName = emailName.charAt(0).toUpperCase() + emailName.slice(1);
+      console.log('Using email-based name for authenticated user:', capitalizedName);
+      return capitalizedName;
+    }
+
+    // For local users without a name, check if we're in a post-logout state
+    // where the name might be preserved in local storage
+    if (!currentUser) {
+      console.log('Local user without profile name, using default');
+    }
+
+    // Default fallback
+    return 'User';
+  }
+
   function calculateProgressPercentage(currentProfile: EnhancedUserProfile | null): number {
     if (!currentProfile) return 0;
     const currentWeight = currentProfile?.weight_kg || currentProfile?.current_weight_kg || currentProfile?.body_analysis?.weight_kg;

@@ -181,12 +181,12 @@ const EnhancedHomeScreen: React.FC<EnhancedHomeScreenProps> = ({
   const renderActivitySummary = () => {
     // Use activitySummary data if available, otherwise use derived data
     const activities = [
-      { 
-        label: 'Workouts', 
-        percent: activitySummary?.workouts.percentage ?? 
-          (workoutStats.dayStreak > 0 ? 80 : 0), 
+      {
+        label: 'Workouts',
+        percent: activitySummary?.workouts.percentage ??
+          (workoutStats.dayStreak > 0 ? 80 : 0),
         isRestDay: activitySummary?.workouts.isRestDay ?? false,
-        color: colors.primary.main 
+        color: colors.primary.main
       },
       { 
         label: 'Meals', 

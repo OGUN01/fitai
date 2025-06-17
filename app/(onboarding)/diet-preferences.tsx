@@ -81,16 +81,8 @@ type DietPreferences = {
   favorite_foods?: string[];
 };
 
-// Mock useProfile hook if not available
-const useProfile = () => {
-  const [profile, setProfile] = useState(null);
-  const updateProfile = async (data) => {
-    console.log('Updating profile with:', data);
-    setProfile({ ...profile, ...data });
-    return true;
-  };
-  return { profile, updateProfile };
-};
+// Import the real useProfile hook
+import { useProfile } from '../../contexts/ProfileContext';
 
 // Get screen dimensions for responsive sizing
 const { width, height } = Dimensions.get('window');
@@ -217,9 +209,11 @@ export default function DietPreferencesScreen() {
     }
   });
 
-  // State for allergies
+  // State for multi-select fields
   const [selectedAllergens, setSelectedAllergens] = useState<string[]>([]);
-  
+  const [selectedRestrictions, setSelectedRestrictions] = useState<string[]>([]);
+  const [selectedGoals, setSelectedGoals] = useState<string[]>([]);
+
   // State for meal times
   const [showTimePicker, setShowTimePicker] = useState(false);
   const [currentMealIndex, setCurrentMealIndex] = useState<number>(-1);
@@ -429,9 +423,17 @@ export default function DietPreferencesScreen() {
       setValue('goals', goals);
       setValue('country_region', country_region);
       setValue('mealTimes', mealTimes);
-      
-      // Also update related state variables
-      setSelectedAllergens(allergies);
+
+      // CRITICAL FIX: Update state variables that control the UI
+      setSelectedAllergens(allergies || []);
+      setSelectedRestrictions(restrictions || []);
+      setSelectedGoals(goals || []);
+
+      console.log("Updated diet preferences state variables:", {
+        selectedAllergens: allergies,
+        selectedRestrictions: restrictions,
+        selectedGoals: goals
+      });
     }
   }, [profile, setValue]);
 
@@ -497,10 +499,10 @@ export default function DietPreferencesScreen() {
       const isReturningToReview = params?.returnToReview === 'true';
       if (isReturningToReview) {
         console.log("Returning to review page as requested");
-        router.push('/review');
+        router.push('/(onboarding)/review');
       } else {
         console.log("Continuing to body analysis");
-        router.push('/body-analysis');
+        router.push('/(onboarding)/body-analysis');
       }
     } catch (error) {
       console.error('Error submitting diet preferences:', error);

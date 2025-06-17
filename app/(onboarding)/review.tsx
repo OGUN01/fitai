@@ -512,10 +512,10 @@ export default function ReviewScreen() {
               )}
               
               {!workoutFitnessLevel && !workoutDaysPerWeek && (!workoutFocusAreas || workoutFocusAreas.length === 0) ? (
-                <TouchableOpacity 
+                <TouchableOpacity
                   style={styles.editSectionButton}
                   onPress={() => router.push({
-                    pathname: '/workout-preferences',
+                    pathname: '/(onboarding)/workout-preferences',
                     params: { returnToReview: 'true' }
                   })}
                 >
@@ -525,10 +525,10 @@ export default function ReviewScreen() {
                   <MaterialCommunityIcons name="arrow-right" size={18} color={colors.primary.main} />
                 </TouchableOpacity>
               ) : (
-                <TouchableOpacity 
+                <TouchableOpacity
                   style={styles.editSectionButton}
                   onPress={() => router.push({
-                    pathname: '/workout-preferences',
+                    pathname: '/(onboarding)/workout-preferences',
                     params: { returnToReview: 'true' }
                   })}
                 >
@@ -597,10 +597,10 @@ export default function ReviewScreen() {
                 </View>
               </View>
               
-              <TouchableOpacity 
+              <TouchableOpacity
                 style={styles.editSectionButton}
                 onPress={() => router.push({
-                  pathname: '/diet-preferences',
+                  pathname: '/(onboarding)/diet-preferences',
                   params: { returnToReview: 'true' }
                 })}
               >
