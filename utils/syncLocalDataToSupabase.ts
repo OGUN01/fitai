@@ -3,6 +3,7 @@ import { UserProfile } from '../types/profile';
 import persistenceAdapter from './persistenceAdapter';
 import StorageKeys from './storageKeys';
 import supabase from '../lib/supabase';
+import { filterValidWorkoutCompletions, filterValidMealCompletions } from './dataValidation';
 
 function isUserProfile(obj: any): obj is UserProfile {
   return obj && typeof obj === 'object' && 'id' in obj;
@@ -29,53 +30,117 @@ export async function syncLocalDataToSupabase(userId: string) {
       .eq('user_id', userId);
     if (workoutErr) throw workoutErr;
     if (mealErr) throw mealErr;
-    // 3. Merge completions by id
+    // 3. Merge completions by id with date validation
     const workoutMap = new Map<string, WorkoutCompletion>();
     (remoteWorkouts || []).forEach(w => workoutMap.set(w.id, w));
+
+    // Get current date for validation
+    const today = new Date();
+    const oneYearAgo = new Date();
+    oneYearAgo.setFullYear(oneYearAgo.getFullYear() - 1);
+
     localWorkouts.forEach(local => {
+      // Validate workout date before processing
+      if (local.workout_date) {
+        const workoutDate = new Date(local.workout_date + 'T00:00:00');
+        if (workoutDate > today) {
+          console.warn(`Skipping future workout completion: ${local.workout_date}`);
+          return;
+        }
+        if (workoutDate < oneYearAgo) {
+          console.warn(`Skipping very old workout completion: ${local.workout_date}`);
+          return;
+        }
+      }
+
+      // Convert 'local_user' to authenticated user ID
+      const processedLocal = { ...local };
+      if (processedLocal.user_id === 'local_user' || !processedLocal.user_id) {
+        processedLocal.user_id = userId;
+        console.log(`Converting local_user workout to authenticated user: ${local.workout_date}`);
+      } else {
+        processedLocal.user_id = userId; // Ensure consistency
+      }
+
       const remote = workoutMap.get(local.id);
       if (!remote || new Date(local.completed_at) > new Date(remote.completed_at)) {
-        workoutMap.set(local.id, { ...local, user_id: userId });
+        workoutMap.set(local.id, processedLocal);
       }
     });
-    // 4. Upload new/updated local workouts
+    // 4. Upload new/updated local workouts with validation
     const toUploadWorkouts = Array.from(workoutMap.values()).filter(w =>
       !remoteWorkouts?.find(rw => rw.id === w.id && rw.completed_at === w.completed_at)
     );
+
     if (toUploadWorkouts.length > 0) {
-      await supabase.from('workout_completions').upsert(toUploadWorkouts);
+      // Apply comprehensive validation before uploading
+      const validWorkouts = filterValidWorkoutCompletions(toUploadWorkouts);
+      console.log(`Uploading ${validWorkouts.length} valid workouts out of ${toUploadWorkouts.length} total`);
+
+      if (validWorkouts.length > 0) {
+        await supabase.from('workout_completions').upsert(validWorkouts);
+      }
     }
     // 5. Download all workouts to local
     await persistenceAdapter.setItem(StorageKeys.COMPLETED_WORKOUTS, Array.from(workoutMap.values()));
-    // Repeat for meals
+    // Repeat for meals with date validation
     const mealMap = new Map<string, MealCompletion>();
     (remoteMeals || []).forEach(m => mealMap.set(m.id, m));
+
     localMeals.forEach(local => {
+      // Validate meal date before processing
+      if (local.meal_date) {
+        const mealDate = new Date(local.meal_date + 'T00:00:00');
+        if (mealDate > today) {
+          console.warn(`Skipping future meal completion: ${local.meal_date}`);
+          return;
+        }
+        if (mealDate < oneYearAgo) {
+          console.warn(`Skipping very old meal completion: ${local.meal_date}`);
+          return;
+        }
+      }
+
+      // Convert 'local_user' to authenticated user ID
+      const processedLocal = { ...local };
+      if (processedLocal.user_id === 'local_user' || !processedLocal.user_id) {
+        processedLocal.user_id = userId;
+        console.log(`Converting local_user meal to authenticated user: ${local.meal_date} (${local.meal_type})`);
+      } else {
+        processedLocal.user_id = userId; // Ensure consistency
+      }
+
       const remote = mealMap.get(local.id);
       if (!remote || new Date(local.completed_at) > new Date(remote.completed_at)) {
-        mealMap.set(local.id, { ...local, user_id: userId });
+        mealMap.set(local.id, processedLocal);
       }
     });
     const toUploadMeals = Array.from(mealMap.values()).filter(m =>
       !remoteMeals?.find(rm => rm.id === m.id && rm.completed_at === m.completed_at)
     );
+
     if (toUploadMeals.length > 0) {
-      await supabase.from('meal_completions').upsert(toUploadMeals);
+      // Apply comprehensive validation before uploading
+      const validMeals = filterValidMealCompletions(toUploadMeals);
+      console.log(`Uploading ${validMeals.length} valid meals out of ${toUploadMeals.length} total`);
+
+      if (validMeals.length > 0) {
+        await supabase.from('meal_completions').upsert(validMeals);
+      }
     }
     await persistenceAdapter.setItem(StorageKeys.MEALS, Array.from(mealMap.values()));
     // 6. Sync Profile Data (including plans, streak, and other fields)
     const { data: remoteProfileData, error: profileErr } = await supabase
       .from('profiles')
       .select('*')
-      .eq('id', userId)
-      .single();
+      .eq('id', userId);
 
     // PGRST116 means no rows found, which is not an error if it's a first sync for a user.
-    if (profileErr && profileErr.code !== 'PGRST116') { 
+    if (profileErr && profileErr.code !== 'PGRST116') {
         console.error('[syncLocalDataToSupabase] Error fetching remote profile:', profileErr);
-        throw profileErr; 
+        throw profileErr;
     }
-    const remoteProfile = isUserProfile(remoteProfileData) ? remoteProfileData : null;
+    const remoteProfile = (remoteProfileData && remoteProfileData.length > 0 && isUserProfile(remoteProfileData[0])) ? remoteProfileData[0] : null;
     
     // Fetch local anonymous profile (used before first login)
     const localAnonymousProfile = await persistenceAdapter.getItem<UserProfile>(StorageKeys.LOCAL_PROFILE, null);
