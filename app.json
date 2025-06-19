@@ -6,7 +6,7 @@
     ],
     "name": "FitAI",
     "slug": "fitness",
-    "version": "8",
+    "version": "0.1.0",
     "orientation": "portrait",
     "icon": "./assets/icon/1024.png",
     "assetBundlePatterns": [
@@ -15,11 +15,12 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.fitai.fitness",
+      "buildNumber": "9",
       "icon": "./assets/icon/1024.png"
     },
     "android": {
       "package": "com.fitai.fitness",
-      "versionCode": 8,
+      "versionCode": 9,
       "adaptiveIcon": {
         "foregroundImage": "./assets/icon/adaptive-icon.png",
         "backgroundImage": "./assets/icon/adaptive-icon.png",
