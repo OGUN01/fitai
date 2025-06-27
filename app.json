@@ -9,6 +9,12 @@
     "version": "0.1.0",
     "orientation": "portrait",
     "icon": "./assets/icon/1024.png",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "image": "./assets/splash.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#ffffff"
+    },
     "assetBundlePatterns": [
       "**/*"
     ],
@@ -27,7 +33,18 @@
         "backgroundColor": "#FFFFFF",
         "monochromeImage": "./assets/icon/adaptive-icon.png"
       },
-      "icon": "./assets/icon/1024.png"
+      "icon": "./assets/icon/1024.png",
+      "splash": {
+        "image": "./assets/splash.png",
+        "resizeMode": "contain",
+        "backgroundColor": "#ffffff"
+      },
+      "permissions": [
+        "CAMERA",
+        "WRITE_EXTERNAL_STORAGE",
+        "READ_EXTERNAL_STORAGE",
+        "NOTIFICATIONS"
+      ]
     },
     "web": {
       "bundler": "metro",

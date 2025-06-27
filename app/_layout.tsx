@@ -27,6 +27,7 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 import SyncStatusIndicator from '../components/SyncStatusIndicator';
 import WorkoutCompletionHandler from '../components/workout/WorkoutCompletionHandler';
 import MealCompletionHandler from '../components/meal/MealCompletionHandler';
+import { ErrorBoundary } from '../components/ErrorBoundary';
 import persistenceAdapter from '../utils/persistenceAdapter';
 import { isOnboardingComplete, repairOnboardingStatus } from '../utils/onboardingStatusChecker';
 import useStorageInitialization from '../utils/storageInitializer';
@@ -424,17 +425,18 @@ export default function RootLayout() {
   }
 
   return (
-    <SkiaProvider>
-      <SkiaContextInitializer />
-      <GestureHandlerRootView style={{ flex: 1 }}>
-        <SafeAreaProvider>
-          <PaperProvider theme={lightTheme}>
-            <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-              <NotificationProvider>
-                <AuthProvider> { /* AuthProvider is already here, good */ }
-                  <ProfileProvider>
-                    <StreakProvider>
-                      <NavigationGuard>
+    <ErrorBoundary>
+      <SkiaProvider>
+        <SkiaContextInitializer />
+        <GestureHandlerRootView style={{ flex: 1 }}>
+          <SafeAreaProvider>
+            <PaperProvider theme={lightTheme}>
+              <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
+                <NotificationProvider>
+                  <AuthProvider> { /* AuthProvider is already here, good */ }
+                    <ProfileProvider>
+                      <StreakProvider>
+                        <NavigationGuard>
                         <Stack 
                           screenOptions={{
                             headerShown: false,
@@ -468,14 +470,15 @@ export default function RootLayout() {
                       <WorkoutCompletionHandler />
                       <MealCompletionHandler />
                       <SyncStatusIndicator />
-                    </StreakProvider>
-                  </ProfileProvider>
-                </AuthProvider>
-              </NotificationProvider>
-            </ThemeProvider>
-          </PaperProvider>
-        </SafeAreaProvider>
-      </GestureHandlerRootView>
-    </SkiaProvider>
+                      </StreakProvider>
+                    </ProfileProvider>
+                  </AuthProvider>
+                </NotificationProvider>
+              </ThemeProvider>
+            </PaperProvider>
+          </SafeAreaProvider>
+        </GestureHandlerRootView>
+      </SkiaProvider>
+    </ErrorBoundary>
   );
 }
