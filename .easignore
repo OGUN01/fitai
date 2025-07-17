@@ -45,8 +45,35 @@ web-build/
 .gitignore
 .gitattributes
 
-# Video files are now handled by Git LFS - include them in build
-# assets/video/ - commented out since LFS handles size efficiently
+# Exclude all problematic asset directories to prevent tar extraction errors
+assets/video/
+assets/images/
+assets/animations/
+web/
+services/ai/
+migrations/
+supabase/
+
+# Exclude all development and testing directories
+tests/
+docs/
+scripts/
+utils/runDiagnostics.ts
+utils/databaseSyncTest.ts
+utils/simpleDatabaseTest.ts
+utils/dataIntegrityChecker.ts
+utils/dataSyncIntegrityChecker.ts
+
+# Exclude large or problematic files
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.webm
+*.zip
+*.rar
+*.7z
+*.tar.gz
 
 # Development utilities
 utils/runDiagnostics.ts
