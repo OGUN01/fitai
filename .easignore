@@ -1,0 +1,20 @@
+# Exclude problematic directories that cause tar extraction failures
+docs/
+tests/
+fitai-build/
+inspect-output.json/
+
+# Exclude temporary files
+temp_review.txt
+*.tar.gz
+*.tmp
+
+# Exclude IDE files
+.idea/
+.vscode/
+.cursor/
+
+# Exclude cache directories
+.expo/
+node_modules/
+.cache/
