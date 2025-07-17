@@ -19,7 +19,10 @@
       "Bash(mkdir:*)",
       "Bash(chmod:*)",
       "Bash(bash:*)",
-      "Bash(git clean:*)"
+      "Bash(git clean:*)",
+      "Bash(git gc:*)",
+      "Bash(git repack:*)",
+      "Bash(test:*)"
     ],
     "deny": []
   }
