@@ -1,12 +1,13 @@
 {
   "expo": {
-    "scheme": "acme",
+    "scheme": "fitai",
     "plugins": [
-      "expo-router"
+      "expo-router",
+      "expo-secure-store"
     ],
     "name": "FitAI",
     "slug": "fitness",
-    "version": "0.1.0",
+    "version": "0.1.2",
     "orientation": "portrait",
     "icon": "./assets/icon/1024.png",
     "userInterfaceStyle": "light",
@@ -21,12 +22,12 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.fitai.fitness",
-      "buildNumber": "9",
+      "buildNumber": "11",
       "icon": "./assets/icon/1024.png"
     },
     "android": {
       "package": "com.fitai.fitness",
-      "versionCode": 9,
+      "versionCode": 11,
       "adaptiveIcon": {
         "foregroundImage": "./assets/icon/adaptive-icon.png",
         "backgroundImage": "./assets/icon/adaptive-icon.png",

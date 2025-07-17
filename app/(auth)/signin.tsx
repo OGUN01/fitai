@@ -16,6 +16,7 @@ import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../../contexts/AuthContext';
 import StyledText from '../../components/ui/StyledText';
+import GoogleLoginButton from '../../components/auth/GoogleLoginButton';
 import { colors, spacing, borderRadius, shadows } from '../../theme/theme';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Ionicons } from '@expo/vector-icons';
@@ -267,8 +268,30 @@ export default function SignInScreen() {
                   </StyledText>
                 </LinearGradient>
               </TouchableOpacity>
+
+              {/* Divider */}
+              <View style={styles.dividerContainer}>
+                <View style={styles.dividerLine} />
+                <StyledText variant="bodySmall" style={styles.dividerText}>
+                  or
+                </StyledText>
+                <View style={styles.dividerLine} />
+              </View>
+
+              {/* Google Login Button */}
+              <GoogleLoginButton
+                variant="secondary"
+                size="medium"
+                onSuccess={() => {
+                  console.log("Google login successful, navigation will be handled by AuthContext");
+                }}
+                onError={(error) => {
+                  setError(error);
+                  setSnackbarVisible(true);
+                }}
+              />
             </View>
-            
+
             {/* Create Account Link */}
             <View style={styles.createAccountContainer}>
               <StyledText variant="bodyMedium" color={colors.text.secondary}>
@@ -393,6 +416,20 @@ const styles = StyleSheet.create({
   buttonText: {
     fontWeight: 'bold',
     fontSize: 18,
+  },
+  dividerContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    marginVertical: spacing.lg,
+  },
+  dividerLine: {
+    flex: 1,
+    height: 1,
+    backgroundColor: 'rgba(255, 255, 255, 0.3)',
+  },
+  dividerText: {
+    marginHorizontal: spacing.md,
+    color: colors.text.muted,
   },
   createAccountContainer: {
     flexDirection: 'row',

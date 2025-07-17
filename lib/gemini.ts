@@ -1,4 +1,4 @@
-import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold } from '@google/generative-ai';
+import { GoogleGenerativeAI, HarmCategory, HarmBlockThreshold, SchemaType } from '@google/generative-ai';
 import { GEMINI_API_KEY, GEMINI_MODEL, GEMINI_VISION_MODEL, GEMINI_API_VERSION } from '../constants/api';
 import * as FileSystem from 'expo-file-system';
 import { Platform } from 'react-native';
