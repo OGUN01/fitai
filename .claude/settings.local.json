@@ -22,7 +22,10 @@
       "Bash(git clean:*)",
       "Bash(git gc:*)",
       "Bash(git repack:*)",
-      "Bash(test:*)"
+      "Bash(test:*)",
+      "Bash(eas update:*)",
+      "Bash(npm install:*)",
+      "WebFetch(domain:expo.dev)"
     ],
     "deny": []
   }
