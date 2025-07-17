@@ -17,10 +17,7 @@
       "backgroundColor": "#ffffff"
     },
     "assetBundlePatterns": [
-      "assets/icon.png",
-      "assets/splash.png",
-      "assets/adaptive-icon.png",
-      "assets/favicon.png"
+      "**/*"
     ],
     "ios": {
       "supportsTablet": true,
