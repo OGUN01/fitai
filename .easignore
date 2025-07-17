@@ -81,3 +81,12 @@ web-build/
 npm-debug.*
 yarn-debug.*
 yarn-error.*
+
+# Development files
+test.tar.gz
+*.tar.gz
+temp_review.txt
+temp-build/
+
+# Web-only files
+public/canvaskit.wasm

@@ -76,6 +76,10 @@ desktop.ini
 *.zip
 *.rar
 *.7z
+*.tar.gz
+*.tar
+test.tar.gz
+project.tar.gz
 
 # Test artifacts
 __tests__/
