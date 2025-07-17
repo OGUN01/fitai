@@ -1,0 +1,85 @@
+# EAS Build ignore file
+# Exclude files from being uploaded to EAS Build
+
+# Android/iOS native directories (will be generated on EAS)
+android/
+ios/
+
+# Build directories
+build/
+.gradle/
+*.apk
+*.ipa
+*.aab
+
+# Node modules (will be installed on EAS)
+node_modules/
+
+# Local environment files
+.env
+.env.*
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+.cache/
+
+# Binary files
+*.exe
+*.dll
+*.so
+*.dylib
+*.bin
+
+# Large files
+*.zip
+*.tar
+*.tar.gz
+*.rar
+*.7z
+
+# Test files
+__tests__/
+__mocks__/
+coverage/
+.jest/
+tests/
+
+# Documentation
+docs/
+*.md
+!README.md
+
+# Git
+.git/
+.gitignore
+
+# Expo
+.expo/
+dist/
+web-build/
+
+# Metro
+.metro-health-check*
+
+# TypeScript
+*.tsbuildinfo
+
+# Misc
+*.orig.*
+npm-debug.*
+yarn-debug.*
+yarn-error.*

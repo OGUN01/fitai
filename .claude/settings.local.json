@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(find:*)",
+      "Bash(ls:*)",
+      "Bash(rm:*)",
+      "Bash(true)",
+      "Bash(npx expo prebuild:*)",
+      "Bash(npx expo install:*)",
+      "Bash(npx expo:*)",
+      "Bash(eas build:*)",
+      "Bash(eas credentials:*)",
+      "Bash(git add:*)"
+    ],
+    "deny": []
+  }
+}
