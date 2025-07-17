@@ -8,9 +8,6 @@ import { migrateLocalToCloud as migrateFunc, getTotalLocalSyncItems as getItemsF
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { SecureStorage } from '../utils/secureStorage';
 import { repairOnboardingStatus } from '../utils/onboardingPersistence';
-import * as AuthSession from 'expo-auth-session';
-import * as Crypto from 'expo-crypto';
-import { Platform } from 'react-native';
 
 // Auth session storage keys
 const AUTH_SESSION_KEY = 'auth-session';
@@ -195,7 +192,6 @@ type AuthContextType = {
   loading: boolean;
   signIn: (email: string, password: string) => Promise<any>;
   signUp: (email: string, password: string) => Promise<any>;
-  signInWithGoogle: () => Promise<any>;
   signOut: () => Promise<void>;
 };
 
@@ -207,7 +203,6 @@ const AuthContext = createContext<AuthContextType>({
   loading: true,
   signIn: async () => {},
   signUp: async () => {},
-  signInWithGoogle: async () => {},
   signOut: async () => {},
 });
 
@@ -507,55 +502,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       return data;
     } catch (error: any) {
       console.error('❌ Error signing up:', error);
-      throw error;
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const signInWithGoogle = async () => {
-    try {
-      console.log("🔍 Starting Google OAuth sign-in process");
-      setLoading(true);
-
-      // Clear any previous auth errors
-      await AsyncStorage.removeItem('auth_error');
-
-      // Use Supabase's built-in Google OAuth
-      const { data, error } = await supabase.auth.signInWithOAuth({
-        provider: 'google',
-        options: {
-          redirectTo: Platform.OS === 'web'
-            ? `${window.location.origin}/auth/callback`
-            : 'fitai://auth/callback',
-          queryParams: {
-            access_type: 'offline',
-            prompt: 'consent',
-          },
-        },
-      });
-
-      if (error) {
-        console.error("❌ Google OAuth error:", error);
-        await AsyncStorage.setItem('auth_error', JSON.stringify({
-          message: error.message || "Google sign-in failed",
-          timestamp: new Date().toISOString()
-        }));
-        throw error;
-      }
-
-      console.log("✅ Google OAuth initiated successfully");
-
-      // For mobile, the OAuth flow will handle the redirect
-      // The session will be set automatically via the auth state change listener
-      return data;
-
-    } catch (error: any) {
-      console.error('❌ Error signing in with Google:', error);
-      await AsyncStorage.setItem('auth_error', JSON.stringify({
-        message: error.message || "Google sign-in failed",
-        timestamp: new Date().toISOString()
-      }));
       throw error;
     } finally {
       setLoading(false);
@@ -901,7 +847,6 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     loading,
     signIn,
     signUp,
-    signInWithGoogle,
     signOut,
   };
 

@@ -5,11 +5,10 @@
  * with advanced error handling and fallback mechanisms.
  */
 
-import { GoogleGenerativeAI, GenerativeModel, SchemaType } from "@google/generative-ai";
-import { GEMINI_API_KEY } from '../../constants/api';
-import { GoogleWorkoutPlanSchema, WorkoutPlanSchema } from './schemas/comprehensive-schemas';
+import gemini from '../../lib/gemini';
 import { promptManager } from './promptManager';
 import { API_TIMEOUTS } from '../../constants/api';
+import { parseJsonFromLLM } from './jsonUtils';
 
 // Type definitions - ENHANCED with all onboarding parameters
 export interface UserFitnessPreferences {
@@ -78,73 +77,57 @@ export class WorkoutGenerator {
   private static readonly PROMPT_VERSION = 1;
   private static readonly MAX_RETRIES = 3;
   private static readonly RETRY_DELAY_MS = 1000;
-  private model: GenerativeModel;
-
-  constructor() {
-    const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-
-    // Use stable model optimized for structured output
-    this.model = genAI.getGenerativeModel({
-      model: "gemini-2.5-flash",
-      generationConfig: {
-        temperature: 0.3,
-        topK: 40,
-        topP: 0.8,
-        maxOutputTokens: 4096,
-      }
-    });
-  }
   
   /**
    * Generate a personalized workout plan for a user
    */
   async generateWorkoutPlan(preferences: UserFitnessPreferences): Promise<WorkoutPlan | FallbackWorkoutPlan> {
-    // Build comprehensive prompt using ALL onboarding data
-    const weightGoal = preferences.targetWeight && preferences.weight_kg
-      ? (preferences.targetWeight > preferences.weight_kg ? "weight gain" : "weight loss")
-      : preferences.weightGoal || 'Maintenance';
+    // Get the prompt text from the prompt manager - ENHANCED with all parameters
+    const promptParams = {
+      fitnessLevel: preferences.fitnessLevel,
+      workoutLocation: preferences.workoutLocation,
+      // Conditionally set equipment based on workout location
+      equipment: preferences.workoutLocation === 'gym'
+        ? 'Standard gym equipment'
+        : preferences.availableEquipment.join(', '),
+      exerciseFrequency: preferences.exerciseFrequency,
+      timePerSession: preferences.timePerSession,
+      focusAreas: preferences.focusAreas.join(', '),
+      exercisesToAvoid: preferences.exercisesToAvoid || 'None',
 
-    const weightDifference = preferences.targetWeight && preferences.weight_kg
-      ? Math.abs(preferences.targetWeight - preferences.weight_kg)
-      : 0;
+      // Demographics for personalized workouts
+      age: preferences.age || 'Not specified',
+      gender: preferences.gender || 'Not specified',
+      weight: preferences.weight_kg || preferences.weight || 'Not specified',
+      height: preferences.height_cm || preferences.height || 'Not specified',
 
-    const comprehensivePrompt = `Create a personalized workout plan using complete user profile:
+      // MISSING CRITICAL PARAMETERS - NOW INCLUDED:
+      // Country/region for culturally appropriate exercises
+      country_region: preferences.country_region || 'International',
 
-PERSONAL DETAILS:
-- Age: ${preferences.age || 'Not specified'}, Gender: ${preferences.gender || 'Not specified'}
-- Height: ${preferences.height_cm || preferences.height || 'Not specified'}cm
-- Current Weight: ${preferences.weight_kg || preferences.weight || 'Not specified'}kg
-- Target Weight: ${preferences.targetWeight || 'Not specified'}kg
-- Weight Goal: ${weightGoal}${weightDifference > 0 ? ` (${weightDifference}kg change needed)` : ''}
-- Activity Level: ${preferences.activityLevel || 'Moderate'}
-- Country/Region: ${preferences.country_region || 'International'}
+      // Activity level affects workout intensity and progression
+      activityLevel: preferences.activityLevel || 'Moderate',
 
-FITNESS PROFILE:
-- Fitness Level: ${preferences.fitnessLevel}
-- Workout Location: ${preferences.workoutLocation}
-- Frequency: ${preferences.exerciseFrequency} days per week
-- Duration: ${preferences.timePerSession} minutes per session
-- Focus Areas: ${preferences.focusAreas.join(', ')}
-- Available Equipment: ${preferences.workoutLocation === 'gym' ? 'Standard gym equipment' : preferences.availableEquipment.join(', ')}
-${preferences.exercisesToAvoid ? `- Exercises to Avoid: ${preferences.exercisesToAvoid}` : ''}
-${preferences.preferredWorkoutDays ? `- Preferred Days: ${preferences.preferredWorkoutDays.join(', ')}` : ''}
+      // Weight goals affect workout focus (strength vs cardio vs maintenance)
+      weightGoal: preferences.weightGoal || 'Maintenance',
 
-REQUIREMENTS:
-1. Create a ${preferences.exerciseFrequency}-day weekly workout plan
-2. Each workout should be exactly ${preferences.timePerSession} minutes
-3. Use ONLY available equipment: ${preferences.workoutLocation === 'gym' ? 'Standard gym equipment' : preferences.availableEquipment.join(', ')}
-4. Focus on: ${preferences.focusAreas.join(' and ')}
-5. Appropriate for ${preferences.fitnessLevel} fitness level
-6. Support ${weightGoal} goal
-7. Consider ${preferences.gender || 'general'} and age ${preferences.age || 'adult'} specific needs
-8. Include proper warm-up and cool-down for each session
-9. Provide 4-week progression plan
-10. Include safety notes and nutrition tips
+      // Preferred workout days for scheduling optimization
+      preferredWorkoutDays: preferences.preferredWorkoutDays?.join(', ') || 'Flexible',
 
-Make this plan highly personalized and specific to the user's complete profile and goals.`;
+      // Current and target weight for progress-oriented programming
+      currentWeight: preferences.currentWeight || preferences.weight_kg || 'Not specified',
+      targetWeight: preferences.targetWeight || 'Not specified',
 
-    // Use the comprehensive prompt directly (no need for prompt manager with structured output)
-    const prompt = comprehensivePrompt;
+      // Body composition for advanced programming
+      bodyFatPercentage: preferences.bodyFatPercentage || 'Not specified'
+    };
+
+    // Get the prompt for workout generation
+    const prompt = await promptManager.getPrompt(
+      WorkoutGenerator.PROMPT_ID,
+      WorkoutGenerator.PROMPT_VERSION,
+      promptParams
+    );
 
     // Call the Gemini API
     let attempt = 0;
@@ -174,37 +157,34 @@ Make this plan highly personalized and specific to the user's complete profile a
   }
   
   /**
-   * Call the Gemini API to generate a workout plan using STRUCTURED OUTPUT
+   * Call the Gemini API to generate a workout plan
    */
   private async callGeminiApi(prompt: string): Promise<WorkoutPlan> {
     try {
-      console.log("🏋️ [STRUCTURED] Generating workout plan with structured output");
-
-      // 🔥 STRUCTURED OUTPUT - NO JSON PARSING NEEDED!
-      const response = await this.model.generateContent({
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        generationConfig: {
-          responseMimeType: "application/json",
-          responseSchema: GoogleWorkoutPlanSchema
-        }
-      });
-
-      const rawResponse = response.response.text();
-      const workoutPlan = JSON.parse(rawResponse);
-
-      console.log("✅ [STRUCTURED] Workout plan generated successfully");
-
-      // Validate with Zod for extra safety
-      const validatedPlan = WorkoutPlanSchema.parse(workoutPlan);
-
-      return validatedPlan;
-    } catch (error: any) {
-      console.error("❌ [STRUCTURED] Workout generation failed:", error);
-      throw new Error(`Structured workout generation error: ${error.message}`);
+      const result = await gemini.generateContent(prompt);
+      return this.parseWorkoutPlanResponse(result);
+    } catch (error) {
+      throw new Error(`Gemini API error: ${error}`);
     }
   }
   
-  // ✅ REMOVED: parseWorkoutPlanResponse method - no longer needed with structured output!
+  /**
+   * Parse the response from the Gemini API into a workout plan
+   */
+  private parseWorkoutPlanResponse(response: string): WorkoutPlan {
+    try {
+      // Use our robust parser instead of direct JSON.parse
+      const parsedResponse = parseJsonFromLLM(response);
+      
+      // Validate the parsed response - this will throw an error if validation fails
+      this.validateWorkoutPlan(parsedResponse);
+      
+      return parsedResponse;
+    } catch (error) {
+      console.error('Error parsing workout plan response:', error);
+      throw new Error(`Failed to parse workout plan: ${error.message}`);
+    }
+  }
   
   /**
    * Validate that the workout plan has all required fields and structure

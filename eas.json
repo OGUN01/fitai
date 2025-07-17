@@ -1,7 +1,6 @@
 {
   "cli": {
-    "version": ">= 3.13.3",
-    "appVersionSource": "remote"
+    "version": ">= 3.13.3"
   },
   "build": {
     "development": {
@@ -16,72 +15,13 @@
     },
     "preview": {
       "distribution": "internal",
-      "env": {
-        "EXPO_PUBLIC_SUPABASE_URL": "https://palugixdzhbrtplwgxdj.supabase.co",
-        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBhbHVnaXhkemhicnRwbHdneGRqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDE1OTQ3MDQsImV4cCI6MjA1NzE3MDcwNH0.cFRMvqwGitkvJpg1Eq9LK1vL-xxpyNnli_j9Zq_OUkA",
-        "EXPO_PUBLIC_GEMINI_API_KEY": "AIzaSyAZLFWQ1BbvyroagG9kUZZLp8YMOruPNvM"
-      },
       "android": {
         "buildType": "apk"
-      }
-    },
-    "preview-simple": {
-      "distribution": "internal",
-      "android": {
-        "buildType": "apk"
-      }
-    },
-    "preview-minimal": {
-      "distribution": "internal",
-      "cache": {
-        "disabled": false
-      },
-      "env": {
-        "EXPO_PUBLIC_SUPABASE_URL": "https://palugixdzhbrtplwgxdj.supabase.co",
-        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBhbHVnaXhkemhicnRwbHdneGRqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDE1OTQ3MDQsImV4cCI6MjA1NzE3MDcwNH0.cFRMvqwGitkvJpg1Eq9LK1vL-xxpyNnli_j9Zq_OUkA",
-        "EXPO_PUBLIC_GEMINI_API_KEY": "AIzaSyAZLFWQ1BbvyroagG9kUZZLp8YMOruPNvM"
-      },
-      "android": {
-        "buildType": "apk",
-        "gradleCommand": ":app:assembleRelease"
-      }
-    },
-    "preview-optimized": {
-      "distribution": "internal",
-      "cache": {
-        "disabled": false
-      },
-      "env": {
-        "EXPO_PUBLIC_SUPABASE_URL": "https://palugixdzhbrtplwgxdj.supabase.co",
-        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBhbHVnaXhkemhicnRwbHdneGRqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDE1OTQ3MDQsImV4cCI6MjA1NzE3MDcwNH0.cFRMvqwGitkvJpg1Eq9LK1vL-xxpyNnli_j9Zq_OUkA",
-        "EXPO_PUBLIC_GEMINI_API_KEY": "AIzaSyAZLFWQ1BbvyroagG9kUZZLp8YMOruPNvM"
-      },
-      "android": {
-        "buildType": "apk",
-        "gradleCommand": ":app:assembleRelease",
-        "image": "default"
       }
     },
     "production": {
-      "env": {
-        "EXPO_PUBLIC_SUPABASE_URL": "https://palugixdzhbrtplwgxdj.supabase.co",
-        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBhbHVnaXhkemhicnRwbHdneGRqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDE1OTQ3MDQsImV4cCI6MjA1NzE3MDcwNH0.cFRMvqwGitkvJpg1Eq9LK1vL-xxpyNnli_j9Zq_OUkA",
-        "EXPO_PUBLIC_GEMINI_API_KEY": "AIzaSyAZLFWQ1BbvyroagG9kUZZLp8YMOruPNvM"
-      },
       "android": {
-        "buildType": "app-bundle",
-        "gradleCommand": ":app:bundleRelease"
-      }
-    },
-    "production-safe": {
-      "env": {
-        "EXPO_PUBLIC_SUPABASE_URL": "https://palugixdzhbrtplwgxdj.supabase.co",
-        "EXPO_PUBLIC_SUPABASE_ANON_KEY": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBhbHVnaXhkemhicnRwbHdneGRqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDE1OTQ3MDQsImV4cCI6MjA1NzE3MDcwNH0.cFRMvqwGitkvJpg1Eq9LK1vL-xxpyNnli_j9Zq_OUkA",
-        "EXPO_PUBLIC_GEMINI_API_KEY": "AIzaSyAZLFWQ1BbvyroagG9kUZZLp8YMOruPNvM"
-      },
-      "android": {
-        "buildType": "app-bundle",
-        "gradleCommand": ":app:bundleRelease"
+        "buildType": "app-bundle"
       }
     }
   },

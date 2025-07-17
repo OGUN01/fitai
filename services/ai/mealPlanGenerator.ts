@@ -5,9 +5,7 @@
  * with advanced error handling and fallback mechanisms.
  */
 
-import { GoogleGenerativeAI, GenerativeModel, SchemaType } from "@google/generative-ai";
-import { GEMINI_API_KEY } from '../../constants/api';
-import { GoogleMealPlanSchema, WeeklyMealPlanSchema } from './schemas/comprehensive-schemas';
+import gemini from '../../lib/gemini';
 import { promptManager } from './promptManager';
 import { API_TIMEOUTS } from '../../constants/api';
 import { parseJsonFromLLM } from './jsonUtils';
@@ -106,22 +104,6 @@ export class MealPlanGenerator {
   private static readonly PROMPT_VERSION = 1;
   private static readonly MAX_RETRIES = 3;
   private static readonly RETRY_DELAY_MS = 1000;
-  private model: GenerativeModel;
-
-  constructor() {
-    const genAI = new GoogleGenerativeAI(GEMINI_API_KEY);
-
-    // Use stable model optimized for structured output
-    this.model = genAI.getGenerativeModel({
-      model: "gemini-2.5-flash",
-      generationConfig: {
-        temperature: 0.4,
-        topK: 40,
-        topP: 0.9,
-        maxOutputTokens: 8192, // Larger for comprehensive meal plans
-      }
-    });
-  }
   
   /**
    * Generate a personalized meal plan for a user
@@ -206,97 +188,33 @@ export class MealPlanGenerator {
   }
   
   /**
-   * Call the Gemini API to generate a meal plan using STRUCTURED OUTPUT
+   * Call the Gemini API to generate a meal plan
    */
   private async callGeminiApi(prompt: string): Promise<MealPlan> {
     try {
-      console.log("🍽️ [STRUCTURED] Generating meal plan with structured output");
-
-      // 🔥 STRUCTURED OUTPUT - NO JSON PARSING NEEDED!
-      const response = await this.model.generateContent({
-        contents: [{ role: "user", parts: [{ text: prompt }] }],
-        generationConfig: {
-          responseMimeType: "application/json",
-          responseSchema: GoogleMealPlanSchema
-        }
-      });
-
-      const rawResponse = response.response.text();
-      const mealPlan = JSON.parse(rawResponse);
-
-      console.log("✅ [STRUCTURED] Meal plan generated successfully");
-
-      // Validate with Zod for extra safety
-      const validatedPlan = WeeklyMealPlanSchema.parse(mealPlan);
-
-      // Convert to the expected MealPlan format
-      return this.convertToMealPlanFormat(validatedPlan);
-    } catch (error: any) {
-      console.error("❌ [STRUCTURED] Meal plan generation failed:", error);
-      throw new Error(`Structured meal plan generation error: ${error.message}`);
+      const result = await gemini.generateContent(prompt);
+      return this.parseMealPlanResponse(result);
+    } catch (error) {
+      throw new Error(`Gemini API error: ${error}`);
     }
   }
   
   /**
-   * Convert WeeklyMealPlan to MealPlan format for backward compatibility
+   * Parse the response from the Gemini API into a meal plan
    */
-  private convertToMealPlanFormat(weeklyPlan: any): MealPlan {
-    // Convert the structured output to the expected MealPlan format
-    const dailyPlans: DailyMealPlan[] = weeklyPlan.weeklyPlan.map((day: any) => ({
-      day: day.day,
-      meals: [
-        {
-          meal: 'breakfast',
-          time: '08:00',
-          recipe: {
-            name: day.meals.breakfast.name,
-            description: day.meals.breakfast.description,
-            ingredients: day.meals.breakfast.ingredients.map((ing: string) => ({ name: ing, amount: '1 serving' })),
-            instructions: day.meals.breakfast.instructions,
-            nutrition: day.meals.breakfast.nutrition,
-            prepTime: day.meals.breakfast.prepTime,
-            cookTime: day.meals.breakfast.cookTime,
-            servings: day.meals.breakfast.servings
-          }
-        },
-        {
-          meal: 'lunch',
-          time: '12:00',
-          recipe: {
-            name: day.meals.lunch.name,
-            description: day.meals.lunch.description,
-            ingredients: day.meals.lunch.ingredients.map((ing: string) => ({ name: ing, amount: '1 serving' })),
-            instructions: day.meals.lunch.instructions,
-            nutrition: day.meals.lunch.nutrition,
-            prepTime: day.meals.lunch.prepTime,
-            cookTime: day.meals.lunch.cookTime,
-            servings: day.meals.lunch.servings
-          }
-        },
-        {
-          meal: 'dinner',
-          time: '18:00',
-          recipe: {
-            name: day.meals.dinner.name,
-            description: day.meals.dinner.description,
-            ingredients: day.meals.dinner.ingredients.map((ing: string) => ({ name: ing, amount: '1 serving' })),
-            instructions: day.meals.dinner.instructions,
-            nutrition: day.meals.dinner.nutrition,
-            prepTime: day.meals.dinner.prepTime,
-            cookTime: day.meals.dinner.cookTime,
-            servings: day.meals.dinner.servings
-          }
-        }
-      ],
-      totalNutrition: day.totalNutrition
-    }));
-
-    return {
-      dailyPlans,
-      shoppingList: weeklyPlan.shoppingList.map((item: string) => ({ name: item, category: 'general' })),
-      nutritionSummary: weeklyPlan.totalWeeklyNutrition,
-      mealPrepTips: weeklyPlan.mealPrepTips || []
-    };
+  private parseMealPlanResponse(response: string): MealPlan {
+    try {
+      // Use our robust parser instead of direct JSON.parse
+      const parsedResponse = parseJsonFromLLM(response);
+      
+      // Validate the parsed response - this will throw an error if validation fails
+      this.validateMealPlan(parsedResponse);
+      
+      return parsedResponse;
+    } catch (error) {
+      console.error('Error parsing meal plan response:', error);
+      throw new Error(`Failed to parse meal plan: ${error.message}`);
+    }
   }
   
   /**

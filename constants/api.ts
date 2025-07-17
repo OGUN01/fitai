@@ -3,7 +3,7 @@ export const SUPABASE_URL = "https://palugixdzhbrtplwgxdj.supabase.co";
 export const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InBhbHVnaXhkemhicnRwbHdneGRqIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NDE1OTQ3MDQsImV4cCI6MjA1NzE3MDcwNH0.cFRMvqwGitkvJpg1Eq9LK1vL-xxpyNnli_j9Zq_OUkA";
 
 // Gemini AI API configuration
-export const GEMINI_API_KEY = process.env.EXPO_PUBLIC_GEMINI_API_KEY || "AIzaSyB8sqS88Z5sDwDpSOGLm78w_dZy6k5zNEw";
+export const GEMINI_API_KEY = process.env.EXPO_PUBLIC_GEMINI_API_KEY || "AIzaSyAZLFWQ1BbvyroagG9kUZZLp8YMOruPNvM";
 export const GEMINI_MODEL = 'gemini-2.0-flash-exp';
 export const GEMINI_VISION_MODEL = 'gemini-2.0-flash-exp';
 export const GEMINI_API_VERSION = 'v1beta'; // Using v1beta as the experimental models may not be fully available in v1

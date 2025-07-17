@@ -15,7 +15,6 @@ import { StatusBar } from 'expo-status-bar';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useAuth } from '../contexts/AuthContext';
 import StyledText from '../components/ui/StyledText';
-import GoogleLoginButton from '../components/auth/GoogleLoginButton';
 import { colors, spacing, borderRadius, shadows } from '../theme/theme';
 
 // Get screen dimensions for responsive sizing
@@ -94,30 +93,8 @@ export default function LoginScreen() {
             >
               Get Started
             </Button>
-
-            {/* Divider */}
-            <View style={styles.dividerContainer}>
-              <View style={styles.dividerLine} />
-              <StyledText variant="bodySmall" style={styles.dividerText}>
-                or
-              </StyledText>
-              <View style={styles.dividerLine} />
-            </View>
-
-            {/* Google Login Button */}
-            <GoogleLoginButton
-              variant="secondary"
-              size="medium"
-              onSuccess={() => {
-                console.log("Google login successful from main login screen");
-              }}
-              onError={(error) => {
-                setError(error);
-                setSnackbarVisible(true);
-              }}
-            />
           </View>
-
+          
           {/* Sign In Button */}
           <View style={styles.signUpContainer}>
             <StyledText variant="bodyMedium" color={colors.text.secondary}>
@@ -206,20 +183,6 @@ const styles = StyleSheet.create({
   buttonText: {
     fontWeight: 'bold',
     fontSize: 18,
-  },
-  dividerContainer: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    marginVertical: spacing.lg,
-  },
-  dividerLine: {
-    flex: 1,
-    height: 1,
-    backgroundColor: 'rgba(255, 255, 255, 0.3)',
-  },
-  dividerText: {
-    marginHorizontal: spacing.md,
-    color: colors.text.muted,
   },
   signUpContainer: {
     flexDirection: 'row',
