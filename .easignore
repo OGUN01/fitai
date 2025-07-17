@@ -1,0 +1,162 @@
+# Dependencies
+node_modules/
+package-lock.json
+
+# Development and testing files
+tests/
+docs/
+scripts/
+temp_review.txt
+*.test.js
+*.test.ts
+*.spec.js
+*.spec.ts
+
+# IDE and editor files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build outputs
+dist/
+build/
+web-build/
+.expo/
+
+# Git files
+.git/
+.gitignore
+.gitattributes
+
+# Video files are now handled by Git LFS - include them in build
+# assets/video/ - commented out since LFS handles size efficiently
+
+# Development utilities
+utils/runDiagnostics.ts
+utils/databaseSyncTest.ts
+utils/simpleDatabaseTest.ts
+utils/dataIntegrityChecker.ts
+utils/dataSyncIntegrityChecker.ts
+
+# Migration files (not needed in production build)
+migrations/
+
+# Temporary files
+*.tmp
+*.temp
+temp/
+tmp/
+
+# Development configurations
+.env.local
+.env.development
+.env.test
+
+# Documentation
+README.md
+*.md
+
+# Development scripts
+scripts/
+
+# Test data and fixtures
+**/test-data/
+**/fixtures/
+**/mocks/
+
+# Development dependencies source maps
+*.map
+
+# Backup files
+*.bak
+*.backup
+*.orig
+
+# Cache directories
+.cache/
+.parcel-cache/
+.next/
+.nuxt/
+
+# Coverage reports
+coverage/
+.nyc_output/
+
+# Linting
+.eslintcache
+
+# TypeScript build info
+*.tsbuildinfo
+
+# Optional npm cache directory
+.npm
+
+# Optional REPL history
+.node_repl_history
+
+# Output of 'npm pack'
+*.tgz
+
+# Yarn Integrity file
+.yarn-integrity
+
+# dotenv environment variables file
+.env
+.env.test
+
+# Stores VSCode versions used for testing VSCode extensions
+.vscode-test
+
+# Temporary folders
+tmp/
+temp/
+
+# Expo
+.expo/
+expo-env.d.ts
+
+# Metro
+.metro-health-check*
+
+# Debug
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+
+# macOS
+.DS_Store
+*.pem
+
+# local env files
+.env*.local
+
+# typescript
+*.tsbuildinfo
+
+# Android specific (if not needed in build)
+android/app/build/
+android/build/
+android/.gradle/
+
+# iOS specific (if not needed in build)
+ios/build/
+ios/Pods/
+ios/*.xcworkspace/xcuserdata/
+ios/*.xcodeproj/xcuserdata/
