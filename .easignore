@@ -91,7 +91,7 @@ fitai-build/
 web/
 public/
 assets/video/
-assets/animations/
+# assets/animations/ - REMOVED: These are needed for Lottie animations
 scripts/
 migrations/
 setup-credentials.md
