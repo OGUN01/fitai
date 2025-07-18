@@ -1,0 +1,127 @@
+# ULTRA-COMPREHENSIVE .easignore for FitAI Project
+# This file ensures ONLY essential source files are uploaded to EAS
+
+# === DEPENDENCY DIRECTORIES (CRITICAL) ===
+node_modules/
+node_modules
+.pnp
+.pnp.js
+
+# === BUILD OUTPUTS AND ARTIFACTS ===
+.expo/
+dist/
+web-build/
+build/
+out/
+.next/
+.nuxt/
+.cache/
+.parcel-cache/
+.nyc_output/
+coverage/
+lib-cov/
+*.tsbuildinfo
+*.buildinfo
+
+# === ANDROID BUILD ARTIFACTS ===
+android/build/
+android/app/build/
+android/.gradle/
+android/local.properties
+*.apk
+*.aab
+*.ipa
+
+# === IOS BUILD ARTIFACTS ===
+ios/
+ios/build/
+ios/Pods/
+ios/*.xcworkspace
+ios/*.xcodeproj
+
+# === DEVELOPMENT AND IDE FILES ===
+.idea/
+.vscode/
+.cursor/
+.claude/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# === LOGS AND TEMPORARY FILES ===
+*.log
+*.tmp
+*.temp
+*.cache
+*.lock
+npm-debug.*
+yarn-debug.*
+yarn-error.*
+.metro-health-check*
+
+# === ENVIRONMENT AND SECRETS ===
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+*.pem
+*.key
+*.p8
+*.p12
+*.jks
+*.mobileprovision
+
+# === VERSION CONTROL ===
+.git/
+.gitignore
+.gitattributes
+.hg/
+.svn/
+
+# === PROJECT-SPECIFIC EXCLUSIONS ===
+docs/
+tests/
+__tests__/
+__mocks__/
+fitai-build/
+web/
+public/
+assets/video/
+assets/animations/
+scripts/
+migrations/
+setup-credentials.md
+temp_review.txt
+
+# === ARCHIVE FILES ===
+*.zip
+*.rar
+*.7z
+*.tar
+*.tar.gz
+*.gz
+test.tar.gz
+project.tar.gz
+
+# === BINARY FILES ===
+*.exe
+*.dll
+*.so
+*.dylib
+*.a
+*.lib
+*.bin
+
+# === MISC EXCLUSIONS ===
+*.orig.*
+*.map
+*.chunk.js
+*.worker.js
+expo-env.d.ts
+.eas/
+
+# NOTE: Only essential source files will be included
